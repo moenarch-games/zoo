@@ -337,3 +337,52 @@ fn wrong_leaf_types_identify_the_actual_offending_field() {
         rejected_field(&bad, leaf);
     }
 }
+
+#[test]
+fn fixed_park_entities_require_owned_catalog_definitions() {
+    let original = catalog();
+    // Keep the independently valid food/drink entries. A nonempty facilities
+    // array must not conceal a missing definition for an instantiated entity.
+    for missing in [
+        vec!["entrance"],
+        vec!["animal_care_depot"],
+        vec!["entrance", "animal_care_depot"],
+    ] {
+        let mut definition = original.clone();
+        definition["facilities"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|facility| !missing.iter().any(|key| facility["key"] == *key));
+        let error = match ZooGame::from_content_json(&definition.to_string()) {
+            Ok(_) => panic!("Catalog accepted without fixed definitions: {missing:?}"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("facilities"),
+            "Missing facilities path: {error}"
+        );
+        assert!(
+            missing.iter().any(|key| error.contains(key)),
+            "Missing entity identity: {error}"
+        );
+    }
+    // A service alias does not own the canonical identity of the fixed entity.
+    for fixed in ["entrance", "animal_care_depot"] {
+        let mut definition = original.clone();
+        let facility = definition["facilities"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|facility| facility["key"] == fixed)
+            .unwrap();
+        facility["key"] = json!(format!("aliased_{fixed}"));
+        let error = match ZooGame::from_content_json(&definition.to_string()) {
+            Ok(_) => panic!("Catalog accepted without canonical fixed identity: {fixed}"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("facilities") && error.contains(fixed),
+            "Missing fixed identity path: {error}"
+        );
+    }
+}
