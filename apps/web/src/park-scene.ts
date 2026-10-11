@@ -332,6 +332,7 @@ function tileColor(tile: Tile, habitatSpecies: Map<number, SpeciesKey | null>): 
       const species =
         tile.habitat_id === null ? null : (habitatSpecies.get(tile.habitat_id) ?? null)
       const base = HABITAT_GROUND[species ?? "empty"]
+      if (!base) throw new Error(`Unsupported habitat presentation: ${species}`)
       return hash(tile.x, tile.y, 7) > 0.5 ? base : shade(base, -0.04)
     }
     case "grass":
@@ -1086,6 +1087,8 @@ function animalFigure(m: Figure, species: SpeciesKey, stride: number): RendererS
         m.box("beak", [0, 0.31, 0.07], [0.025, 0.02, 0.04], "#f0a53a"),
         m.box("feet", [0, 0.01, 0.03], [0.1, 0.02, 0.06], "#f0a53a"),
       ]
+    default:
+      throw new Error(`Unsupported animal presentation: ${species}`)
   }
 }
 
@@ -1285,12 +1288,12 @@ function toolColor(tool: Tool): Hex {
       return "#e0473a"
     case "path":
       return "#f3e3b8"
-    case "food":
-    case "drink":
     case "habitat":
       return "#f6d36f"
     case "select":
       return "#ffffff"
+    default:
+      return "#f6d36f"
   }
 }
 
@@ -1345,6 +1348,7 @@ export function buildSceneryNodes(snapshot: Snapshot): RendererSceneNode[] {
  * snapshot/overlay identity so per-frame actor animation does not rebuild terrain and scenery.
  */
 export function buildStaticNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode[] {
+  snapshot = presentationSnapshot(snapshot)
   const depot = snapshot.animal_care_depot
   const nodes = [
     ...terrainNodes(snapshot),
@@ -1376,7 +1380,7 @@ export function buildStaticNodes(snapshot: Snapshot, overlay: SceneOverlay): Ren
 
 /** Animated actors and markers, rebuilt every rendered frame, plus screen-pick anchors. */
 export function buildActorFrame(input: SceneFrameInput): SceneFrame {
-  const { snapshot } = input
+  const snapshot = presentationSnapshot(input.snapshot)
   const animals = animalNodes(snapshot.animals, input)
   const guests = guestNodes(snapshot.guests, input)
   const depot = snapshot.animal_care_depot
@@ -1404,4 +1408,33 @@ export function buildActorFrame(input: SceneFrameInput): SceneFrame {
     { kind: "depot", point: [depot.x + 0.5, 0.5, depot.y + 0.5], radius: 0.55 },
   ]
   return { nodes, anchors }
+}
+
+/** Resolve validated content IDs to the renderer's existing presentation profiles.
+ * This adapter never changes simulation records or selects gameplay rules.
+ */
+function presentationSnapshot(snapshot: Snapshot): Snapshot {
+  const speciesAsset = (key: string | null) => {
+    if (key === null) return null
+    const offer = snapshot.species_catalog.find((entry) => entry.key === key)
+    if (!offer) throw new Error(`species/${key}/asset_ref: absent validated presentation`)
+    return offer.asset_ref
+  }
+  return {
+    ...snapshot,
+    habitats: snapshot.habitats.map((habitat) => ({
+      ...habitat,
+      species: speciesAsset(habitat.species),
+    })),
+    animals: snapshot.animals.map((animal) => ({
+      ...animal,
+      species: speciesAsset(animal.species) ?? animal.species,
+    })),
+    concessions: snapshot.concessions.map((stand) => {
+      const offer = snapshot.facility_catalog.find((entry) => entry.key === stand.kind)
+      if (!offer)
+        throw new Error(`facilities/${stand.kind}/asset_ref: absent validated presentation`)
+      return { ...stand, kind: offer.service }
+    }),
+  }
 }
