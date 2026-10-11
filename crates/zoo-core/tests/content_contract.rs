@@ -309,3 +309,31 @@ fn localization_and_valid_presentation_changes_do_not_change_simulation_decision
         assert_eq!(a, b, "cosmetic edit changed decisions for {name}");
     }
 }
+
+#[test]
+fn wrong_leaf_types_identify_the_actual_offending_field() {
+    let original = catalog();
+    for (path, value) in [
+        ("/schema_version", json!("bad")),
+        ("/ruleset_id", json!(7)),
+        ("/species/0/key", json!(7)),
+        ("/species/0/label", json!(false)),
+        ("/species/0/asset_ref", json!(7)),
+        ("/species/0/unlock_ref", json!(false)),
+        ("/species/0/appeal", json!("bad")),
+        ("/species/0/minimum_social_group", json!("bad")),
+        ("/species/0/space_per_animal", json!(false)),
+        ("/facilities/0/key", json!(7)),
+        ("/facilities/0/label", json!(false)),
+        ("/facilities/0/service", json!(7)),
+        ("/facilities/0/asset_ref", json!(7)),
+        ("/facilities/0/unlock_ref", json!(false)),
+        ("/facilities/0/footprint/width", json!("bad")),
+        ("/facilities/0/footprint/height", json!(false)),
+    ] {
+        let mut bad = original.clone();
+        *bad.pointer_mut(path).unwrap() = value;
+        let leaf = path.rsplit('/').next().unwrap();
+        rejected_field(&bad, leaf);
+    }
+}

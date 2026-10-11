@@ -144,3 +144,26 @@ These are runtime arithmetic safety checks on controlled internal boundary input
 not claims of save compatibility, exactness for every nonfinancial elapsed counter,
 new UI affordances, or a completed #91 visual journey. Normal supported inputs and
 public fixture trajectories remain mandatory native/WASM/browser gates.
+
+## Wrong leaf types retain useful diagnostics
+
+Supplemental negative cases independently authored against frozen `54e0e9c`
+(code-complete production `7988b30` plus mechanical test corrections), before the
+wrong-type diagnostic repair. Existing useful-path acceptance already applies to
+these inputs; this adds executable coverage without changing the approved catalog.
+Native and actual generated WASM both mutate only one field in valid exported
+catalog data. Numeric/bool values where strings are required, and string/bool values
+where rule numbers are required, must reject and include the offending leaf token.
+Covered fields: schema_version/ruleset_id, species and facility key/label/asset_ref/
+unlock_ref, species appeal/minimum_social_group/space_per_animal, facility service
+and footprint width/height. Generic serde rejection without a field is insufficient.
+Exact error prose/wire format is flexible; a useful offending field is mandatory.
+
+Both frozen native and real WASM runs are genuinely RED at the first schema_version
+case: `catalog: invalid type: string "bad", expected u32` omits schema_version.
+Subsequent assertions remain unexecuted in these fail-fast runs. Root/producer's
+separate observed asset_ref case reports the same class of gap; it is not claimed
+independently executed here. Full case traversal must pass after the repair. The
+original fixed simulation oracle, native canary, real WASM parity and browser
+bootstrap/invalid-catalog requirements remain unchanged. No production edits accompany
+these tests; ordinary malformed JSON may still report syntax without a leaf.
