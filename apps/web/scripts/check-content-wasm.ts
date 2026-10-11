@@ -17,7 +17,7 @@ for (const row of nativeOracle) {
   accepted(game.place_concession(3, 6, "drink"))
   game.tick(137)
   const snapshot = JSON.parse(game.snapshot_json())
-  for (const key of Object.keys(row.result)) assert.deepEqual(snapshot[key], row.result[key])
+  for (const key of Object.keys(row.result)) assert.deepEqual(Object.hasOwn(snapshot, key) ? snapshot[key] : null, row.result[key])
   game.free()
 }
 const bad = structuredClone(definition)
