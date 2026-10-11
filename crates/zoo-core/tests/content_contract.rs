@@ -386,3 +386,28 @@ fn fixed_park_entities_require_owned_catalog_definitions() {
         );
     }
 }
+
+#[test]
+fn fixed_definition_identity_cannot_be_reassigned_to_a_buildable_service() {
+    for fixed in ["entrance", "animal_care_depot"] {
+        let mut definition = catalog();
+        let facility = definition["facilities"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|facility| facility["key"] == fixed)
+            .unwrap();
+        // Each replacement field is valid for an ordinary food stand, so only
+        // the fixed-entity ownership invariant can explain this rejection.
+        facility["service"] = json!("food");
+        facility["asset_ref"] = json!("food_stand");
+        let error = match ZooGame::from_content_json(&definition.to_string()) {
+            Ok(_) => panic!("Fixed identity accepted as a different service: {fixed}"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("facilities") && (error.contains(fixed) || error.contains("service")),
+            "Missing fixed service path: {error}"
+        );
+    }
+}
