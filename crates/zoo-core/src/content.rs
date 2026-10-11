@@ -198,6 +198,14 @@ impl Catalog {
             if !keys.insert(&facility.key) {
                 return Err(format!("{prefix}/key: duplicate facilities key"));
             }
+            if ["entrance", "animal_care_depot"].contains(&facility.key.as_str())
+                && facility.service != facility.key
+            {
+                return Err(format!(
+                    "{prefix}/service: fixed entity {} requires its matching service",
+                    facility.key
+                ));
+            }
             let expected_asset = match facility.service.as_str() {
                 "food" => "food_stand",
                 "drink" => "drink_stand",
@@ -208,6 +216,13 @@ impl Catalog {
             if facility.asset_ref != expected_asset {
                 return Err(format!(
                     "{prefix}/asset_ref: unsupported service presentation"
+                ));
+            }
+        }
+        for fixed in ["entrance", "animal_care_depot"] {
+            if !keys.contains(&fixed.to_owned()) {
+                return Err(format!(
+                    "facilities/{fixed}: missing fixed entity definition"
                 ));
             }
         }
