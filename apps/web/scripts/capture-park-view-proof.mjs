@@ -1,6 +1,8 @@
 import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
+import {captureLivingHabitatProof} from "./living-habitat-proof.mjs"
+
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
 const debuggingPort = 9231
 const chromeCandidates = [
@@ -379,6 +381,19 @@ try {
   await closeInspector()
   await frame()
   await screenshot("test-results/park-view-phone.png")
+
+  if (process.env.LIVING_HABITAT_PROOF === "1") {
+    const report = {status: "failed", ownerVisualSignoff: "pending", samples: []}
+    try {
+      report.samples = await captureLivingHabitatProof({cdp, evaluate, waitFor, assert, camera, project, click, touch, key, screenshot, samples: report.samples})
+      report.status = "passed"
+    } catch (error) {
+      report.error = String(error)
+      throw error
+    } finally {
+      writeFileSync("test-results/living-habitat-report.json", JSON.stringify(report, null, 2))
+    }
+  }
 
   console.log(
     "Park view dogfood passed: shared-renderer 3D park, full orbit at both tilt bounds (desktop + phone), wheel/drag/keyboard/touch camera control, canvas-picked path/habitat/stand/depot/habitat commands, and visual proofs.",

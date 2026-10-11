@@ -56,7 +56,7 @@ jobs:
             fi
             sleep 1
           done
-          bun scripts/capture-park-view-proof.mjs
+          LIVING_HABITAT_PROOF=1 bun scripts/capture-park-view-proof.mjs
       - name: Upload park view visual proof
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
@@ -66,6 +66,8 @@ jobs:
             apps/web/test-results/park-view-desktop.png
             apps/web/test-results/park-view-phone.png
             apps/web/test-results/park-view-rejected-placement.png
+            apps/web/test-results/living-*.png
+            apps/web/test-results/living-habitat-report.json
           if-no-files-found: error
           retention-days: 7
       - name: Upload playable web preview
