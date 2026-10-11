@@ -411,3 +411,29 @@ fn fixed_definition_identity_cannot_be_reassigned_to_a_buildable_service() {
         );
     }
 }
+
+#[test]
+fn fixed_services_cannot_gain_extra_owners_beside_canonical_definitions() {
+    for fixed in ["entrance", "animal_care_depot"] {
+        let mut definition = catalog();
+        let mut alias = definition["facilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|facility| facility["key"] == fixed)
+            .unwrap()
+            .clone();
+        alias["key"] = json!(format!("second_{fixed}"));
+        definition["facilities"].as_array_mut().unwrap().push(alias);
+        let error = match ZooGame::from_content_json(&definition.to_string()) {
+            Ok(_) => panic!("Multiple definitions accepted for fixed service: {fixed}"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("facilities")
+                && (error.contains("service") || error.contains("key"))
+                && error.contains(fixed),
+            "Missing fixed service ownership path: {error}"
+        );
+    }
+}
