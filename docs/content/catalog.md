@@ -17,6 +17,11 @@ or change the accepted renderer. Fixed entrance and care-depot entries describe
 the existing fixed facilities; they are not constructable concession services.
 Unlock references currently support the existing available state only.
 
+Malformed field types retain their typed Serde field paths via the
+`serde_path_to_error` adapter; the existing typed definitions remain the sole
+schema authority. Document bytes are bounded before parsing, with no parallel
+raw catalog tree.
+
 Supported loading budgets are 256 KiB per document, 128 entries in each group,
 and 256 UTF-8 bytes per text field. Keys use lowercase ASCII letters, digits and
 underscores. Unknown fields, duplicate IDs, unsupported versions/services,

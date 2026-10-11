@@ -84,38 +84,15 @@ impl Catalog {
         if document.len() > MAX_DOCUMENT_BYTES {
             return Err(format!("catalog: exceeds {MAX_DOCUMENT_BYTES} bytes"));
         }
-        // Value is bounded above before allocation. Validate numeric leaf types
-        // explicitly so overflow errors retain their full content field path.
-        let value: Value = serde_json::from_str(document).map_err(|e| format!("catalog: {e}"))?;
-        for group in ["species", "facilities", "unlocks"] {
-            let entries = value[group]
-                .as_array()
-                .ok_or_else(|| format!("{group}: expected array"))?;
-            if entries.is_empty() || entries.len() > MAX_ENTRIES {
-                return Err(format!("{group}: expected 1..={MAX_ENTRIES} entries"));
-            }
-            for (index, entry) in entries.iter().enumerate() {
-                let prefix = format!("{group}/{index}");
-                for field in ["purchase_cost_cents", "build_cost_cents", "price_cents"] {
-                    if let Some(n) = entry.get(field) {
-                        let n = n
-                            .as_i64()
-                            .ok_or_else(|| format!("{prefix}/{field}: expected bounded cents"))?;
-                        money(n, &format!("{prefix}/{field}"))?;
-                    }
-                }
-                if let Some(footprint) = entry.get("footprint") {
-                    for dimension in ["width", "height"] {
-                        if footprint[dimension].as_u64() != Some(1) {
-                            return Err(format!(
-                                "{prefix}/footprint/{dimension}: only existing 1x1 footprints are supported"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        let catalog: Self = serde_json::from_value(value).map_err(|e| format!("catalog: {e}"))?;
+        // Keep Serde's typed definition as the only schema authority. The
+        // adapter records its field path without first building a parallel JSON
+        // value tree or duplicating field/type tables.
+        let mut deserializer = serde_json::Deserializer::from_str(document);
+        let catalog: Self = serde_path_to_error::deserialize(&mut deserializer)
+            .map_err(|error| format!("catalog/{}: {}", error.path(), error.inner()))?;
+        deserializer
+            .end()
+            .map_err(|error| format!("catalog: {error}"))?;
         catalog.validate()?;
         Ok(catalog)
     }
@@ -125,6 +102,15 @@ impl Catalog {
             return Err("schema_version: only version 1 is supported".into());
         }
         text(&self.ruleset_id, "ruleset_id")?;
+        for (group, count) in [
+            ("species", self.species.len()),
+            ("facilities", self.facilities.len()),
+            ("unlocks", self.unlocks.len()),
+        ] {
+            if count == 0 || count > MAX_ENTRIES {
+                return Err(format!("{group}: expected 1..={MAX_ENTRIES} entries"));
+            }
+        }
         let manifest: Value = serde_json::from_str(include_str!("../../../assets/3d/catalog.json"))
             .expect("repository asset manifest is valid JSON");
         let assets: HashSet<&str> = manifest["assets"]
@@ -145,6 +131,10 @@ impl Catalog {
         let mut keys = HashSet::new();
         for (i, species) in self.species.iter().enumerate() {
             let prefix = format!("species/{i}");
+            money(
+                species.purchase_cost_cents,
+                &format!("{prefix}/purchase_cost_cents"),
+            )?;
             self.references(
                 &prefix,
                 &species.key,
@@ -181,6 +171,21 @@ impl Catalog {
         let mut keys = HashSet::new();
         for (i, facility) in self.facilities.iter().enumerate() {
             let prefix = format!("facilities/{i}");
+            money(
+                facility.build_cost_cents,
+                &format!("{prefix}/build_cost_cents"),
+            )?;
+            money(facility.price_cents, &format!("{prefix}/price_cents"))?;
+            for (dimension, value) in [
+                ("width", facility.footprint.width),
+                ("height", facility.footprint.height),
+            ] {
+                if value != 1 {
+                    return Err(format!(
+                        "{prefix}/footprint/{dimension}: only existing 1x1 footprints are supported"
+                    ));
+                }
+            }
             self.references(
                 &prefix,
                 &facility.key,
