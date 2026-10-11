@@ -165,9 +165,13 @@ export default function App() {
           return
         }
         const response = await fetch(new URL("content/catalog.json", document.baseURI))
-        if (!response.ok) throw new Error(`catalog: HTTP ${response.status}`)
+        if (!response.ok) {
+          throw new Error(`catalog: HTTP ${response.status}`)
+        }
         const documentText = await response.text()
-        if (cancelled) return
+        if (cancelled) {
+          return
+        }
         gameRef.current = ZooGame.from_content_json(documentText)
         refresh()
       })

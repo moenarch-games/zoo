@@ -307,7 +307,7 @@ const PATH: Hex = "#dcc59a"
 const PATH_EDGE: Hex = "#c2a979"
 const ENTRANCE_PLAZA: Hex = "#d4b98a"
 
-const HABITAT_GROUND: Record<SpeciesKey | "empty", Hex> = {
+const HABITAT_GROUND: Record<SpeciesKey, Hex> = {
   empty: "#a58f62",
   capybara: "#7aa75a",
   flamingo: "#9cc7a6",
@@ -332,7 +332,9 @@ function tileColor(tile: Tile, habitatSpecies: Map<number, SpeciesKey | null>): 
       const species =
         tile.habitat_id === null ? null : (habitatSpecies.get(tile.habitat_id) ?? null)
       const base = HABITAT_GROUND[species ?? "empty"]
-      if (!base) throw new Error(`Unsupported habitat presentation: ${species}`)
+      if (!base) {
+        throw new Error(`Unsupported habitat presentation: ${species}`)
+      }
       return hash(tile.x, tile.y, 7) > 0.5 ? base : shade(base, -0.04)
     }
     case "grass":
@@ -1415,9 +1417,13 @@ export function buildActorFrame(input: SceneFrameInput): SceneFrame {
  */
 function presentationSnapshot(snapshot: Snapshot): Snapshot {
   const speciesAsset = (key: string | null) => {
-    if (key === null) return null
+    if (key === null) {
+      return null
+    }
     const offer = snapshot.species_catalog.find((entry) => entry.key === key)
-    if (!offer) throw new Error(`species/${key}/asset_ref: absent validated presentation`)
+    if (!offer) {
+      throw new Error(`species/${key}/asset_ref: absent validated presentation`)
+    }
     return offer.asset_ref
   }
   return {
@@ -1432,8 +1438,9 @@ function presentationSnapshot(snapshot: Snapshot): Snapshot {
     })),
     concessions: snapshot.concessions.map((stand) => {
       const offer = snapshot.facility_catalog.find((entry) => entry.key === stand.kind)
-      if (!offer)
+      if (!offer) {
         throw new Error(`facilities/${stand.kind}/asset_ref: absent validated presentation`)
+      }
       return { ...stand, kind: offer.service }
     }),
   }
