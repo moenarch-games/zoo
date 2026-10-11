@@ -5065,5 +5065,4 @@ mod tests {
     mod economic_boundary_acceptance {
         include!("economic_boundary_acceptance_tests.rs");
     }
-
 }

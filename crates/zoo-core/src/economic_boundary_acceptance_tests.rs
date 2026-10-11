@@ -15,8 +15,10 @@ fn attraction() -> GameState {
 #[test]
 fn exact_cash_and_daily_aggregate_edges_commit_once_or_preserve_state() {
     assert_eq!(content::MAX_CENTS, 9_007_199_254_740_991);
-    let mut state = GameState::default();
-    state.cash_cents = content::MAX_CENTS - 1;
+    let mut state = GameState {
+        cash_cents: content::MAX_CENTS - 1,
+        ..GameState::default()
+    };
     assert!(state.earn(1, IncomeCategory::Admissions));
     assert_eq!(state.cash_cents, content::MAX_CENTS);
     let before = snapshot(&state);
