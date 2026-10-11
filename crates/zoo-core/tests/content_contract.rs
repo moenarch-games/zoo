@@ -123,3 +123,189 @@ fn same_rules_and_commands_replay_identically() {
     }
     assert_eq!(view(&first), view(&second));
 }
+
+#[path = "content_baseline.rs"]
+mod baseline;
+
+#[test]
+fn loaded_default_catalog_matches_protected_command_tick_fixtures() {
+    let oracle: Value =
+        serde_json::from_str(include_str!("fixtures/content-command-baseline.json")).unwrap();
+    for row in oracle.as_array().unwrap() {
+        let mut game = load(&catalog());
+        let actual = baseline::command_fixture(&mut game, row["species"].as_str().unwrap());
+        assert_eq!(actual, row["result"], "{}", row["species"]);
+    }
+}
+
+#[test]
+fn catalog_facilities_preserve_accepted_costs_and_one_tile_footprints() {
+    let definition = catalog();
+    for (key, build_cost, price) in [("food", 18000, 500), ("drink", 14000, 350)] {
+        let facility = definition["facilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["key"] == key)
+            .unwrap();
+        assert_eq!(facility["build_cost_cents"], build_cost);
+        assert_eq!(facility["price_cents"], price);
+        assert_eq!(facility["footprint"], json!({"width":1,"height":1}));
+    }
+}
+
+#[test]
+fn definition_only_facility_uses_real_placement_cost_and_stable_content_id() {
+    let mut definition = catalog();
+    let mut facility = definition["facilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"] == "food")
+        .unwrap()
+        .clone();
+    facility["key"] = json!("acceptance_food_facility");
+    facility["label"] = json!("Acceptance food facility");
+    facility["build_cost_cents"] = json!(12345);
+    facility["price_cents"] = json!(456);
+    definition["facilities"]
+        .as_array_mut()
+        .unwrap()
+        .push(facility);
+    let mut game = load(&definition);
+    let before = view(&game)["cash_cents"].as_i64().unwrap();
+    accepted(game.place_concession(1, 6, "acceptance_food_facility".into()));
+    let after = view(&game);
+    assert_eq!(after["cash_cents"].as_i64().unwrap(), before - 12345);
+    assert_eq!(after["concessions"][0]["kind"], "acceptance_food_facility");
+    assert_eq!(after["concessions"][0]["price_cents"], 456);
+    // Repeated placement remains idempotent through the existing command seam.
+    accepted(game.place_concession(1, 6, "acceptance_food_facility".into()));
+    assert_eq!(view(&game), after);
+}
+
+fn rejected_field(definition: &Value, field: &str) {
+    let error = match ZooGame::from_content_json(&definition.to_string()) {
+        Ok(_) => panic!("invalid {field} accepted"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains(field),
+        "missing useful {field} path: {error}"
+    );
+}
+
+#[test]
+fn asset_unlock_footprint_cost_and_payload_bounds_fail_closed() {
+    let original = catalog();
+    for (path, value, field) in [
+        ("/facilities/0/footprint/width", json!(0), "width"),
+        ("/facilities/0/footprint/height", json!(u64::MAX), "height"),
+        (
+            "/facilities/0/build_cost_cents",
+            json!(-1),
+            "build_cost_cents",
+        ),
+        (
+            "/facilities/0/build_cost_cents",
+            json!(u64::MAX),
+            "build_cost_cents",
+        ),
+        ("/facilities/0/price_cents", json!(i64::MAX), "price_cents"),
+        (
+            "/species/0/purchase_cost_cents",
+            json!(i64::MAX),
+            "purchase_cost_cents",
+        ),
+        (
+            "/species/0/asset_ref",
+            json!("missing-real-asset"),
+            "asset_ref",
+        ),
+        (
+            "/facilities/0/asset_ref",
+            json!("missing-real-asset"),
+            "asset_ref",
+        ),
+        (
+            "/species/0/unlock_ref",
+            json!("missing-unlock"),
+            "unlock_ref",
+        ),
+        (
+            "/facilities/0/unlock_ref",
+            json!("missing-unlock"),
+            "unlock_ref",
+        ),
+    ] {
+        let mut changed = original.clone();
+        let components: Vec<_> = path.trim_start_matches('/').split('/').collect();
+        let leaf = components.last().unwrap();
+        let parent = format!("/{}", components[..components.len() - 1].join("/"));
+        changed
+            .pointer_mut(&parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert((*leaf).to_owned(), value);
+        rejected_field(&changed, field);
+    }
+    let mut duplicate = original.clone();
+    let facility = duplicate["facilities"][0].clone();
+    duplicate["facilities"]
+        .as_array_mut()
+        .unwrap()
+        .push(facility);
+    rejected_field(&duplicate, "facilities");
+    let mut oversized = original;
+    // Multi-megabyte payload must fail before creating a park, not become unbounded content.
+    oversized["species"][0]["label"] = json!("x".repeat(16 * 1024 * 1024));
+    assert!(ZooGame::from_content_json(&oversized.to_string()).is_err());
+}
+
+#[test]
+fn localization_and_valid_presentation_changes_do_not_change_simulation_decisions() {
+    let original = catalog();
+    let mut cosmetic = original.clone();
+    for species in cosmetic["species"].as_array_mut().unwrap() {
+        species["label"] = json!("Localized animal");
+    }
+    // An already valid real presentation reference is cosmetic, not a rules change.
+    let alternate_asset = original["species"][1]["asset_ref"].clone();
+    assert!(alternate_asset.as_str().is_some_and(|id| !id.is_empty()));
+    cosmetic["species"][0]["asset_ref"] = alternate_asset;
+    for facility in cosmetic["facilities"].as_array_mut().unwrap() {
+        facility["label"] = json!("Localized stand");
+    }
+    // Keep actual verified assets; this contract never supplies proxy/generated art.
+    for name in [
+        "capybara", "flamingo", "zebra", "giraffe", "elephant", "penguin",
+    ] {
+        let mut first = load(&original);
+        let mut second = load(&cosmetic);
+        let mut a = baseline::command_fixture(&mut first, name);
+        let mut b = baseline::command_fixture(&mut second, name);
+        // Presentation messages may use labels. Retain every numeric/state/ID decision.
+        fn remove_messages(value: &mut Value) {
+            match value {
+                Value::Object(fields) => {
+                    for key in ["label", "feeding_status", "maintenance_status", "status"] {
+                        fields.remove(key);
+                    }
+                    for child in fields.values_mut() {
+                        remove_messages(child);
+                    }
+                }
+                Value::Array(values) => {
+                    for child in values {
+                        remove_messages(child);
+                    }
+                }
+                _ => {}
+            }
+        }
+        remove_messages(&mut a);
+        remove_messages(&mut b);
+        assert_eq!(a, b, "cosmetic edit changed decisions for {name}");
+    }
+}
