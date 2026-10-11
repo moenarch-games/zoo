@@ -5062,4 +5062,8 @@ mod tests {
             serde_json::to_string(&second.snapshot()).unwrap()
         );
     }
+    mod economic_boundary_acceptance {
+        include!("economic_boundary_acceptance_tests.rs");
+    }
+
 }

@@ -113,3 +113,34 @@ and baseline-compatible simulation decisions. Browser invalid-catalog failure mu
 remain observable, with no permissive default catalog fallback. No changes to
 provenance/identity expectations may be made to get a green test without independent
 specification verification.
+
+## Supplemental economic boundary audit after implementation
+
+Independent supplemental tests authored after code-complete `7988b30`, not a
+pre-implementation RED contract: `economic_boundary_acceptance_tests.rs`, included
+only inside the existing private test module. Actual private GameState helpers
+exercise exact cash-edge/aggregate-edge success followed by atomic rejection,
+negative expense rejection, all four upkeep charges failing after initial categories,
+lifetime revenue and both u32 sale counters, cash/daily-ledger sale failure, and
+exhausted guest identifiers. Failed transactions compare the entire debug state,
+including hidden authoritative fields, not only HUD cash. Sale fixtures first create
+an actual attraction/guest/stand through existing commands and spawn logic; a reset
+positive control actually buys the drink, preventing an inactive fixture from passing.
+These tests do not prescribe a new content budget, balance default or persistence API.
+
+Source audit: catalog cents are nonnegative and at most exact JavaScript MAX_SAFE_INTEGER
+9007199254740991. Spend/earn stage both checked cash and ledger before committing;
+ledger nonnegative income/expense totals each remain at most floor(MAX/2). Hence
+profit lies in [-floor(MAX/2),floor(MAX/2)] and a two-day difference has magnitude
+at most 2*floor(MAX/2)=MAX-1, still exactly representable in JS. The independent
+boundary test pins this arithmetic rather than assuming the constant is safe.
+Concession sales preflight lifetime revenue and both counters before income and
+before guest restoration, wear, litter or maintenance side effects. Guest exhaustion
+precedes admission credit. Upkeep stages all four categories before cash/ledger
+commit. Default command/tick numerical parity remains separately protected by the
+pre-implementation six-species oracle; supplemental boundaries do not replace it.
+
+These are runtime arithmetic safety checks on controlled internal boundary inputs,
+not claims of save compatibility, exactness for every nonfinancial elapsed counter,
+new UI affordances, or a completed #91 visual journey. Normal supported inputs and
+public fixture trajectories remain mandatory native/WASM/browser gates.
