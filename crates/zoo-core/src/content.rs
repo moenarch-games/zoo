@@ -206,6 +206,14 @@ impl Catalog {
                     facility.key
                 ));
             }
+            if ["entrance", "animal_care_depot"].contains(&facility.service.as_str())
+                && facility.key != facility.service
+            {
+                return Err(format!(
+                    "{prefix}/key: fixed service {} requires its canonical identity",
+                    facility.service
+                ));
+            }
             let expected_asset = match facility.service.as_str() {
                 "food" => "food_stand",
                 "drink" => "drink_stand",
