@@ -3834,7 +3834,7 @@ mod tests {
             width,
             height,
             orientation: HabitatOrientation::for_dimensions(width, height),
-            species: Some(Species::Capybara),
+            species: Some(Species::parse("capybara").expect("default catalog capybara")),
             animals: 1,
             welfare: 100,
             food: 100,
