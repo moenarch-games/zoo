@@ -141,6 +141,28 @@ same legitimate observation command on both sides and varies only presentation.
 This corrects a partial historical expectation; it is not implementation-authored
 acceptance weakening or a new owner decision.
 
+### Same-individual activity progression supplement
+
+Independent root review of `39d0696` found that a global activity set alone could
+accept permanently Walking/Feeding/Resting animals without a genuine transition.
+Before any Zoo140 production, strengthen both native and browser contracts: at
+least one **same stable individual** must actually transition between purposeful
+Walking and Feeding or Resting (either legitimate direction), across actual
+unpaused authoritative ticks. All three globally visible activities remain
+required; all three need not occur on one animal. Native records preserve both
+core targets; browser records include actual core target, submitted node/clip and
+resource identity on both sides, checked through the existing correspondence
+contract, and store the transition in the CI report. Static distinct activity
+assignments cannot satisfy this requirement.
+
+The authored living fixture must prepare legitimately reachable transitions
+through the actual core/scenario model, not inject activity, advance a fake visual
+clock or fabricate frames. Existing finite observation loops remain test guards;
+no care cadence, FPS, wall-clock deadline or new numerical gameplay requirement
+is imposed. Baseline still fails at missing core activity/name and browser hook,
+so these later transition assertions remain **UNRUN**, not independently witnessed
+failures or passing evidence. Prior checks and protected expectations remain.
+
 ### Actual baseline and remaining gates
 
 Before extending expectations, on integrated baseline `da6e107`:

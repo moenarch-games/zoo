@@ -75,6 +75,8 @@ fn purposeful_walking_feeding_and_resting_are_actual_deterministic_core_state() 
     let mut first = populated();
     let mut second = populated();
     let mut activities = std::collections::BTreeSet::new();
+    let mut previous = std::collections::BTreeMap::<u64, (String, Value)>::new();
+    let mut transitioned = false;
     for _ in 0..180 {
         let state = snapshot(&first);
         assert_eq!(first.snapshot_json(), second.snapshot_json());
@@ -90,6 +92,17 @@ fn purposeful_walking_feeding_and_resting_are_actual_deterministic_core_state() 
                     "purposeful activity needs its authoritative target"
                 );
             }
+            let id = animal["id"]
+                .as_u64()
+                .expect("stable actual core individual ID");
+            if let Some((prior, target)) = previous.get(&id)
+                && ((prior == "walking" && matches!(activity.as_str(), "feeding" | "resting"))
+                    || (activity == "walking" && matches!(prior.as_str(), "feeding" | "resting")))
+            {
+                assert!(!target.is_null() && !animal["activity_target"].is_null());
+                transitioned = true;
+            }
+            previous.insert(id, (activity, animal["activity_target"].clone()));
         }
         first.tick(1);
         second.tick(1);
@@ -99,5 +112,9 @@ fn purposeful_walking_feeding_and_resting_are_actual_deterministic_core_state() 
             .iter()
             .all(|activity| activities.contains(*activity)),
         "real finite fixture must supply all selected living activities: {activities:?}"
+    );
+    assert!(
+        transitioned,
+        "same stable individual must actually transition Walking↔Feeding/Resting across real ticks; static activity assignments are insufficient"
     );
 }

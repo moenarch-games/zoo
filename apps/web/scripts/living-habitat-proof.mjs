@@ -222,6 +222,8 @@ export async function captureLivingHabitatProof({cdp, evaluate, waitFor, assert,
     samples.push({viewport:label,step:'objective-progress',state:progressed})
     await activate('[data-action="resume"]', phone)
     const activities = new Set(initial.animals.map(a=>a.activity))
+    const previousActivities = new Map()
+    const activityTransitions = []
     const guestHistory = new Map()
     const reacted = new Set()
     await waitFor('authoritative activity progression', `window.__zooParkView.livingHabitat().tick > ${initial.tick}`, 200)
@@ -231,6 +233,21 @@ export async function captureLivingHabitatProof({cdp, evaluate, waitFor, assert,
       for (const animal of state.animals) {
         const original = initial.animals.find(a=>sameId(a.id,animal.id))
         if (original) assert(original.name === animal.name, 'Stable individual identity/name changed during animation')
+        const core = state.simulation.animals.find(a=>sameId(a.id,animal.id))
+        const node = state.renderer.instances.find(n=>n.nodeId === animal.renderNodeId)
+        const asset = state.assets.find(a=>a.id === node.assetRef)
+        const observation = {tick:state.tick,activity:animal.activity,target:core.activity_target,
+          nodeId:node.nodeId,assetRef:node.assetRef,clipName:node.clipName,
+          resourceUrl:asset.resourceUrl,resourceSha256:asset.resourceSha256}
+        const previous = previousActivities.get(String(animal.id))
+        if (previous && state.tick > previous.tick &&
+          ((previous.activity === 'Walking' && ['Feeding','Resting'].includes(animal.activity)) ||
+           (animal.activity === 'Walking' && ['Feeding','Resting'].includes(previous.activity)))) {
+          assert(previous.target && observation.target && previous.clipName && observation.clipName &&
+            previous.resourceSha256 && observation.resourceSha256, 'Actual transition lost core target or submitted resource/clip correspondence')
+          activityTransitions.push({animalId:animal.id,from:previous,to:observation})
+        }
+        previousActivities.set(String(animal.id),observation)
       }
       for (const guest of state.guests) {
         const phases = guestHistory.get(guest.id) ?? new Set()
@@ -240,10 +257,12 @@ export async function captureLivingHabitatProof({cdp, evaluate, waitFor, assert,
       state.animals.forEach(a=>activities.add(a.activity))
       samples.push({viewport:label,step:'activity',state})
       await screenshot(`test-results/living-${label}-activity-${i}.png`)
-      if (activities.has('Walking') && activities.has('Feeding') && activities.has('Resting') && reacted.size > 0) break
+      if (activities.has('Walking') && activities.has('Feeding') && activities.has('Resting') && reacted.size > 0 && activityTransitions.length > 0) break
       await waitFor('next authoritative tick', `window.__zooParkView.livingHabitat().tick > ${state.tick}`, 200)
     }
     assert(['Walking','Feeding','Resting'].every(a=>activities.has(a)), 'Fixture must demonstrate walking, feeding and resting', [...activities])
+    assert(activityTransitions.length > 0, 'No same stable individual actually progressed Walking↔Feeding/Resting across unpaused authoritative ticks')
+    samples.push({viewport:label,step:'individual-activity-transition',transitions:activityTransitions})
     assert(reacted.size > 0, 'No same actual guest approached, viewed and visibly responded')
     // Deliberate network fault on a REAL used resource, never a fake successful asset.
     const unavailable = initial.assets.find(a=>a.kind === 'animal')
