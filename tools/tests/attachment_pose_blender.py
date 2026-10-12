@@ -72,10 +72,23 @@ def pairs(asset):
 
 
 def face_parts(asset):
-    names = [obj.name for obj in bpy.context.scene.objects]
-    prefixes = ('eye_', 'pupil_', 'ear_', 'tusk_', 'capybara_cheek_', 'ossicone_')
-    return [name for name in names if name.startswith(prefixes)
-            or name in ('nose', 'muzzle', 'beak', 'cap')]
+    # Existing source content roles are explicit: deleting/renaming all face meshes
+    # must not turn an empty automatically discovered set into an acceptance pass.
+    if asset in HUMANS:
+        return ['eye_-1', 'eye_1', 'nose', 'cap']
+    if asset in QUADRUPEDS:
+        names = ['eye_left', 'eye_right', 'ear_-1', 'ear_1']
+        if asset == 'elephant':
+            return ['eye_left', 'eye_right', 'ear_left', 'ear_right', 'tusk_-1', 'tusk_1']
+        names += ['muzzle', 'nose']
+        if asset == 'capybara':
+            names += ['capybara_cheek_-1', 'capybara_cheek_1']
+        if asset == 'giraffe':
+            names += ['ossicone_-1', 'ossicone_1', 'ossicone_tip_-1', 'ossicone_tip_1']
+        return names
+    if asset == 'flamingo':
+        return ['eye_-1', 'eye_1', 'beak']
+    return ['eye_-1', 'eye_1', 'pupil_-1', 'pupil_1', 'beak']
 
 
 def render(path):
