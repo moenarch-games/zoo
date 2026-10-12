@@ -72,16 +72,18 @@ function guestStateLabel(state: Guest["state"]) {
   }
 }
 
-function toolHint(tool: Tool) {
+function toolHint(tool: Tool, snapshot: Snapshot | null) {
+  if (tool.startsWith("facility:")) {
+    const offer = snapshot?.facility_catalog.find((entry) => entry.key === tool.slice(9))
+    return offer
+      ? `Click clear grass beside a path to build ${offer.label} · ${money(offer.build_cost_cents)}.`
+      : "Select an available facility."
+  }
   switch (tool) {
     case "path":
       return "Drag across tiles to paint paths · $10 per new tile."
     case "habitat":
       return "Press on one corner, drag to the opposite corner, and release to close the fence."
-    case "food":
-      return "Click clear grass beside a path to build a food stand · $180."
-    case "drink":
-      return "Click clear grass beside a path to build a drink stand · $140."
     case "bulldoze":
       return "Click a path or any tile inside a habitat to remove it."
     case "select":
@@ -158,17 +160,25 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     init()
-      .then(() => {
+      .then(async () => {
         if (cancelled) {
           return
         }
-        gameRef.current = new ZooGame()
+        const response = await fetch(new URL("content/catalog.json", document.baseURI))
+        if (!response.ok) {
+          throw new Error(`catalog: HTTP ${response.status}`)
+        }
+        const documentText = await response.text()
+        if (cancelled) {
+          return
+        }
+        gameRef.current = ZooGame.from_content_json(documentText)
         refresh()
       })
       .catch((error: unknown) => {
         console.error("Zoo simulation initialization failed", error)
         if (!cancelled) {
-          setMessage("The park simulation could not load. Reload to try again.")
+          setMessage(`The park simulation could not load: ${String(error)}`)
           setMessageKind("error")
         }
       })
@@ -307,7 +317,8 @@ export default function App() {
     if (!stand) {
       return
     }
-    const label = stand.kind === "food" ? "Food" : "Drink"
+    const label =
+      snapshot?.facility_catalog.find((offer) => offer.key === stand.kind)?.label ?? stand.kind
     inform(
       `${label} stand #${stand.id} · ${stand.condition}% condition · ${stand.service_state} · ${stand.maintenance_status}`,
     )
@@ -383,8 +394,8 @@ export default function App() {
       return
     }
 
-    if ((tool === "food" || tool === "drink") && target) {
-      perform(() => game.place_concession(target.x, target.y, tool))
+    if (tool.startsWith("facility:") && target) {
+      perform(() => game.place_concession(target.x, target.y, tool.slice(9)))
     }
   }
 
@@ -468,7 +479,11 @@ export default function App() {
   }
 
   if (!snapshot) {
-    return <main className="loading">Preparing the park simulation…</main>
+    return (
+      <main className="loading">
+        {messageKind === "error" ? <p role="alert">{message}</p> : "Preparing the park simulation…"}
+      </main>
+    )
   }
 
   const tooltip =
@@ -881,7 +896,7 @@ export default function App() {
                       onClick={() => adopt(offer.key)}
                     >
                       <span className="species-offer">
-                        <i>{speciesGlyph(offer.key)}</i>
+                        <i>{speciesGlyph(offer.asset_ref)}</i>
                         <span>
                           <b>{offer.label}</b>
                           <small>
@@ -1046,7 +1061,7 @@ export default function App() {
       <footer className="bottom-dock">
         <div className="message-stack">
           <div className={`message bevel ${messageKind === "error" ? "error" : ""}`}>{message}</div>
-          <div className="tool-hint">{toolHint(tool)}</div>
+          <div className="tool-hint">{toolHint(tool, snapshot)}</div>
         </div>
         <nav className="toolbar bevel" aria-label="Build tools">
           <ToolButton
@@ -1067,18 +1082,17 @@ export default function App() {
             label="Draw habitat"
             onClick={() => setTool("habitat")}
           />
-          <ToolButton
-            active={tool === "food"}
-            icon="▰"
-            label="Food stand · $180"
-            onClick={() => setTool("food")}
-          />
-          <ToolButton
-            active={tool === "drink"}
-            icon="▥"
-            label="Drink stand · $140"
-            onClick={() => setTool("drink")}
-          />
+          {snapshot?.facility_catalog
+            .filter((offer) => offer.service === "food" || offer.service === "drink")
+            .map((offer) => (
+              <ToolButton
+                key={offer.key}
+                active={tool === `facility:${offer.key}`}
+                icon={offer.service === "food" ? "▰" : "▥"}
+                label={`${offer.label} · ${money(offer.build_cost_cents)}`}
+                onClick={() => setTool(`facility:${offer.key}`)}
+              />
+            ))}
           <ToolButton
             active={tool === "bulldoze"}
             icon="⌫"
