@@ -1,9 +1,9 @@
 // Shapes of the zoo-core WASM snapshot and command results consumed by the web adapter.
 
-export type Tool = "select" | "path" | "habitat" | "food" | "drink" | "bulldoze"
+export type Tool = "select" | "path" | "habitat" | "bulldoze" | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
-export type SpeciesKey = "capybara" | "flamingo" | "zebra" | "giraffe" | "elephant" | "penguin"
-export type ConcessionKind = "food" | "drink"
+export type SpeciesKey = string
+export type ConcessionKind = string
 export type FenceSide = "north" | "east" | "south" | "west"
 
 export type Point = {
@@ -145,7 +145,19 @@ export type Guest = Point & {
   thought: string
 }
 
+export type FacilityOffer = {
+  key: string
+  label: string
+  service: "food" | "drink" | "entrance" | "animal_care_depot"
+  asset_ref: string
+  unlock_ref: string
+  build_cost_cents: number
+  price_cents: number
+  footprint: { width: number; height: number }
+}
+
 export type SpeciesOffer = {
+  asset_ref: string
   key: SpeciesKey
   label: string
   purchase_cost_cents: number
@@ -180,6 +192,8 @@ export type FinanceDay = {
 }
 
 export type Snapshot = {
+  ruleset_id: string
+  facility_catalog: FacilityOffer[]
   width: number
   height: number
   day: number

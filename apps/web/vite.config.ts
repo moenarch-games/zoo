@@ -1,8 +1,26 @@
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
+import catalog from "../../crates/zoo-core/content/catalog.json" with { type: "json" }
+
+const catalogSource = JSON.stringify(catalog)
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "zoo-owned-content",
+      configureServer(server) {
+        server.middlewares.use("/content/catalog.json", (_request, response) => {
+          response.setHeader("Content-Type", "application/json")
+          response.end(catalogSource)
+        })
+      },
+      generateBundle() {
+        this.emitFile({ type: "asset", fileName: "content/catalog.json", source: catalogSource })
+      },
+    },
+  ],
   base: "./",
   build: {
     target: "es2022",

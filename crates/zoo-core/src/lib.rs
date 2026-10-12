@@ -1,5 +1,9 @@
+mod content;
+
+use content::{Catalog, Facility, Species};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 const WIDTH: u32 = 20;
@@ -19,9 +23,11 @@ const WATER_REFILL_COST: i64 = 800;
 const CLEAN_HABITAT_COST: i64 = 2_000;
 const SHELTER_COST: i64 = 12_000;
 const CARE_DECAY_INTERVAL_MINUTES: u32 = 15;
+#[cfg(test)]
 const FOOD_STAND_BUILD_COST: i64 = 18_000;
-const DRINK_STAND_BUILD_COST: i64 = 14_000;
+#[cfg(test)]
 const FOOD_PRICE: i64 = 500;
+#[cfg(test)]
 const DRINK_PRICE: i64 = 350;
 const FOOD_BUY_THRESHOLD: u32 = 20;
 const DRINK_BUY_THRESHOLD: u32 = 20;
@@ -90,34 +96,6 @@ impl ConcessionKind {
             _ => None,
         }
     }
-
-    fn key(self) -> &'static str {
-        match self {
-            Self::Food => "food",
-            Self::Drink => "drink",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Food => "Food stand",
-            Self::Drink => "Drink stand",
-        }
-    }
-
-    fn build_cost(self) -> i64 {
-        match self {
-            Self::Food => FOOD_STAND_BUILD_COST,
-            Self::Drink => DRINK_STAND_BUILD_COST,
-        }
-    }
-
-    fn price_cents(self) -> i64 {
-        match self {
-            Self::Food => FOOD_PRICE,
-            Self::Drink => DRINK_PRICE,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +104,7 @@ struct Concession {
     x: u32,
     y: u32,
     kind: ConcessionKind,
+    definition: Facility,
     sales_today: u32,
     total_sales: u32,
     total_revenue_cents: i64,
@@ -215,14 +194,31 @@ struct FinanceLedger {
 }
 
 impl FinanceLedger {
-    fn record_income(&mut self, category: IncomeCategory, cents: i64) {
+    fn record_income(&mut self, category: IncomeCategory, cents: i64) -> bool {
+        if cents < 0
+            || self
+                .income_total_cents()
+                .checked_add(cents)
+                .is_none_or(|total| total > content::MAX_CENTS / 2)
+        {
+            return false;
+        }
         match category {
             IncomeCategory::Admissions => self.admissions_income_cents += cents,
             IncomeCategory::Concessions => self.concession_income_cents += cents,
         }
+        true
     }
 
-    fn record_expense(&mut self, category: ExpenseCategory, cents: i64) {
+    fn record_expense(&mut self, category: ExpenseCategory, cents: i64) -> bool {
+        if cents < 0
+            || self
+                .expense_total_cents()
+                .checked_add(cents)
+                .is_none_or(|total| total > content::MAX_CENTS / 2)
+        {
+            return false;
+        }
         match category {
             ExpenseCategory::Construction => self.construction_expense_cents += cents,
             ExpenseCategory::AnimalPurchase => self.animal_purchase_expense_cents += cents,
@@ -237,6 +233,7 @@ impl FinanceLedger {
             ExpenseCategory::JanitorWages => self.janitor_wages_expense_cents += cents,
             ExpenseCategory::MechanicWages => self.mechanic_wages_expense_cents += cents,
         }
+        true
     }
 
     fn income_total_cents(self) -> i64 {
@@ -337,109 +334,31 @@ struct WelfareProfile {
     space_per_animal: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Species {
-    Capybara,
-    Flamingo,
-    Zebra,
-    Giraffe,
-    Elephant,
-    Penguin,
-}
-
-const ALL_SPECIES: [Species; 6] = [
-    Species::Capybara,
-    Species::Flamingo,
-    Species::Zebra,
-    Species::Giraffe,
-    Species::Elephant,
-    Species::Penguin,
-];
-
 impl Species {
+    #[cfg(test)]
     fn parse(value: &str) -> Option<Self> {
-        match value {
-            "capybara" => Some(Self::Capybara),
-            "flamingo" => Some(Self::Flamingo),
-            "zebra" => Some(Self::Zebra),
-            "giraffe" => Some(Self::Giraffe),
-            "elephant" => Some(Self::Elephant),
-            "penguin" => Some(Self::Penguin),
-            _ => None,
-        }
+        Catalog::parse(content::DEFAULT_DOCUMENT)
+            .expect("valid built-in catalog")
+            .species
+            .into_iter()
+            .find(|species| species.key == value)
     }
-
-    fn key(self) -> &'static str {
-        match self {
-            Self::Capybara => "capybara",
-            Self::Flamingo => "flamingo",
-            Self::Zebra => "zebra",
-            Self::Giraffe => "giraffe",
-            Self::Elephant => "elephant",
-            Self::Penguin => "penguin",
-        }
+    fn key(&self) -> &str {
+        &self.key
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Capybara => "Capybara",
-            Self::Flamingo => "Flamingo",
-            Self::Zebra => "Zebra",
-            Self::Giraffe => "Giraffe",
-            Self::Elephant => "Elephant",
-            Self::Penguin => "Penguin",
-        }
+    fn label(&self) -> &str {
+        &self.label
     }
-
-    fn purchase_cost(self) -> i64 {
-        match self {
-            Self::Capybara => 25_000,
-            Self::Flamingo => 18_000,
-            Self::Zebra => 40_000,
-            Self::Giraffe => 65_000,
-            Self::Elephant => 90_000,
-            Self::Penguin => 30_000,
-        }
+    fn purchase_cost(&self) -> i64 {
+        self.purchase_cost_cents
     }
-
-    fn appeal(self) -> u32 {
-        match self {
-            Self::Capybara => 95,
-            Self::Flamingo => 80,
-            Self::Zebra => 125,
-            Self::Giraffe => 160,
-            Self::Elephant => 190,
-            Self::Penguin => 110,
-        }
+    fn appeal(&self) -> u32 {
+        self.appeal
     }
-
-    fn welfare_profile(self) -> WelfareProfile {
-        match self {
-            Self::Capybara => WelfareProfile {
-                minimum_social_group: 2,
-                space_per_animal: 4,
-            },
-            Self::Flamingo => WelfareProfile {
-                minimum_social_group: 3,
-                space_per_animal: 2,
-            },
-            Self::Zebra => WelfareProfile {
-                minimum_social_group: 3,
-                space_per_animal: 5,
-            },
-            Self::Giraffe => WelfareProfile {
-                minimum_social_group: 2,
-                space_per_animal: 8,
-            },
-            Self::Elephant => WelfareProfile {
-                minimum_social_group: 2,
-                space_per_animal: 12,
-            },
-            Self::Penguin => WelfareProfile {
-                minimum_social_group: 4,
-                space_per_animal: 3,
-            },
+    fn welfare_profile(&self) -> WelfareProfile {
+        WelfareProfile {
+            minimum_social_group: self.minimum_social_group,
+            space_per_animal: self.space_per_animal,
         }
     }
 }
@@ -481,13 +400,13 @@ impl Habitat {
     }
 
     fn appeal(&self) -> u32 {
-        self.species.map_or(0, |species| {
+        self.species.as_ref().map_or(0, |species| {
             species.appeal().saturating_mul(self.animals.max(1))
         })
     }
 
     fn social_score(&self) -> u32 {
-        let Some(species) = self.species else {
+        let Some(species) = &self.species else {
             return 100;
         };
         if self.animals == 0 {
@@ -503,7 +422,7 @@ impl Habitat {
     }
 
     fn space_score(&self) -> u32 {
-        let Some(species) = self.species else {
+        let Some(species) = &self.species else {
             return 100;
         };
         if self.animals == 0 {
@@ -561,7 +480,7 @@ impl Habitat {
     }
 
     fn welfare_status(&self) -> String {
-        let Some(species) = self.species else {
+        let Some(species) = &self.species else {
             return "Ready for animals".to_owned();
         };
         let social = self.social_score();
@@ -768,6 +687,7 @@ fn fence_segments(x: u32, y: u32, width: u32, height: u32) -> Vec<FenceSegment> 
 
 #[derive(Clone, Debug)]
 struct GameState {
+    catalog: Arc<Catalog>,
     width: u32,
     height: u32,
     tiles: Vec<TileKind>,
@@ -801,6 +721,9 @@ struct GameState {
 impl Default for GameState {
     fn default() -> Self {
         let mut state = Self {
+            catalog: Arc::new(
+                Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog"),
+            ),
             width: WIDTH,
             height: HEIGHT,
             tiles: vec![TileKind::Grass; (WIDTH * HEIGHT) as usize],
@@ -863,14 +786,37 @@ impl GameState {
         if self.cash_cents < cents {
             return Err("Not enough cash");
         }
-        self.cash_cents -= cents;
-        self.finance_today.record_expense(category, cents);
+        let Some(cash) = self
+            .cash_cents
+            .checked_sub(cents)
+            .filter(|cash| (-content::MAX_CENTS..=content::MAX_CENTS).contains(cash))
+        else {
+            return Err("Cash exceeds the exact financial range");
+        };
+        let mut ledger = self.finance_today;
+        if !ledger.record_expense(category, cents) {
+            return Err("Expense exceeds the exact financial range");
+        }
+        self.cash_cents = cash;
+        self.finance_today = ledger;
         Ok(())
     }
 
-    fn earn(&mut self, cents: i64, category: IncomeCategory) {
-        self.cash_cents += cents;
-        self.finance_today.record_income(category, cents);
+    fn earn(&mut self, cents: i64, category: IncomeCategory) -> bool {
+        let Some(cash) = self
+            .cash_cents
+            .checked_add(cents)
+            .filter(|cash| (-content::MAX_CENTS..=content::MAX_CENTS).contains(cash))
+        else {
+            return false;
+        };
+        let mut ledger = self.finance_today;
+        if !ledger.record_income(category, cents) {
+            return false;
+        }
+        self.cash_cents = cash;
+        self.finance_today = ledger;
+        true
     }
 
     fn place_path(&mut self, x: u32, y: u32) -> ActionResult {
@@ -897,7 +843,16 @@ impl GameState {
     }
 
     fn place_concession(&mut self, x: u32, y: u32, kind_name: &str) -> ActionResult {
-        let Some(kind) = ConcessionKind::parse(kind_name) else {
+        let Some(definition) = self
+            .catalog
+            .facilities
+            .iter()
+            .find(|facility| facility.key == kind_name)
+            .cloned()
+        else {
+            return ActionResult::error("Unknown concession type");
+        };
+        let Some(kind) = ConcessionKind::parse(&definition.service) else {
             return ActionResult::error("Unknown concession type");
         };
 
@@ -907,8 +862,8 @@ impl GameState {
                 let Some(existing) = self.concessions.iter().find(|stand| stand.id == id) else {
                     return ActionResult::error("The concession tile is inconsistent");
                 };
-                if existing.kind == kind {
-                    return ActionResult::ok(format!("{} already stands here", kind.label()));
+                if existing.definition.key == definition.key {
+                    return ActionResult::ok(format!("{} already stands here", definition.label));
                 }
                 return ActionResult::error(
                     "A different concession stand already occupies that tile",
@@ -935,7 +890,8 @@ impl GameState {
             return ActionResult::error("Concession stands must touch a guest path");
         }
 
-        if let Err(message) = self.spend(kind.build_cost(), ExpenseCategory::Construction) {
+        if let Err(message) = self.spend(definition.build_cost_cents, ExpenseCategory::Construction)
+        {
             return ActionResult::error(message);
         }
 
@@ -947,13 +903,14 @@ impl GameState {
             x,
             y,
             kind,
+            definition: definition.clone(),
             sales_today: 0,
             total_sales: 0,
             total_revenue_cents: 0,
             condition: 100,
         });
 
-        ActionResult::ok(format!("{} #{id} built beside the path", kind.label()))
+        ActionResult::ok(format!("{} #{id} built beside the path", definition.label))
     }
 
     fn evaluate_habitat_rect(&self, ax: u32, ay: u32, bx: u32, by: u32) -> PlacementEvaluation {
@@ -1224,7 +1181,13 @@ impl GameState {
     }
 
     fn adopt(&mut self, habitat_id: u32, species_name: &str) -> ActionResult {
-        let Some(species) = Species::parse(species_name) else {
+        let Some(species) = self
+            .catalog
+            .species
+            .iter()
+            .find(|species| species.key == species_name)
+            .cloned()
+        else {
             return ActionResult::error("Unknown species");
         };
         let Some(index) = self
@@ -1239,7 +1202,11 @@ impl GameState {
         if habitat.animals >= habitat.capacity() {
             return ActionResult::error("That habitat is at capacity");
         }
-        if habitat.species.is_some_and(|current| current != species) {
+        if habitat
+            .species
+            .as_ref()
+            .is_some_and(|current| current.key != species.key)
+        {
             return ActionResult::error("Each habitat currently keeps one species");
         }
         if habitat.keeper_id.is_none() {
@@ -1250,7 +1217,7 @@ impl GameState {
             return ActionResult::error(message);
         }
         let habitat = &mut self.habitats[index];
-        habitat.species = Some(species);
+        habitat.species = Some(species.clone());
         habitat.animals += 1;
         ActionResult::ok(format!(
             "{} adopted into habitat #{habitat_id}",
@@ -1615,7 +1582,10 @@ impl GameState {
         let choice = (self.next_guest_id as usize) % candidates.len();
         let (target_habitat, route) = candidates.swap_remove(choice);
 
-        self.earn(ADMISSION_PRICE, IncomeCategory::Admissions);
+        if self.next_guest_id == u32::MAX || !self.earn(ADMISSION_PRICE, IncomeCategory::Admissions)
+        {
+            return;
+        }
         self.guests.push(Guest {
             id: self.next_guest_id,
             x: start.x,
@@ -1888,13 +1858,26 @@ impl GameState {
             let degraded =
                 self.concessions[concession_index].condition <= MAINTENANCE_SERVICE_THRESHOLD;
             let stand_id = self.concessions[concession_index].id;
-            let price = kind.price_cents();
-            self.earn(price, IncomeCategory::Concessions);
+            let price = self.concessions[concession_index].definition.price_cents;
+            let stand = &self.concessions[concession_index];
+            let Some(revenue) = stand
+                .total_revenue_cents
+                .checked_add(price)
+                .filter(|total| *total <= content::MAX_CENTS)
+            else {
+                continue;
+            };
+            if stand.sales_today == u32::MAX
+                || stand.total_sales == u32::MAX
+                || !self.earn(price, IncomeCategory::Concessions)
+            {
+                continue;
+            }
             {
                 let stand = &mut self.concessions[concession_index];
                 stand.sales_today += 1;
                 stand.total_sales += 1;
-                stand.total_revenue_cents += price;
+                stand.total_revenue_cents = revenue;
                 stand.condition = stand.condition.saturating_sub(MAINTENANCE_WEAR_PER_SALE);
             }
             self.ensure_maintenance_task(stand_id);
@@ -2421,15 +2404,28 @@ impl GameState {
         let keeper_wages = self.keepers.len() as i64 * KEEPER_HOURLY_WAGE;
         let janitor_wages = self.janitors.len() as i64 * JANITOR_HOURLY_WAGE;
         let mechanic_wages = self.mechanics.len() as i64 * MECHANIC_HOURLY_WAGE;
-        self.cash_cents -= park_upkeep + keeper_wages + janitor_wages + mechanic_wages;
-        self.finance_today
-            .record_expense(ExpenseCategory::ParkUpkeep, park_upkeep);
-        self.finance_today
-            .record_expense(ExpenseCategory::KeeperWages, keeper_wages);
-        self.finance_today
-            .record_expense(ExpenseCategory::JanitorWages, janitor_wages);
-        self.finance_today
-            .record_expense(ExpenseCategory::MechanicWages, mechanic_wages);
+        let charges = [
+            (ExpenseCategory::ParkUpkeep, park_upkeep),
+            (ExpenseCategory::KeeperWages, keeper_wages),
+            (ExpenseCategory::JanitorWages, janitor_wages),
+            (ExpenseCategory::MechanicWages, mechanic_wages),
+        ];
+        let mut ledger = self.finance_today;
+        let mut cash = self.cash_cents;
+        for (category, cents) in charges {
+            let Some(next_cash) = cash
+                .checked_sub(cents)
+                .filter(|cash| (-content::MAX_CENTS..=content::MAX_CENTS).contains(cash))
+            else {
+                return;
+            };
+            if !ledger.record_expense(category, cents) {
+                return;
+            }
+            cash = next_cash;
+        }
+        self.cash_cents = cash;
+        self.finance_today = ledger;
     }
 
     /// Park rating derived from the current state, so every command and tick reports a
@@ -2904,12 +2900,14 @@ impl GameState {
     }
 
     fn species_catalog(&self) -> Vec<SpeciesOfferView> {
-        ALL_SPECIES
-            .into_iter()
+        self.catalog
+            .species
+            .iter()
             .map(|species| {
                 let profile = species.welfare_profile();
                 SpeciesOfferView {
                     key: species.key().to_owned(),
+                    asset_ref: species.asset_ref.clone(),
                     label: species.label().to_owned(),
                     purchase_cost_cents: species.purchase_cost(),
                     appeal: species.appeal(),
@@ -2923,7 +2921,7 @@ impl GameState {
     fn animal_views(&self) -> Vec<AnimalView> {
         let mut animals = Vec::new();
         for habitat in &self.habitats {
-            let Some(species) = habitat.species else {
+            let Some(species) = &habitat.species else {
                 continue;
             };
 
@@ -3253,7 +3251,10 @@ impl GameState {
                     footprint_area: habitat.area(),
                     fence_length: habitat.fence_length(),
                     fence_segments: habitat.fence_segments(),
-                    species: habitat.species.map(|species| species.key().to_owned()),
+                    species: habitat
+                        .species
+                        .as_ref()
+                        .map(|species| species.key().to_owned()),
                     animals: habitat.animals,
                     capacity: habitat.capacity(),
                     viewing_capacity,
@@ -3297,9 +3298,9 @@ impl GameState {
                 id: stand.id,
                 x: stand.x,
                 y: stand.y,
-                kind: stand.kind.key().to_owned(),
-                build_cost_cents: stand.kind.build_cost(),
-                price_cents: stand.kind.price_cents(),
+                kind: stand.definition.key.clone(),
+                build_cost_cents: stand.definition.build_cost_cents,
+                price_cents: stand.definition.price_cents,
                 sales_today: stand.sales_today,
                 total_sales: stand.total_sales,
                 total_revenue_cents: stand.total_revenue_cents,
@@ -3331,6 +3332,8 @@ impl GameState {
             .collect();
 
         Snapshot {
+            ruleset_id: self.catalog.ruleset_id.clone(),
+            facility_catalog: self.catalog.facilities.clone(),
             width: self.width,
             height: self.height,
             day: self.day,
@@ -3589,6 +3592,7 @@ struct EntranceView {
 #[derive(Serialize)]
 struct SpeciesOfferView {
     key: String,
+    asset_ref: String,
     label: String,
     purchase_cost_cents: i64,
     appeal: u32,
@@ -3659,6 +3663,8 @@ impl FinanceView {
 
 #[derive(Serialize)]
 struct Snapshot {
+    ruleset_id: String,
+    facility_catalog: Vec<Facility>,
     width: u32,
     height: u32,
     day: u32,
@@ -3721,8 +3727,26 @@ impl ZooGame {
         }
     }
 
+    pub fn content_json(&self) -> String {
+        serde_json::to_string(self.state.catalog.as_ref())
+            .expect("validated catalog serialization is infallible")
+    }
+
+    pub fn from_content_json(document: &str) -> Result<ZooGame, String> {
+        let catalog = Arc::new(Catalog::parse(document)?);
+        Ok(Self {
+            state: GameState {
+                catalog,
+                ..GameState::default()
+            },
+        })
+    }
+
     pub fn reset(&mut self) {
-        self.state = GameState::default();
+        self.state = GameState {
+            catalog: Arc::clone(&self.state.catalog),
+            ..GameState::default()
+        };
     }
 
     pub fn snapshot_json(&self) -> String {
@@ -3834,7 +3858,7 @@ mod tests {
             width,
             height,
             orientation: HabitatOrientation::for_dimensions(width, height),
-            species: Some(Species::Capybara),
+            species: Some(Species::parse("capybara").expect("default catalog capybara")),
             animals: 1,
             welfare: 100,
             food: 100,
@@ -5037,5 +5061,8 @@ mod tests {
             serde_json::to_string(&first.snapshot()).unwrap(),
             serde_json::to_string(&second.snapshot()).unwrap()
         );
+    }
+    mod economic_boundary_acceptance {
+        include!("economic_boundary_acceptance_tests.rs");
     }
 }

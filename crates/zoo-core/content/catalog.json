@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "ruleset_id": "zoo-classic-v1",
+  "unlocks": [
+    {
+      "key": "available",
+      "available": true
+    }
+  ],
+  "species": [
+    {
+      "key": "capybara",
+      "label": "Capybara",
+      "purchase_cost_cents": 25000,
+      "appeal": 95,
+      "minimum_social_group": 2,
+      "space_per_animal": 4,
+      "asset_ref": "capybara",
+      "unlock_ref": "available"
+    },
+    {
+      "key": "flamingo",
+      "label": "Flamingo",
+      "purchase_cost_cents": 18000,
+      "appeal": 80,
+      "minimum_social_group": 3,
+      "space_per_animal": 2,
+      "asset_ref": "flamingo",
+      "unlock_ref": "available"
+    },
+    {
+      "key": "zebra",
+      "label": "Zebra",
+      "purchase_cost_cents": 40000,
+      "appeal": 125,
+      "minimum_social_group": 3,
+      "space_per_animal": 5,
+      "asset_ref": "zebra",
+      "unlock_ref": "available"
+    },
+    {
+      "key": "giraffe",
+      "label": "Giraffe",
+      "purchase_cost_cents": 65000,
+      "appeal": 160,
+      "minimum_social_group": 2,
+      "space_per_animal": 8,
+      "asset_ref": "giraffe",
+      "unlock_ref": "available"
+    },
+    {
+      "key": "elephant",
+      "label": "Elephant",
+      "purchase_cost_cents": 90000,
+      "appeal": 190,
+      "minimum_social_group": 2,
+      "space_per_animal": 12,
+      "asset_ref": "elephant",
+      "unlock_ref": "available"
+    },
+    {
+      "key": "penguin",
+      "label": "Penguin",
+      "purchase_cost_cents": 30000,
+      "appeal": 110,
+      "minimum_social_group": 4,
+      "space_per_animal": 3,
+      "asset_ref": "penguin",
+      "unlock_ref": "available"
+    }
+  ],
+  "facilities": [
+    {
+      "key": "food",
+      "label": "Food stand",
+      "service": "food",
+      "asset_ref": "food_stand",
+      "unlock_ref": "available",
+      "build_cost_cents": 18000,
+      "price_cents": 500,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "drink",
+      "label": "Drink stand",
+      "service": "drink",
+      "asset_ref": "drink_stand",
+      "unlock_ref": "available",
+      "build_cost_cents": 14000,
+      "price_cents": 350,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "entrance",
+      "label": "Entrance",
+      "service": "entrance",
+      "asset_ref": "entrance",
+      "unlock_ref": "available",
+      "build_cost_cents": 0,
+      "price_cents": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "animal_care_depot",
+      "label": "Animal-care depot",
+      "service": "animal_care_depot",
+      "asset_ref": "animal_care_depot",
+      "unlock_ref": "available",
+      "build_cost_cents": 0,
+      "price_cents": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    }
+  ]
+}

@@ -2,7 +2,8 @@ import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
-const debuggingPort = 9231
+const contentAcceptance = process.env.ZOO_CONTENT_ACCEPTANCE
+const debuggingPort = Number(process.env.CHROME_DEBUG_PORT ?? 9231)
 const chromeCandidates = [
   process.env.CHROME_PATH,
   "/usr/bin/google-chrome",
@@ -30,7 +31,7 @@ const chrome = spawn(
     "--window-size=1440,900",
     "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader",
-    previewUrl,
+    contentAcceptance ? "about:blank" : previewUrl,
   ],
   {stdio: "ignore"},
 )
@@ -61,6 +62,7 @@ function connectCdp(webSocketDebuggerUrl) {
   const socket = new WebSocket(webSocketDebuggerUrl)
   const pending = new Map()
   let nextId = 1
+  let eventHandler = () => {}
 
   const opened = new Promise((resolve, reject) => {
     socket.addEventListener("open", resolve, {once: true})
@@ -69,7 +71,10 @@ function connectCdp(webSocketDebuggerUrl) {
 
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data))
-    if (!message.id) return
+    if (!message.id) {
+      eventHandler(message)
+      return
+    }
     const request = pending.get(message.id)
     if (!request) return
     pending.delete(message.id)
@@ -79,6 +84,7 @@ function connectCdp(webSocketDebuggerUrl) {
 
   return {
     opened,
+    onEvent(handler) { eventHandler = handler },
     close: () => socket.close(),
     send(method, params = {}) {
       const id = nextId
@@ -102,6 +108,30 @@ try {
   await cdp.opened
   await cdp.send("Page.enable")
   await cdp.send("Runtime.enable")
+  let catalogRequests = 0
+  let catalogFailure = null
+  if (contentAcceptance) {
+    // Real production catalog HTTP boundary; real Rust/WASM validates this data.
+    // No window state, fake WASM, generated art or command result is injected.
+    const catalogUrl = new URL(process.env.ZOO_CONTENT_CATALOG_PATH ?? "content/catalog.json", previewUrl).href
+    const response = await fetch(catalogUrl)
+    if (!response.ok) throw new Error(`Production catalog bootstrap missing: ${response.status} ${catalogUrl}`)
+    const definition = await response.json()
+    const food = definition.facilities.find((item) => item.key === "food")
+    const zebra = definition.species.find((item) => item.key === "zebra")
+    if (!food || !zebra) throw new Error("Real baseline catalog missing food/zebra")
+    definition.facilities.push({...food, key: "acceptance_food_facility", label: "Acceptance catalog stand", build_cost_cents: 12300, price_cents: 456})
+    definition.species.push({...zebra, key: "acceptance_species", label: "Acceptance catalog animal"})
+    if (contentAcceptance === "invalid") definition.facilities.at(-1).asset_ref = "missing-real-asset"
+    const body = Buffer.from(JSON.stringify(definition)).toString("base64")
+    cdp.onEvent((event) => {
+      if (event.method !== "Fetch.requestPaused") return
+      catalogRequests += 1
+      cdp.send("Fetch.fulfillRequest", {requestId: event.params.requestId, responseCode: 200, responseHeaders: [{name: "Content-Type", value: "application/json"}], body})
+        .catch((error) => { catalogFailure = error })
+    })
+    await cdp.send("Fetch.enable", {patterns: [{urlPattern: catalogUrl, requestStage: "Request"}]})
+  }
   await cdp.send("Page.navigate", {url: previewUrl})
   mkdirSync("test-results", {recursive: true})
 
@@ -217,6 +247,13 @@ try {
     await key("Home")
   }
 
+  if (contentAcceptance === "invalid") {
+    await waitFor("Rust catalog asset_ref rejection", `document.body.textContent.includes('asset_ref')`)
+    assert(catalogRequests > 0 && !catalogFailure, "Invalid fixture did not cross the real catalog boundary")
+    assert(!(await evaluate(`window.__zooParkView?.ready === true`)), "Invalid catalog silently booted a fallback park")
+    console.log("catalog browser rejection passed: actual invalid asset reference, no fallback park")
+    process.exitCode = 0
+  } else {
   // --- Desktop ---------------------------------------------------------------------------------
   await waitFor("the shared 3D park renderer", `Boolean(
     window.__zooParkView?.ready &&
@@ -287,6 +324,19 @@ try {
   assert(await clickButton("Drink stand"), "Drink tool missing")
   await click(await tile(10, 8))
   assert((await message()).includes("Drink stand #2 built"), "Drink stand was not placed", await message())
+  if (contentAcceptance) {
+    assert(await clickButton("Ⅱ"), "Pause before exact catalog cost proof missing")
+    const displayedCash = async () => Number((await evaluate(`document.querySelector('.stat strong')?.textContent ?? ''`)).replace(/[^0-9]/g, ""))
+    const before = await displayedCash()
+    assert(await clickButton("Acceptance catalog stand"), "Definition-only facility was not rendered as an actual tool")
+    await click(await tile(12, 6))
+    assert((await message()).includes("Acceptance catalog stand #3 built"), "Definition-only facility did not reach Rust placement", await message())
+    assert(before - await displayedCash() === 123, "Actual authoritative canary construction cost mismatch")
+    await click(await tile(12, 6))
+    assert(before - await displayedCash() === 123, "Repeated placement charged a second construction cost")
+    assert(catalogRequests > 0 && !catalogFailure, "Canary never crossed actual production catalog loader")
+    await screenshot("test-results/catalog-definition-only-facility.png")
+  }
   assert(await clickButton("Inspect"), "Inspect tool missing")
   await click(await project([2.5, 0.5, 6.5]))
   await waitFor("the depot inspector", `document.querySelector('.window-title span')?.textContent === 'Central operations depot'`)
@@ -297,8 +347,8 @@ try {
   await waitFor("the habitat inspector", `document.querySelector('.window-title span')?.textContent === 'Habitat #1'`)
   assert(await clickButton("Schedule available keeper"), "Keeper scheduling missing")
   assert(await clickButton("Add basic shelter"), "Shelter action missing")
-  for (let index = 0; index < 3; index += 1) assert(await clickButton("Zebra"), "Zebra adoption unavailable")
-  assert((await message()).includes("Zebra adopted"), "Zebras were not adopted", await message())
+  for (let index = 0; index < 3; index += 1) assert(await clickButton(contentAcceptance ? "Acceptance catalog animal" : "Zebra"), "Catalog adoption unavailable")
+  assert((await message()).includes(contentAcceptance ? "Acceptance catalog animal adopted" : "Zebra adopted"), "Catalog species were not adopted through Rust", await message())
   assert(await clickButton("4×"), "Speed control missing")
   await waitFor("guests to arrive", `Number(document.querySelectorAll('.stat strong')[1]?.textContent) > 0`, 200)
   await sleep(1500)
@@ -383,6 +433,7 @@ try {
   console.log(
     "Park view dogfood passed: shared-renderer 3D park, full orbit at both tilt bounds (desktop + phone), wheel/drag/keyboard/touch camera control, canvas-picked path/habitat/stand/depot/habitat commands, and visual proofs.",
   )
+  }
 } finally {
   cdp?.close()
   chrome.kill("SIGTERM")
