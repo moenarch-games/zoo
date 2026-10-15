@@ -16,6 +16,8 @@ Use `make format` for formatting writes and `make verify` for checks. Generated 
 
 ## Direction
 
+Read the canonical [Decision Atlas](docs/decisions/atlas.md) before making consequential product decisions. Its source-side binary implementation checkboxes cite only narrow verified capabilities; unchecked entries and independent product/browser acceptance remain distinct. Keep GitHub execution issues a mostly flat handoff queue. One active implementation worker per repository, with independent acceptance authorship done sequentially rather than concurrent changes.
+
 Zoo is a game first. Prefer a playable management loop, but build it on the intended long-term foundations rather than creating product-local substitutes for generic engine capabilities.
 
 Before implementing a new subsystem, check `docs/architecture.md` and the existing workspace authorities. The smallest acceptable slice is the smallest playable slice on the correct authority boundary, not the smallest self-contained code sample.
