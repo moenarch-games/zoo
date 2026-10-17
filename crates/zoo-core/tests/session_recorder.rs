@@ -253,7 +253,7 @@ fn accepted_and_rejected_commands_are_recorded_in_order_with_results() {
 
 #[test]
 fn queries_and_previews_are_not_authoritative_commands() {
-    let mut game = operated_park();
+    let game = operated_park();
     let before = bundle(&game);
     let _ = game.snapshot_json();
     let _ = game.content_json();

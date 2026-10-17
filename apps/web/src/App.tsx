@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import type {
   ActionResult,
   Guest,
@@ -110,8 +111,23 @@ function previewTiles(start: Point | null, end: Point | null, snapshot: Snapshot
   return tiles
 }
 
+type RecoveryReason = "export" | "simulation" | "renderer" | "application"
+
+type RecoveryState = { reason: RecoveryReason; message: string }
+
+const RETAIN_EVERY_TICKS = 8
+
 export default function App() {
   const gameRef = useRef<ZooGame | null>(null)
+  // The simulation stops advancing after a WASM trap, a frozen zoo-core session or an
+  // uncaught application error; a renderer failure blocks it while its panel is open.
+  const stoppedRef = useRef(false)
+  const wasmDeadRef = useRef(false)
+  const rendererFailedRef = useRef(false)
+  const blockedRef = useRef(false)
+  const ticksSinceRetainRef = useRef(0)
+  const [recovery, setRecovery] = useState<RecoveryState | null>(null)
+  const [manualExport, setManualExport] = useState<string | null>(null)
   const paintedTilesRef = useRef(new Set<string>())
   const fenceStartRef = useRef<Point | null>(null)
   const fenceEndRef = useRef<Point | null>(null)
@@ -138,24 +154,128 @@ export default function App() {
     setFenceEnd(null)
   }, [])
 
+  const openRecovery = useCallback((reason: RecoveryReason, text: string) => {
+    setManualExport(null)
+    setRecovery((current) =>
+      current && current.reason !== "export" ? current : { reason, message: text },
+    )
+  }, [])
+
+  const failSimulation = useCallback(
+    (error: unknown) => {
+      if (wasmDeadRef.current) {
+        return
+      }
+      wasmDeadRef.current = true
+      stoppedRef.current = true
+      diagnostics.connect(null)
+      diagnostics.record("wasm", String(error), "frozen")
+      console.error("Zoo simulation trapped; the session is frozen", error)
+      openRecovery(
+        "simulation",
+        "The park simulation crashed and has been stopped. Export the diagnostics before starting a new park.",
+      )
+    },
+    [openRecovery],
+  )
+
+  /** Every zoo-core call goes through here so a WASM trap freezes the session once. */
+  const callGame = useCallback(
+    <T,>(call: (game: ZooGame) => T): T | undefined => {
+      const game = gameRef.current
+      if (!game || wasmDeadRef.current) {
+        return undefined
+      }
+      try {
+        return call(game)
+      } catch (error) {
+        failSimulation(error)
+        return undefined
+      }
+    },
+    [failSimulation],
+  )
+
   const refresh = useCallback(() => {
-    const game = gameRef.current
-    if (!game) {
+    const text = callGame((game) => game.snapshot_json())
+    if (text !== undefined) {
+      setSnapshot(JSON.parse(text) as Snapshot)
+    }
+  }, [callGame])
+
+  const checkFrozen = useCallback(() => {
+    if (stoppedRef.current || callGame((game) => game.session_status()) !== "frozen") {
       return
     }
-    setSnapshot(JSON.parse(game.snapshot_json()) as Snapshot)
-  }, [])
+    stoppedRef.current = true
+    diagnostics.retain()
+    openRecovery(
+      "simulation",
+      "The park simulation detected corrupt state and froze. Export the diagnostics before starting a new park.",
+    )
+  }, [callGame, openRecovery])
 
   const perform = useCallback(
     (command: () => string) => {
-      const result = JSON.parse(command()) as ActionResult
+      const text = callGame(() => command())
+      const result: ActionResult =
+        text === undefined
+          ? { ok: false, message: "The park simulation is stopped." }
+          : (JSON.parse(text) as ActionResult)
+      diagnostics.retain()
       setMessage(result.message)
       setMessageKind(result.ok ? "info" : "error")
       refresh()
+      checkFrozen()
       return result
     },
-    [refresh],
+    [callGame, checkFrozen, refresh],
   )
+
+  const onRendererFailure = useCallback(
+    (text: string) => {
+      if (rendererFailedRef.current) {
+        return
+      }
+      rendererFailedRef.current = true
+      diagnostics.record("renderer", text, "continue_paused")
+      setSpeed(0)
+      blockedRef.current = true
+      openRecovery(
+        "renderer",
+        "The 3D view stopped, but the park simulation is intact and paused. Export diagnostics or continue paused.",
+      )
+    },
+    [openRecovery],
+  )
+
+  useEffect(() => {
+    const onUncaught = (error: unknown) => {
+      const text = error instanceof Error ? error.message : String(error)
+      if (text.includes("ResizeObserver loop")) {
+        return
+      }
+      if (error instanceof WebAssembly.RuntimeError) {
+        failSimulation(error)
+        return
+      }
+      stoppedRef.current = true
+      if (diagnostics.record("application", text, "frozen")) {
+        openRecovery(
+          "application",
+          "An unexpected error stopped the park. Export the diagnostics before starting a new park.",
+        )
+      }
+    }
+    const onError = (event: ErrorEvent) => onUncaught(event.error ?? event.message)
+    const onRejection = (event: PromiseRejectionEvent) => onUncaught(event.reason)
+    window.addEventListener("error", onError)
+    window.addEventListener("unhandledrejection", onRejection)
+    return () => {
+      window.removeEventListener("error", onError)
+      window.removeEventListener("unhandledrejection", onRejection)
+    }
+  }, [failSimulation, openRecovery])
 
   useEffect(() => {
     let cancelled = false
@@ -173,6 +293,18 @@ export default function App() {
           return
         }
         gameRef.current = ZooGame.from_content_json(documentText)
+        diagnostics.connect(() => gameRef.current?.diagnostics_json() ?? "null")
+        diagnostics.retain()
+        installDiagnosticsHook()
+        if (faultInjectionEnabled()) {
+          window.__zooFaults = {
+            simulation: (kind: string) => {
+              const result = callGame((game) => game.inject_fault(kind)) ?? ""
+              diagnostics.retain()
+              return result
+            },
+          }
+        }
         refresh()
       })
       .catch((error: unknown) => {
@@ -185,18 +317,30 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [refresh])
+  }, [callGame, refresh])
 
   useEffect(() => {
     if (!snapshot || speed === 0) {
       return
     }
     const handle = window.setInterval(() => {
-      gameRef.current?.tick(speed)
+      if (stoppedRef.current || blockedRef.current) {
+        return
+      }
+      callGame((game) => game.tick(speed))
+      checkFrozen()
+      if (stoppedRef.current) {
+        return
+      }
+      ticksSinceRetainRef.current += 1
+      if (ticksSinceRetainRef.current >= RETAIN_EVERY_TICKS) {
+        ticksSinceRetainRef.current = 0
+        diagnostics.retain()
+      }
       refresh()
     }, 250)
     return () => window.clearInterval(handle)
-  }, [refresh, snapshot !== null, speed])
+  }, [callGame, checkFrozen, refresh, snapshot !== null, speed])
 
   useEffect(() => {
     paintedTilesRef.current.clear()
@@ -220,10 +364,11 @@ export default function App() {
     if (!game || !snapshot || tool !== "habitat" || !fenceStart || !fenceEnd) {
       return null
     }
-    return JSON.parse(
+    const text = callGame(() =>
       game.evaluate_habitat_rect(fenceStart.x, fenceStart.y, fenceEnd.x, fenceEnd.y),
-    ) as PlacementEvaluation
-  }, [fenceEnd, fenceStart, snapshot, tool])
+    )
+    return text === undefined ? null : (JSON.parse(text) as PlacementEvaluation)
+  }, [callGame, fenceEnd, fenceStart, snapshot, tool])
 
   const ghostTiles = useMemo(
     () => (snapshot ? previewTiles(fenceStart, fenceEnd, snapshot) : []),
@@ -463,10 +608,82 @@ export default function App() {
     perform(() => game.hire_mechanic())
   }
 
+  const storageFailure = (action: string, error: unknown, text: string) => {
+    diagnostics.record("storage", `${action} diagnostics failed: ${String(error)}`, "manual_export")
+    setManualExport(text)
+  }
+
+  const downloadDiagnostics = () => {
+    const text = diagnostics.exportText()
+    try {
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }))
+      const link = document.createElement("a")
+      link.href = url
+      link.download = "zoo-diagnostics.json"
+      document.body.append(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (error) {
+      storageFailure("Download", error, text)
+    }
+  }
+
+  const copyDiagnostics = () => {
+    const text = diagnostics.exportText()
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable")
+      }
+      navigator.clipboard.writeText(text).then(
+        () => inform("Diagnostics copied to the clipboard."),
+        (error: unknown) => storageFailure("Copy", error, text),
+      )
+    } catch (error) {
+      storageFailure("Copy", error, text)
+    }
+  }
+
+  const openExport = () => {
+    diagnostics.retain()
+    setManualExport(null)
+    setRecovery(
+      (current) =>
+        current ?? {
+          reason: "export",
+          message: "Save the bounded park diagnostics. Nothing is uploaded.",
+        },
+    )
+  }
+
+  const continuePaused = () => {
+    blockedRef.current = false
+    setSpeed(0)
+    setRecovery(null)
+    setManualExport(null)
+  }
+
+  const closeExport = () => {
+    setRecovery(null)
+    setManualExport(null)
+  }
+
+  const startNewPark = () => {
+    if (wasmDeadRef.current || recovery?.reason === "application") {
+      window.location.reload()
+      return
+    }
+    stoppedRef.current = false
+    setRecovery(null)
+    setManualExport(null)
+    reset()
+  }
+
   const reset = () => {
     paintedTilesRef.current.clear()
     clearFenceGesture()
-    gameRef.current?.reset()
+    callGame((game) => game.reset())
+    diagnostics.retain()
     setTool("select")
     setSelectedHabitatId(null)
     setSelectedGuestId(null)
@@ -541,6 +758,14 @@ export default function App() {
               {value === 0 ? "Ⅱ" : `${value}×`}
             </button>
           ))}
+          <button
+            className="export-diagnostics"
+            onClick={openExport}
+            title="Export diagnostics"
+            aria-label="Export diagnostics"
+          >
+            ⇩
+          </button>
         </div>
       </header>
 
@@ -558,8 +783,42 @@ export default function App() {
             onToolGestureEnd={onToolGestureEnd}
             onHover={setHoveredTile}
             onPick={onPick}
+            onRendererFailure={onRendererFailure}
           />
         </Suspense>
+
+        {recovery && (
+          <section
+            className="recovery-panel bevel"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Park recovery"
+          >
+            <div className="window-title">
+              <span>{recovery.reason === "export" ? "Park diagnostics" : "Park stopped"}</span>
+            </div>
+            <p>{recovery.message}</p>
+            <div className="recovery-actions">
+              <button onClick={downloadDiagnostics}>Download diagnostics</button>
+              <button onClick={copyDiagnostics}>Copy diagnostics</button>
+              {recovery.reason === "renderer" && (
+                <button onClick={continuePaused}>Continue paused</button>
+              )}
+              {(recovery.reason === "simulation" || recovery.reason === "application") && (
+                <button onClick={startNewPark}>Start new park</button>
+              )}
+              {recovery.reason === "export" && <button onClick={closeExport}>Close</button>}
+            </div>
+            {manualExport !== null && (
+              <>
+                <p role="alert">
+                  Saving was blocked by the browser. Select and copy the diagnostics below.
+                </p>
+                <textarea aria-label="Diagnostics bundle" readOnly value={manualExport} rows={4} />
+              </>
+            )}
+          </section>
+        )}
 
         <aside className="side-panel bevel">
           {selectedDepot && (

@@ -14,7 +14,8 @@ pub(crate) const MAX_EXPORT_BYTES: usize = 1_048_576;
 /// browser failure records) also fits inside `MAX_EXPORT_BYTES`.
 const BUNDLE_BUDGET_BYTES: usize = 900_000;
 const MAX_ARG_STRING_BYTES: usize = 256;
-pub(crate) const FROZEN_MESSAGE: &str = "Simulation frozen after a detected failure; export diagnostics or start a new park";
+pub(crate) const FROZEN_MESSAGE: &str =
+    "Simulation frozen after a detected failure; export diagnostics or start a new park";
 
 #[derive(Clone, Debug)]
 pub(crate) struct DomainEvent {
@@ -105,7 +106,14 @@ impl Session {
     }
 
     /// Appends an authoritative command and returns its sequence number.
-    pub fn record(&mut self, tick: u64, kind: &'static str, args: Value, ok: bool, message: &str) -> u64 {
+    pub fn record(
+        &mut self,
+        tick: u64,
+        kind: &'static str,
+        args: Value,
+        ok: bool,
+        message: &str,
+    ) -> u64 {
         let seq = self.commands_total;
         self.commands_total += 1;
         self.commands.push_back(CommandEntry {
@@ -137,10 +145,23 @@ impl Session {
             last.message = advance_message(total);
             return;
         }
-        self.record(tick, "advance", json!({ "minutes": minutes }), true, &advance_message(minutes));
+        self.record(
+            tick,
+            "advance",
+            json!({ "minutes": minutes }),
+            true,
+            &advance_message(minutes),
+        );
     }
 
-    pub fn fail(&mut self, seq: u64, tick: u64, kind: &'static str, message: String, injected: bool) {
+    pub fn fail(
+        &mut self,
+        seq: u64,
+        tick: u64,
+        kind: &'static str,
+        message: String,
+        injected: bool,
+    ) {
         // Exactly one failure per session: a frozen session never re-detects.
         if self.frozen {
             return;
@@ -226,21 +247,36 @@ impl Session {
             return Err("not a zoo-diagnostics/1 bundle".to_owned());
         }
         if bundle["truncated"] != false {
-            return Err("the bundle was truncated for export and cannot be replayed exactly".to_owned());
+            return Err(
+                "the bundle was truncated for export and cannot be replayed exactly".to_owned(),
+            );
         }
         if bundle["commands_dropped"] != 0 {
             return Err("the oldest commands were dropped; the session cannot be replayed from its initial state".to_owned());
         }
-        let commands = bundle["commands"].as_array().ok_or("bundle has no command log")?;
+        let commands = bundle["commands"]
+            .as_array()
+            .ok_or("bundle has no command log")?;
         let mut log = Vec::with_capacity(commands.len());
         for (index, entry) in commands.iter().enumerate() {
             if entry["seq"].as_u64() != Some(index as u64) {
-                return Err(format!("command log is not contiguous from seq 0 at entry {index}"));
+                return Err(format!(
+                    "command log is not contiguous from seq 0 at entry {index}"
+                ));
             }
             let kind = entry["kind"].as_str().ok_or("command without kind")?;
-            let ok = entry["result"]["ok"].as_bool().ok_or("command without result")?;
-            let message = entry["result"]["message"].as_str().ok_or("command without result message")?;
-            log.push((kind.to_owned(), entry["args"].clone(), ok, message.to_owned()));
+            let ok = entry["result"]["ok"]
+                .as_bool()
+                .ok_or("command without result")?;
+            let message = entry["result"]["message"]
+                .as_str()
+                .ok_or("command without result message")?;
+            log.push((
+                kind.to_owned(),
+                entry["args"].clone(),
+                ok,
+                message.to_owned(),
+            ));
         }
         Ok(log)
     }
@@ -294,10 +330,16 @@ fn fit_budget(bundle: &mut Value) {
         let commands = bundle["commands"].as_array().map_or(0, Vec::len);
         if events > 0 {
             let drop = events.div_ceil(2);
-            bundle["events"].as_array_mut().expect("events").drain(..drop);
+            bundle["events"]
+                .as_array_mut()
+                .expect("events")
+                .drain(..drop);
         } else if commands > 1 {
             let drop = (commands - 1).div_ceil(2);
-            bundle["commands"].as_array_mut().expect("commands").drain(..drop);
+            bundle["commands"]
+                .as_array_mut()
+                .expect("commands")
+                .drain(..drop);
         } else {
             break;
         }

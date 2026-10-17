@@ -1540,16 +1540,15 @@ impl GameState {
     /// A violation means authoritative state is corrupt and the session must freeze.
     fn invariant_violation(&self) -> Option<String> {
         if !(-content::MAX_CENTS..=content::MAX_CENTS).contains(&self.cash_cents) {
-            return Some(format!("cash {} is outside the representable range", self.cash_cents));
+            return Some(format!(
+                "cash {} is outside the representable range",
+                self.cash_cents
+            ));
         }
         if self.tiles.len() != (self.width as usize) * (self.height as usize) {
             return Some("tile grid does not match the park dimensions".to_owned());
         }
-        fn ordered(
-            name: &str,
-            ids: impl Iterator<Item = u32>,
-            next: u32,
-        ) -> Option<String> {
+        fn ordered(name: &str, ids: impl Iterator<Item = u32>, next: u32) -> Option<String> {
             let mut previous = 0;
             for id in ids {
                 if id <= previous || id >= next {
@@ -1561,12 +1560,46 @@ impl GameState {
             }
             None
         }
-        ordered("habitat", self.habitats.iter().map(|h| h.id), self.next_habitat_id)
-            .or_else(|| ordered("concession", self.concessions.iter().map(|c| c.id), self.next_concession_id))
-            .or_else(|| ordered("keeper", self.keepers.iter().map(|k| k.id), self.next_keeper_id))
-            .or_else(|| ordered("janitor", self.janitors.iter().map(|j| j.id), self.next_janitor_id))
-            .or_else(|| ordered("mechanic", self.mechanics.iter().map(|m| m.id), self.next_mechanic_id))
-            .or_else(|| ordered("guest", self.guests.iter().map(|g| g.id), self.next_guest_id))
+        ordered(
+            "habitat",
+            self.habitats.iter().map(|h| h.id),
+            self.next_habitat_id,
+        )
+        .or_else(|| {
+            ordered(
+                "concession",
+                self.concessions.iter().map(|c| c.id),
+                self.next_concession_id,
+            )
+        })
+        .or_else(|| {
+            ordered(
+                "keeper",
+                self.keepers.iter().map(|k| k.id),
+                self.next_keeper_id,
+            )
+        })
+        .or_else(|| {
+            ordered(
+                "janitor",
+                self.janitors.iter().map(|j| j.id),
+                self.next_janitor_id,
+            )
+        })
+        .or_else(|| {
+            ordered(
+                "mechanic",
+                self.mechanics.iter().map(|m| m.id),
+                self.next_mechanic_id,
+            )
+        })
+        .or_else(|| {
+            ordered(
+                "guest",
+                self.guests.iter().map(|g| g.id),
+                self.next_guest_id,
+            )
+        })
     }
 
     fn advance_habitat_care(&mut self) {
@@ -3880,7 +3913,9 @@ impl ZooGame {
         self.state.tick(minutes);
         self.session.record_advance(tick, u64::from(minutes));
         self.drain_events();
-        Some(ActionResult::ok(session::advance_message(u64::from(minutes))))
+        Some(ActionResult::ok(session::advance_message(u64::from(
+            minutes,
+        ))))
     }
 
     fn replay_entry(&mut self, kind: &str, args: &serde_json::Value) -> Result<String, String> {
@@ -3899,12 +3934,9 @@ impl ZooGame {
         Ok(match kind {
             "place_path" => self.place_path(number("x")?, number("y")?),
             "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
-            "place_habitat_rect" => self.place_habitat_rect(
-                number("ax")?,
-                number("ay")?,
-                number("bx")?,
-                number("by")?,
-            ),
+            "place_habitat_rect" => {
+                self.place_habitat_rect(number("ax")?, number("ay")?, number("bx")?, number("by")?)
+            }
             "place_habitat" => {
                 let orientation = u8::try_from(number("orientation")?)
                     .map_err(|_| "place_habitat: orientation out of range".to_owned())?;
@@ -4017,7 +4049,12 @@ impl ZooGame {
 
     /// `"running"` or `"frozen"`; a cheap per-tick query for the UI.
     pub fn session_status(&self) -> String {
-        if self.session.frozen { "frozen" } else { "running" }.to_owned()
+        if self.session.frozen {
+            "frozen"
+        } else {
+            "running"
+        }
+        .to_owned()
     }
 
     /// Test-only fault injection (#87). `"invariant"` corrupts real authoritative state so
@@ -4045,9 +4082,11 @@ impl ZooGame {
     }
 
     pub fn place_path(&mut self, x: u32, y: u32) -> String {
-        self.command("place_path", serde_json::json!({ "x": x, "y": y }), |state| {
-            state.place_path(x, y)
-        })
+        self.command(
+            "place_path",
+            serde_json::json!({ "x": x, "y": y }),
+            |state| state.place_path(x, y),
+        )
     }
 
     pub fn place_concession(&mut self, x: u32, y: u32, kind: String) -> String {
@@ -4097,7 +4136,11 @@ impl ZooGame {
     }
 
     pub fn buy_animal_feed(&mut self) -> String {
-        self.command("buy_animal_feed", serde_json::json!({}), GameState::buy_animal_feed)
+        self.command(
+            "buy_animal_feed",
+            serde_json::json!({}),
+            GameState::buy_animal_feed,
+        )
     }
 
     pub fn hire_keeper(&mut self) -> String {
@@ -4105,11 +4148,19 @@ impl ZooGame {
     }
 
     pub fn hire_janitor(&mut self) -> String {
-        self.command("hire_janitor", serde_json::json!({}), GameState::hire_janitor)
+        self.command(
+            "hire_janitor",
+            serde_json::json!({}),
+            GameState::hire_janitor,
+        )
     }
 
     pub fn hire_mechanic(&mut self) -> String {
-        self.command("hire_mechanic", serde_json::json!({}), GameState::hire_mechanic)
+        self.command(
+            "hire_mechanic",
+            serde_json::json!({}),
+            GameState::hire_mechanic,
+        )
     }
 
     pub fn schedule_keeper(&mut self, habitat_id: u32) -> String {
@@ -4131,7 +4182,9 @@ impl ZooGame {
 
     pub fn clean_habitat(&mut self, habitat_id: u32) -> String {
         let args = serde_json::json!({ "habitat_id": habitat_id });
-        self.command("clean_habitat", args, |state| state.clean_habitat(habitat_id))
+        self.command("clean_habitat", args, |state| {
+            state.clean_habitat(habitat_id)
+        })
     }
 
     pub fn add_shelter(&mut self, habitat_id: u32) -> String {
