@@ -1,0 +1,73 @@
+name: 3D asset catalog
+
+# Path-scoped: only changes to the 3D generator, its Blender tests, the asset
+# catalog or this workflow pay for Blender. Unrelated PRs never run it.
+on:
+  pull_request:
+    paths:
+      - tools/build_assets.py
+      - tools/tests/**
+      - assets/3d/**
+      - .github/workflows/assets.yml
+      - Makefile
+  push:
+    branches: [main]
+    paths:
+      - tools/build_assets.py
+      - tools/tests/**
+      - assets/3d/**
+      - .github/workflows/assets.yml
+      - Makefile
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_VERSION: 5.0.1
+  BLENDER_ARCHIVE: blender-5.0.1-linux-x64.tar.xz
+  BLENDER_SHA256: 8019580ee1b7262e505f4196a00237ccf743c88d205b38d34201510676e60b09
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  catalog:
+    name: 3D catalog validation and attachment contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install pinned Blender 5.0.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libgl1-mesa-dri libxi6 libxxf86vm1 libxfixes3 libxrender1 libxkbcommon0 libsm6
+          curl --fail --location --retry 5 --silent --show-error \
+            "https://download.blender.org/release/Blender5.0/${BLENDER_ARCHIVE}" -o "$RUNNER_TEMP/${BLENDER_ARCHIVE}"
+          echo "${BLENDER_SHA256}  $RUNNER_TEMP/${BLENDER_ARCHIVE}" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/${BLENDER_ARCHIVE}" -C "$RUNNER_TEMP"
+          echo "BLENDER=$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64/blender" >> "$GITHUB_ENV"
+      - name: Blender identity
+        run: '"$BLENDER" --background --factory-startup --version'
+      - name: Compile Blender test scripts
+        run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile tools/build_assets.py tools/tests/attachment_pose_blender.py tools/tests/asset_validation_negative.py
+      - name: Existing catalog validator
+        run: timeout -k 10s 300s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/build_assets.py -- --validate
+      - name: Attachment contract on tracked sources and exports (#73)
+        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-attachments" --source
+      - name: Attachment contract on freshly generated candidates (#73)
+        run: timeout -k 10s 900s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-generated" --generate --source
+      - name: Validator rejects injected defects (#75)
+        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/asset_validation_negative.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo75-negative"
+      - name: Path-scoped wiring invariant (#75)
+        run: python3 tools/tests/asset_verification_workflow.py --root "$PWD"
+      - name: Tracked files unchanged
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: zoo-3d-catalog-reports
+          path: |
+            ${{ runner.temp }}/zoo73-attachments/attachment-report.json
+            ${{ runner.temp }}/zoo73-generated/attachment-report.json
+            ${{ runner.temp }}/zoo75-negative/asset-validation-negative-report.json
+          if-no-files-found: warn
+          retention-days: 7

@@ -27,16 +27,17 @@ lint:
 typecheck:
 	cd apps/web && bun run typecheck
 
+# Blender ignores script failures unless --python-exit-code is set.
 assets-development:
-	blender --background --python tools/build_assets.py -- --stage development
+	blender --background --factory-startup --python-exit-code 1 --python tools/build_assets.py -- --stage development
 
 assets-production:
-	blender --background --python tools/build_assets.py -- --stage production
+	blender --background --factory-startup --python-exit-code 1 --python tools/build_assets.py -- --stage production
 
 assets: assets-development assets-production
 
 assets-validate:
-	blender --background --python tools/build_assets.py -- --validate
+	blender --background --factory-startup --python-exit-code 1 --python tools/build_assets.py -- --validate
 
 verify:
 	$(MAKE) install
