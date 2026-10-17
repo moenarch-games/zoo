@@ -26,6 +26,8 @@ env:
   BLENDER_VERSION: 5.0.1
   BLENDER_ARCHIVE: blender-5.0.1-linux-x64.tar.xz
   BLENDER_SHA256: 8019580ee1b7262e505f4196a00237ccf743c88d205b38d34201510676e60b09
+  # Blender ignores PYTHON* variables unless --python-use-system-env is passed;
+  # with it, the generator import leaves no __pycache__ in the checkout.
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
@@ -49,13 +51,13 @@ jobs:
       - name: Compile Blender test scripts
         run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile tools/build_assets.py tools/tests/attachment_pose_blender.py tools/tests/asset_validation_negative.py
       - name: Existing catalog validator
-        run: timeout -k 10s 300s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/build_assets.py -- --validate
+        run: timeout -k 10s 300s "$BLENDER" --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/build_assets.py -- --validate
       - name: Attachment contract on tracked sources and exports (#73)
-        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-attachments" --source
+        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-attachments" --source
       - name: Attachment contract on freshly generated candidates (#73)
-        run: timeout -k 10s 900s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-generated" --generate --source
+        run: timeout -k 10s 900s "$BLENDER" --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/tests/attachment_pose_blender.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo73-generated" --generate --source
       - name: Validator rejects injected defects (#75)
-        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/tests/asset_validation_negative.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo75-negative"
+        run: timeout -k 10s 600s "$BLENDER" --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/tests/asset_validation_negative.py -- --root "$PWD" --output "$RUNNER_TEMP/zoo75-negative"
       - name: Path-scoped wiring invariant (#75)
         run: python3 tools/tests/asset_verification_workflow.py --root "$PWD"
       - name: Tracked files unchanged
