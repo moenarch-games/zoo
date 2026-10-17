@@ -1,6 +1,8 @@
 import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
+import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
+
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
 const contentAcceptance = process.env.ZOO_CONTENT_ACCEPTANCE
 const debuggingPort = Number(process.env.CHROME_DEBUG_PORT ?? 9231)
@@ -433,6 +435,12 @@ try {
   console.log(
     "Park view dogfood passed: shared-renderer 3D park, full orbit at both tilt bounds (desktop + phone), wheel/drag/keyboard/touch camera control, canvas-picked path/habitat/stand/depot/habitat commands, and visual proofs.",
   )
+
+  // #87 session recorder and failure recovery (docs/acceptance/session-recorder.md). Runs after
+  // the existing journey so that journey's evidence stays independent of the new contract.
+  await runSessionRecorderAcceptance({
+    cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, drag, mouse, wheel, key, frame, screenshot,
+  })
   }
 } finally {
   cdp?.close()

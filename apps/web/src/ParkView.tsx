@@ -45,6 +45,8 @@ type Props = {
   onToolGestureEnd: (commit: boolean) => void
   onHover: (tile: Point | null) => void
   onPick: (pick: ParkPick) => void
+  /** Reported once when the renderer fails (startup, a render exception or WebGL context loss). */
+  onRendererFailure?: (message: string) => void
 }
 
 type CameraFrame = RendererCamera & {
@@ -232,8 +234,14 @@ export default function ParkView(props: Props) {
       return [current.x, current.z]
     }
 
+    let failed = false
     const failClosed = (error: unknown) => {
+      if (failed) {
+        return
+      }
+      failed = true
       console.error("Shared 3d-lab park renderer failed; failing closed", error)
+      propsRef.current.onRendererFailure?.(error instanceof Error ? error.message : String(error))
       renderer?.dispose()
       renderer = null
       if (!disposed) {
@@ -731,6 +739,11 @@ export default function ParkView(props: Props) {
       }
     }
 
+    const onContextLost = (event: Event) => {
+      event.preventDefault()
+      failClosed(new Error("WebGL context lost"))
+    }
+
     void initScene()
       .then(() => {
         if (disposed) {
@@ -748,6 +761,7 @@ export default function ParkView(props: Props) {
         canvas.addEventListener("pointerleave", onPointerLeave)
         canvas.addEventListener("wheel", onWheel, { passive: false })
         canvas.addEventListener("contextmenu", onContextMenu)
+        canvas.addEventListener("webglcontextlost", onContextLost)
         window.addEventListener("keydown", onKeyDown)
         installDebugHook()
         setStatus("ready")
@@ -766,6 +780,7 @@ export default function ParkView(props: Props) {
       canvas.removeEventListener("pointerleave", onPointerLeave)
       canvas.removeEventListener("wheel", onWheel)
       canvas.removeEventListener("contextmenu", onContextMenu)
+      canvas.removeEventListener("webglcontextlost", onContextLost)
       window.removeEventListener("keydown", onKeyDown)
       delete window.__zooParkView
       renderer?.dispose()
@@ -798,7 +813,7 @@ export default function ParkView(props: Props) {
         </div>
       )}
       {status === "failed" && (
-        <div className="park-view-error">The 3D renderer could not start in this browser.</div>
+        <div className="park-view-error">The 3D renderer stopped in this browser.</div>
       )}
     </div>
   )
