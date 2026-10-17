@@ -1,7 +1,9 @@
 mod content;
+mod session;
 
 use content::{Catalog, Facility, Species};
 use serde::Serialize;
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -716,6 +718,25 @@ struct GameState {
     movement_accumulator: u32,
     finance_today: FinanceLedger,
     finance_previous: Option<FinanceLedger>,
+    /// Simulated minutes since this park session started (the diagnostics clock).
+    elapsed_minutes: u64,
+    /// Domain events produced by the latest command or advance, drained by the recorder.
+    pending_events: Vec<session::DomainEvent>,
+    work: WorkCounters,
+}
+
+/// Diagnostic work counters. They measure effort, not park state, so their Debug output is
+/// constant and cannot make an unchanged park look mutated.
+#[derive(Clone, Default)]
+struct WorkCounters {
+    guest_updates: u64,
+    path_searches: Cell<u64>,
+}
+
+impl std::fmt::Debug for WorkCounters {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WorkCounters")
+    }
 }
 
 impl Default for GameState {
@@ -752,6 +773,9 @@ impl Default for GameState {
             movement_accumulator: 0,
             finance_today: FinanceLedger::default(),
             finance_previous: None,
+            elapsed_minutes: 0,
+            pending_events: Vec::new(),
+            work: WorkCounters::default(),
         };
 
         state.set_tile(ENTRANCE_X, ENTRANCE_Y, TileKind::Entrance);
@@ -1174,6 +1198,15 @@ impl GameState {
                         keeper.assigned_habitat_id = None;
                     }
                 }
+                let departing: Vec<u32> = self
+                    .guests
+                    .iter()
+                    .filter(|guest| guest.target_habitat == id)
+                    .map(|guest| guest.id)
+                    .collect();
+                for guest_id in departing {
+                    self.emit("guest_left", Some(guest_id));
+                }
                 self.guests.retain(|guest| guest.target_habitat != id);
                 ActionResult::ok(format!("Habitat #{id} removed and its keeper released"))
             }
@@ -1443,6 +1476,7 @@ impl GameState {
 
     fn tick(&mut self, minutes: u32) {
         for _ in 0..minutes {
+            self.elapsed_minutes += 1;
             self.minute_of_day += 1;
             if self.minute_of_day >= 24 * 60 {
                 self.minute_of_day = 0;
@@ -1492,6 +1526,47 @@ impl GameState {
 
             self.advance_viewing();
         }
+    }
+
+    fn emit(&mut self, kind: &'static str, entity_id: Option<u32>) {
+        self.pending_events.push(session::DomainEvent {
+            tick: self.elapsed_minutes,
+            kind,
+            entity_id,
+        });
+    }
+
+    /// Cheap (linear in entities) consistency checks run before every recorded advance.
+    /// A violation means authoritative state is corrupt and the session must freeze.
+    fn invariant_violation(&self) -> Option<String> {
+        if !(-content::MAX_CENTS..=content::MAX_CENTS).contains(&self.cash_cents) {
+            return Some(format!("cash {} is outside the representable range", self.cash_cents));
+        }
+        if self.tiles.len() != (self.width as usize) * (self.height as usize) {
+            return Some("tile grid does not match the park dimensions".to_owned());
+        }
+        fn ordered(
+            name: &str,
+            ids: impl Iterator<Item = u32>,
+            next: u32,
+        ) -> Option<String> {
+            let mut previous = 0;
+            for id in ids {
+                if id <= previous || id >= next {
+                    return Some(format!(
+                        "{name} id {id} is duplicated, out of order or not yet allocated (next {next})"
+                    ));
+                }
+                previous = id;
+            }
+            None
+        }
+        ordered("habitat", self.habitats.iter().map(|h| h.id), self.next_habitat_id)
+            .or_else(|| ordered("concession", self.concessions.iter().map(|c| c.id), self.next_concession_id))
+            .or_else(|| ordered("keeper", self.keepers.iter().map(|k| k.id), self.next_keeper_id))
+            .or_else(|| ordered("janitor", self.janitors.iter().map(|j| j.id), self.next_janitor_id))
+            .or_else(|| ordered("mechanic", self.mechanics.iter().map(|m| m.id), self.next_mechanic_id))
+            .or_else(|| ordered("guest", self.guests.iter().map(|g| g.id), self.next_guest_id))
     }
 
     fn advance_habitat_care(&mut self) {
@@ -1607,10 +1682,12 @@ impl GameState {
             visited_habitats: Vec::new(),
             cleanliness_concern: false,
         });
+        self.emit("guest_arrived", Some(self.next_guest_id));
         self.next_guest_id += 1;
     }
 
     fn advance_guest_needs(&mut self) {
+        self.work.guest_updates += self.guests.len() as u64;
         let park_cleanliness = self.park_cleanliness();
         let cleanliness_concern = park_cleanliness < GUEST_CLEANLINESS_CONCERN_THRESHOLD;
         let cleanliness_penalty = GUEST_CLEANLINESS_CONCERN_THRESHOLD
@@ -1787,6 +1864,9 @@ impl GameState {
         }
 
         if !leave_ids.is_empty() {
+            for id in &leave_ids {
+                self.emit("guest_left", Some(*id));
+            }
             self.guests.retain(|guest| !leave_ids.contains(&guest.id));
         }
         self.serve_concessions();
@@ -2844,6 +2924,8 @@ impl GameState {
         if !self.is_walkable(start) || goals.is_empty() {
             return None;
         }
+        let searches = &self.work.path_searches;
+        searches.set(searches.get().saturating_add(1));
 
         let mut queue = VecDeque::from([start]);
         let mut previous: HashMap<(u32, u32), Option<Position>> =
@@ -3716,15 +3798,144 @@ impl ActionResult {
 #[wasm_bindgen]
 pub struct ZooGame {
     state: GameState,
+    session: session::Session,
+}
+
+impl ZooGame {
+    fn with_state(state: GameState) -> Self {
+        let content = serde_json::to_string(state.catalog.as_ref())
+            .expect("validated catalog serialization is infallible");
+        let start = session::start_identity(
+            &content,
+            &state.catalog.ruleset_id,
+            state.catalog.schema_version,
+        );
+        Self {
+            state,
+            session: session::Session::new(start),
+        }
+    }
+
+    fn drain_events(&mut self) {
+        let events = std::mem::take(&mut self.state.pending_events);
+        self.session.push_events(events);
+    }
+
+    /// Runs one authoritative command and appends it, with its result, to the session log.
+    /// A frozen session refuses every command without touching state.
+    fn command(
+        &mut self,
+        kind: &'static str,
+        args: serde_json::Value,
+        run: impl FnOnce(&mut GameState) -> ActionResult,
+    ) -> String {
+        let tick = self.state.elapsed_minutes;
+        let result = if self.session.frozen {
+            ActionResult::error(session::FROZEN_MESSAGE)
+        } else {
+            run(&mut self.state)
+        };
+        self.session
+            .record(tick, kind, args, result.ok, &result.message);
+        self.drain_events();
+        result.json()
+    }
+
+    /// Advances the simulation after checking authoritative invariants. Replay calls this
+    /// with merged, unclamped minutes; the player-facing `tick` clamps first.
+    fn advance(&mut self, minutes: u32) -> Option<ActionResult> {
+        if self.session.frozen {
+            return None;
+        }
+        let tick = self.state.elapsed_minutes;
+        if self.session.pending_fault == Some(session::PendingFault::Panic) {
+            let message = "Injected simulation panic".to_owned();
+            let seq = self.session.record(
+                tick,
+                "advance",
+                serde_json::json!({ "minutes": 0 }),
+                false,
+                &message,
+            );
+            self.session.fail(seq, tick, "panic", message, true);
+            panic!("zoo-core: injected simulation panic (#87 fault injection)");
+        }
+        if let Some(violation) = self.state.invariant_violation() {
+            let message = format!("Invariant violation: {violation}");
+            let seq = self.session.record(
+                tick,
+                "advance",
+                serde_json::json!({ "minutes": 0 }),
+                false,
+                &message,
+            );
+            let injected = self.session.injected_corruption;
+            self.session
+                .fail(seq, tick, "invariant_violation", message.clone(), injected);
+            return Some(ActionResult::error(message));
+        }
+        if minutes == 0 {
+            return None;
+        }
+        self.state.tick(minutes);
+        self.session.record_advance(tick, u64::from(minutes));
+        self.drain_events();
+        Some(ActionResult::ok(session::advance_message(u64::from(minutes))))
+    }
+
+    fn replay_entry(&mut self, kind: &str, args: &serde_json::Value) -> Result<String, String> {
+        let number = |name: &str| -> Result<u32, String> {
+            args[name]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| format!("{kind}: missing numeric argument {name}"))
+        };
+        let text = |name: &str| -> Result<String, String> {
+            args[name]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{kind}: missing text argument {name}"))
+        };
+        Ok(match kind {
+            "place_path" => self.place_path(number("x")?, number("y")?),
+            "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
+            "place_habitat_rect" => self.place_habitat_rect(
+                number("ax")?,
+                number("ay")?,
+                number("bx")?,
+                number("by")?,
+            ),
+            "place_habitat" => {
+                let orientation = u8::try_from(number("orientation")?)
+                    .map_err(|_| "place_habitat: orientation out of range".to_owned())?;
+                self.place_habitat(number("x")?, number("y")?, orientation)
+            }
+            "bulldoze" => self.bulldoze(number("x")?, number("y")?),
+            "adopt" => self.adopt(number("habitat_id")?, text("species")?),
+            "buy_animal_feed" => self.buy_animal_feed(),
+            "hire_keeper" => self.hire_keeper(),
+            "hire_janitor" => self.hire_janitor(),
+            "hire_mechanic" => self.hire_mechanic(),
+            "schedule_keeper" => self.schedule_keeper(number("habitat_id")?),
+            "feed_habitat" => self.feed_habitat(number("habitat_id")?),
+            "refill_water" => self.refill_water(number("habitat_id")?),
+            "clean_habitat" => self.clean_habitat(number("habitat_id")?),
+            "add_shelter" => self.add_shelter(number("habitat_id")?),
+            "inject_fault" => self.inject_fault(&text("kind")?),
+            "advance" => self
+                .advance(number("minutes")?)
+                .map(ActionResult::json)
+                .ok_or_else(|| "advance: recorded entry produced no result".to_owned())?,
+            other => return Err(format!("unknown recorded command kind {other}")),
+        })
+    }
 }
 
 #[wasm_bindgen]
 impl ZooGame {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            state: GameState::default(),
-        }
+        Self::with_state(GameState::default())
     }
 
     pub fn content_json(&self) -> String {
@@ -3734,31 +3945,116 @@ impl ZooGame {
 
     pub fn from_content_json(document: &str) -> Result<ZooGame, String> {
         let catalog = Arc::new(Catalog::parse(document)?);
-        Ok(Self {
-            state: GameState {
-                catalog,
-                ..GameState::default()
-            },
-        })
+        Ok(Self::with_state(GameState {
+            catalog,
+            ..GameState::default()
+        }))
+    }
+
+    /// Rebuilds a park from validated content and a recorded diagnostics bundle by
+    /// re-executing its ordered command log. Fails closed when the content does not match
+    /// the recorded starting identity, the log is incomplete, or any result diverges.
+    pub fn replay(content_document: &str, session_json: &str) -> Result<ZooGame, String> {
+        let mut game = ZooGame::from_content_json(content_document)?;
+        let bundle: serde_json::Value = serde_json::from_str(session_json)
+            .map_err(|error| format!("malformed diagnostics bundle: {error}"))?;
+        if &bundle["start"] != game.session.start() {
+            return Err("content does not match the recorded starting-state identity".to_owned());
+        }
+        let log = session::Session::parse_replay_log(&bundle)?;
+        for (seq, (kind, args, ok, message)) in log.into_iter().enumerate() {
+            let result = game.replay_entry(&kind, &args)?;
+            let result: serde_json::Value = serde_json::from_str(&result)
+                .map_err(|error| format!("seq {seq}: unreadable result: {error}"))?;
+            if result["ok"] != ok || result["message"] != message.as_str() {
+                return Err(format!(
+                    "replay diverged at seq {seq} ({kind}): recorded {ok}/{message:?}, got {result}"
+                ));
+            }
+        }
+        Ok(game)
     }
 
     pub fn reset(&mut self) {
-        self.state = GameState {
+        *self = Self::with_state(GameState {
             catalog: Arc::clone(&self.state.catalog),
             ..GameState::default()
-        };
+        });
     }
 
     pub fn snapshot_json(&self) -> String {
         serde_json::to_string(&self.state.snapshot()).expect("snapshot serialization is infallible")
     }
 
+    /// The bounded session diagnostics bundle (`zoo-diagnostics/1`, at most 1 MB).
+    pub fn diagnostics_json(&self) -> String {
+        let state = &self.state;
+        let ids = |iter: &mut dyn Iterator<Item = u32>| {
+            let mut ids: Vec<u32> = iter.collect();
+            ids.sort_unstable();
+            ids
+        };
+        let clock = serde_json::json!({
+            "tick": state.elapsed_minutes,
+            "day": state.day,
+            "minute_of_day": state.minute_of_day,
+        });
+        let entities = serde_json::json!({
+            "habitats": ids(&mut state.habitats.iter().map(|item| item.id)),
+            "concessions": ids(&mut state.concessions.iter().map(|item| item.id)),
+            "keepers": ids(&mut state.keepers.iter().map(|item| item.id)),
+            "janitors": ids(&mut state.janitors.iter().map(|item| item.id)),
+            "mechanics": ids(&mut state.mechanics.iter().map(|item| item.id)),
+            "guests": ids(&mut state.guests.iter().map(|item| item.id)),
+        });
+        let work = serde_json::json!({
+            "simulated_minutes": state.elapsed_minutes,
+            "guest_updates": state.work.guest_updates,
+            "path_searches": state.work.path_searches.get(),
+        });
+        self.session.bundle(clock, entities, work)
+    }
+
+    /// `"running"` or `"frozen"`; a cheap per-tick query for the UI.
+    pub fn session_status(&self) -> String {
+        if self.session.frozen { "frozen" } else { "running" }.to_owned()
+    }
+
+    /// Test-only fault injection (#87). `"invariant"` corrupts real authoritative state so
+    /// the invariant check catches it at the next advance; `"panic"` makes the next advance
+    /// panic. The browser only exposes it behind `?zoo-fault-injection=1`.
+    pub fn inject_fault(&mut self, kind: &str) -> String {
+        let was_frozen = self.session.frozen;
+        let args = serde_json::json!({ "kind": kind });
+        let result = self.command("inject_fault", args, |state| match kind {
+            "invariant" => {
+                state.cash_cents = content::MAX_CENTS + 1;
+                ActionResult::ok("Injected invariant fault: cash corrupted beyond its range")
+            }
+            "panic" => ActionResult::ok("Injected panic fault: the next advance panics"),
+            other => ActionResult::error(format!("Unknown fault kind {other}")),
+        });
+        if !was_frozen {
+            match kind {
+                "invariant" => self.session.injected_corruption = true,
+                "panic" => self.session.pending_fault = Some(session::PendingFault::Panic),
+                _ => {}
+            }
+        }
+        result
+    }
+
     pub fn place_path(&mut self, x: u32, y: u32) -> String {
-        self.state.place_path(x, y).json()
+        self.command("place_path", serde_json::json!({ "x": x, "y": y }), |state| {
+            state.place_path(x, y)
+        })
     }
 
     pub fn place_concession(&mut self, x: u32, y: u32, kind: String) -> String {
-        self.state.place_concession(x, y, &kind).json()
+        let args = serde_json::json!({ "x": x, "y": y, "kind": kind });
+        self.command("place_concession", args, |state| {
+            state.place_concession(x, y, &kind)
+        })
     }
 
     pub fn evaluate_habitat_rect(&self, ax: u32, ay: u32, bx: u32, by: u32) -> String {
@@ -3767,7 +4063,10 @@ impl ZooGame {
     }
 
     pub fn place_habitat_rect(&mut self, ax: u32, ay: u32, bx: u32, by: u32) -> String {
-        self.state.place_habitat_rect(ax, ay, bx, by).json()
+        let args = serde_json::json!({ "ax": ax, "ay": ay, "bx": bx, "by": by });
+        self.command("place_habitat_rect", args, |state| {
+            state.place_habitat_rect(ax, ay, bx, by)
+        })
     }
 
     pub fn evaluate_habitat(&self, x: u32, y: u32, orientation: u8) -> String {
@@ -3780,57 +4079,68 @@ impl ZooGame {
     }
 
     pub fn place_habitat(&mut self, x: u32, y: u32, orientation: u8) -> String {
-        self.state
-            .place_habitat(x, y, HabitatOrientation::from_code(orientation))
-            .json()
+        let args = serde_json::json!({ "x": x, "y": y, "orientation": orientation });
+        self.command("place_habitat", args, |state| {
+            state.place_habitat(x, y, HabitatOrientation::from_code(orientation))
+        })
     }
 
     pub fn bulldoze(&mut self, x: u32, y: u32) -> String {
-        self.state.bulldoze(x, y).json()
+        self.command("bulldoze", serde_json::json!({ "x": x, "y": y }), |state| {
+            state.bulldoze(x, y)
+        })
     }
 
     pub fn adopt(&mut self, habitat_id: u32, species: String) -> String {
-        self.state.adopt(habitat_id, &species).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id, "species": species });
+        self.command("adopt", args, |state| state.adopt(habitat_id, &species))
     }
 
     pub fn buy_animal_feed(&mut self) -> String {
-        self.state.buy_animal_feed().json()
+        self.command("buy_animal_feed", serde_json::json!({}), GameState::buy_animal_feed)
     }
 
     pub fn hire_keeper(&mut self) -> String {
-        self.state.hire_keeper().json()
+        self.command("hire_keeper", serde_json::json!({}), GameState::hire_keeper)
     }
 
     pub fn hire_janitor(&mut self) -> String {
-        self.state.hire_janitor().json()
+        self.command("hire_janitor", serde_json::json!({}), GameState::hire_janitor)
     }
 
     pub fn hire_mechanic(&mut self) -> String {
-        self.state.hire_mechanic().json()
+        self.command("hire_mechanic", serde_json::json!({}), GameState::hire_mechanic)
     }
 
     pub fn schedule_keeper(&mut self, habitat_id: u32) -> String {
-        self.state.schedule_keeper(habitat_id).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("schedule_keeper", args, |state| {
+            state.schedule_keeper(habitat_id)
+        })
     }
 
     pub fn feed_habitat(&mut self, habitat_id: u32) -> String {
-        self.state.feed_habitat(habitat_id).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("feed_habitat", args, |state| state.feed_habitat(habitat_id))
     }
 
     pub fn refill_water(&mut self, habitat_id: u32) -> String {
-        self.state.refill_water(habitat_id).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("refill_water", args, |state| state.refill_water(habitat_id))
     }
 
     pub fn clean_habitat(&mut self, habitat_id: u32) -> String {
-        self.state.clean_habitat(habitat_id).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("clean_habitat", args, |state| state.clean_habitat(habitat_id))
     }
 
     pub fn add_shelter(&mut self, habitat_id: u32) -> String {
-        self.state.add_shelter(habitat_id).json()
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("add_shelter", args, |state| state.add_shelter(habitat_id))
     }
 
     pub fn tick(&mut self, minutes: u32) {
-        self.state.tick(minutes.min(240));
+        let _ = self.advance(minutes.min(240));
     }
 }
 
