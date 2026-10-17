@@ -69,7 +69,7 @@ def part(obj, name, color, collection, parent=None):
         linked.objects.unlink(obj)
     collection.objects.link(obj)
     if parent:
-        obj.parent = parent
+        attach(obj, parent)
     return obj
 
 
@@ -143,6 +143,33 @@ def root_node(name, collection):
     return root
 
 
+def attach(child, parent):
+    """Parent a dependent part beneath a moving part while keeping its rest pose."""
+    bpy.context.view_layer.update()
+    world = child.matrix_world.copy()
+    child.parent = parent
+    child.matrix_parent_inverse = mathutils.Matrix.Identity(4)
+    child.matrix_basis = parent.matrix_world.inverted() @ world
+    return child
+
+
+def joint(obj, end="top"):
+    """Move a part's origin to its anatomical joint: the cap center of its upright geometry.
+
+    Geometry stays where it was in the rest pose; only the rotation pivot changes, so
+    keyframed rotations swing the part around the joint instead of its center.
+    """
+    vertices = [vertex.co for vertex in obj.data.vertices]
+    pivot = mathutils.Vector((
+        (min(v.x for v in vertices) + max(v.x for v in vertices)) / 2,
+        (min(v.y for v in vertices) + max(v.y for v in vertices)) / 2,
+        max(v.z for v in vertices) if end == "top" else min(v.z for v in vertices),
+    ))
+    obj.data.transform(mathutils.Matrix.Translation(-pivot))
+    obj.matrix_basis = obj.matrix_basis @ mathutils.Matrix.Translation(pivot)
+    return obj
+
+
 def animate_rotation(obj, action_name, axis, amount, duration=1.0):
     axis = axis.lower()
     obj.rotation_mode = "XYZ"
@@ -175,19 +202,20 @@ def make_human(asset, outfit):
     bpy.context.scene.collection.children.link(collection)
     root = root_node("character_root", collection)
     head = sphere("head", (0, 1.58, 0), (0.17, 0.18, 0.16), "skin", collection, root, 3)
-    sphere("nose", (0, 1.57, .155), (.045, .055, .04), "skin", collection, root, 1)
+    sphere("nose", (0, 1.57, .155), (.045, .055, .04), "skin", collection, head, 1)
     for side in (-1, 1):
-        sphere(f"eye_{side}", (side * .065, 1.63, .145), (.025, .025, .018), "black", collection, root, 1)
+        sphere(f"eye_{side}", (side * .065, 1.63, .145), (.025, .025, .018), "black", collection, head, 1)
     box("torso", (0, 1.12, 0), (0.36, 0.52, 0.22), outfit, collection, root)
     for side in (-1, 1):
         arm = cylinder(f"arm_{'left' if side < 0 else 'right'}", (side * .25, 1.15, 0), .065, .48, outfit, collection, root)
         arm.rotation_euler[1] = side * .12
-        sphere(f"hand_{side}", (side * .27, .91, 0), (.075, .075, .075), "skin", collection, root, 1)
+        joint(arm)
+        attach(sphere(f"hand_{side}", (side * .27, .91, 0), (.075, .075, .075), "skin", collection, root, 1), arm)
         animate_rotation(arm, "walk", "X", side * -.5)
-        leg = cylinder(f"leg_{'left' if side < 0 else 'right'}", (side * .105, .52, 0), .075, .62, "dark_wood", collection, root)
+        leg = joint(cylinder(f"leg_{'left' if side < 0 else 'right'}", (side * .105, .52, 0), .075, .62, "dark_wood", collection, root))
+        attach(box(f"shoe_{side}", (side * .105, .17, .055), (.16, .1, .27), "black", collection, root, .015), leg)
         animate_rotation(leg, "walk", "X", side * .45)
-        box(f"shoe_{side}", (side * .105, .17, .055), (.16, .1, .27), "black", collection, root, .015)
-    box("cap", (0, 1.76, 0), (.34, .08, .28), outfit, collection, root)
+    attach(box("cap", (0, 1.76, 0), (.34, .08, .28), outfit, collection, root), head)
     if asset == "keeper":
         box("feed_satchel", (.25, 1.03, -.14), (.24, .3, .14), "crate", collection, root)
     elif asset == "janitor":
@@ -210,19 +238,19 @@ def make_quadruped(asset, body_color, profile):
     head_x = profile["head_x"]
     head_y = profile["head_y"]
     head = sphere("head", (head_x, head_y, 0), head_scale, body_color, collection, root, 3)
-    sphere("eye_left", (head_x + head_scale[0] * .55, head_y + head_scale[1] * .25, -.13), (.035, .035, .025), "black", collection, root, 1)
-    sphere("eye_right", (head_x + head_scale[0] * .55, head_y + head_scale[1] * .25, .13), (.035, .035, .025), "black", collection, root, 1)
+    sphere("eye_left", (head_x + head_scale[0] * .55, head_y + head_scale[1] * .25, -.13), (.035, .035, .025), "black", collection, head, 1)
+    sphere("eye_right", (head_x + head_scale[0] * .55, head_y + head_scale[1] * .25, .13), (.035, .035, .025), "black", collection, head, 1)
     if profile.get("muzzle", True):
-        sphere("muzzle", (head_x + head_scale[0] * .82, head_y - .035, 0), (head_scale[0] * .48, head_scale[1] * .42, head_scale[2] * .65), profile.get("muzzle_color", body_color), collection, root, 2)
-        sphere("nose", (head_x + head_scale[0] * 1.25, head_y - .02, 0), (.055, .045, .065), "black", collection, root, 1)
+        sphere("muzzle", (head_x + head_scale[0] * .82, head_y - .035, 0), (head_scale[0] * .48, head_scale[1] * .42, head_scale[2] * .65), profile.get("muzzle_color", body_color), collection, head, 2)
+        sphere("nose", (head_x + head_scale[0] * 1.25, head_y - .02, 0), (.055, .045, .065), "black", collection, head, 1)
     if profile.get("ears", True):
         for side in (-1, 1):
-            sphere(f"ear_{side}", (head_x, head_y + head_scale[1] * .82, side * head_scale[2] * .72), (.07, .1, .055), body_color, collection, root, 2)
+            sphere(f"ear_{side}", (head_x, head_y + head_scale[1] * .82, side * head_scale[2] * .72), (.07, .1, .055), body_color, collection, head, 2)
     leg_positions = ((-.38, -.22), (-.38, .22), (.38, -.22), (.38, .22))
     for index, (x, z) in enumerate(leg_positions):
-        leg = cylinder(f"leg_{index}", (x, .3, z), profile["leg_r"], .58, body_color, collection, root)
+        leg = joint(cylinder(f"leg_{index}", (x, .3, z), profile["leg_r"], .58, body_color, collection, root))
+        attach(box(f"hoof_{index}", (x, .055, z + .025), (profile["leg_r"] * 2.2, .1, profile["leg_r"] * 2.8), profile.get("hoof_color", "black"), collection, root, .012), leg)
         animate_rotation(leg, "walk", "X", (.35 if index in (0, 3) else -.35))
-        box(f"hoof_{index}", (x, .055, z + .025), (profile["leg_r"] * 2.2, .1, profile["leg_r"] * 2.8), profile.get("hoof_color", "black"), collection, root, .012)
     if profile.get("tail", True):
         tail = cylinder("tail", (-profile["body"][0] * .95, .72, 0), profile["leg_r"] * .55, profile["body"][0] * .55, body_color, collection, root, axis="X")
         animate_rotation(tail, "idle", "Z", .18)
@@ -235,7 +263,7 @@ def make_animal(asset):
         collection, clips = make_quadruped(asset, "capybara", {"body": (.56,.3,.3), "head_x":.56,"head_y":.68,"head":(.24,.2,.2),"leg_r":.075,"hoof_color":"capybara"})
         root = bpy.data.objects["animal_root"]
         for side in (-1, 1):
-            sphere(f"capybara_cheek_{side}", (.72, .65, side * .16), (.13, .11, .08), "capybara", collection, root, 2)
+            attach(sphere(f"capybara_cheek_{side}", (.72, .65, side * .16), (.13, .11, .08), "capybara", collection, root, 2), bpy.data.objects["head"])
         return collection, clips
     if asset == "zebra":
         collection, clips = make_quadruped(asset, "zebra", {"body":(.54,.32,.25),"head_x":.54,"head_y":.94,"head":(.2,.28,.18),"leg_r":.055})
@@ -247,44 +275,50 @@ def make_animal(asset):
     if asset == "elephant":
         collection, clips = make_quadruped(asset, "elephant", {"body":(.7,.45,.42),"head_x":.65,"head_y":.82,"head":(.35,.35,.32),"leg_r":.12,"muzzle":False,"ears":False,"hoof_color":"elephant"})
         root = bpy.data.objects["animal_root"]
+        head = bpy.data.objects["head"]
         trunk = cylinder("trunk", (.94,.5,0), .08,.58,"elephant",collection,root)
         trunk.rotation_euler[1] = math.pi / 6
-        sphere("ear_left", (.58,.91,-.31), (.24,.25,.045), "elephant", collection, root)
-        sphere("ear_right", (.58,.91,.31), (.24,.25,.045), "elephant", collection, root)
+        attach(joint(trunk), head)
+        attach(sphere("ear_left", (.58,.91,-.31), (.24,.25,.045), "elephant", collection, root), head)
+        attach(sphere("ear_right", (.58,.91,.31), (.24,.25,.045), "elephant", collection, root), head)
         for side in (-1, 1):
             tusk = cone(f"tusk_{side}", (.92, .67, side * .17), .055, .005, .32, "white", collection, root, axis="X")
             tusk.rotation_euler[1] += -.22
+            attach(tusk, head)
         animate_rotation(trunk, "idle", "Y", .16)
         return collection, clips
     if asset == "giraffe":
         collection, clips = make_quadruped(asset, "giraffe", {"body":(.52,.32,.24),"head_x":.48,"head_y":1.75,"head":(.18,.2,.15),"leg_r":.055})
         root=bpy.data.objects["animal_root"]
-        neck = cylinder("neck",(.42,1.23,0),.11,.95,"giraffe",collection,root)
+        head=bpy.data.objects["head"]
+        neck = joint(cylinder("neck",(.42,1.23,0),.11,.95,"giraffe",collection,root), "bottom")
+        attach(head, neck)
         for side in (-1, 1):
-            cylinder(f"ossicone_{side}",(.48,2.0,side*.08),.025,.16,"giraffe",collection,root,12)
-            sphere(f"ossicone_tip_{side}",(.48,2.09,side*.08),(.04,.04,.04),"roof",collection,root,1)
+            attach(cylinder(f"ossicone_{side}",(.48,2.0,side*.08),.025,.16,"giraffe",collection,root,12), head)
+            attach(sphere(f"ossicone_tip_{side}",(.48,2.09,side*.08),(.04,.04,.04),"roof",collection,root,1), head)
         for index, (x,y,z) in enumerate(((-.28,.73,-.2),(-.1,.83,.19),(.12,.63,-.2),(.28,.82,.18),(.41,1.08,-.1),(.42,1.35,.1),(.43,1.58,-.08))):
-            sphere(f"spot_{index}",(x,y,z),(.085,.09,.025),"roof",collection,root,1)
+            spot = sphere(f"spot_{index}",(x,y,z),(.085,.09,.025),"roof",collection,root,1)
+            if index >= 4: attach(spot, neck)
         for index, y in enumerate((1.0,1.2,1.4,1.6)):
-            box(f"mane_{index}",(.31,y,-.105),(.1,.16,.035),"roof",collection,root,.008)
+            attach(box(f"mane_{index}",(.31,y,-.105),(.1,.16,.035),"roof",collection,root,.008), neck)
         animate_rotation(neck, "idle", "X", .04)
         return collection, clips
     if asset == "flamingo":
         collection=bpy.data.collections.new(asset); bpy.context.scene.collection.children.link(collection); root=root_node("animal_root",collection)
         sphere("body",(0,.95,0),(.28,.38,.2),"pink",collection,root,3); head=sphere("head",(.2,1.85,0),(.14,.14,.12),"pink",collection,root,3)
-        neck=cylinder("neck",(.12,1.43,0),.055,.7,"pink",collection,root); cone("beak",(.37,1.84,0),.075,.012,.25,"black",collection,root,axis="X")
-        for side in (-1, 1): sphere(f"eye_{side}",(.29,1.89,side*.085),(.022,.022,.014),"black",collection,root,1)
+        neck=joint(cylinder("neck",(.12,1.43,0),.055,.7,"pink",collection,root), "bottom"); attach(head, neck); attach(cone("beak",(.37,1.84,0),.075,.012,.25,"black",collection,root,axis="X"), head)
+        for side in (-1, 1): sphere(f"eye_{side}",(.29,1.89,side*.085),(.022,.022,.014),"black",collection,head,1)
         for side in (-1,1):
-            leg=cylinder(f"leg_{side}",(side*.07,.44,0),.035,.82,"pink",collection,root); animate_rotation(leg,"walk","X",side*.3)
-            box(f"foot_{side}",(side*.07,.035,.08),(.13,.045,.26),"pink",collection,root,.01)
+            leg=joint(cylinder(f"leg_{side}",(side*.07,.44,0),.035,.82,"pink",collection,root))
+            attach(box(f"foot_{side}",(side*.07,.035,.08),(.13,.045,.26),"pink",collection,root,.01), leg); animate_rotation(leg,"walk","X",side*.3)
         animate_idle(root, head, "Z", .1); animate_rotation(neck,"idle","X",.05); return collection,["idle","walk"]
     if asset == "penguin":
         collection=bpy.data.collections.new(asset); bpy.context.scene.collection.children.link(collection); root=root_node("animal_root",collection)
         sphere("body",(0,.55,0),(.28,.5,.23),"penguin",collection,root,3); sphere("belly",(0,.54,.22),(.18,.35,.035),"white",collection,root,2); head=sphere("head",(0,1.08,0),(.2,.2,.18),"penguin",collection,root,3)
-        cone("beak",(0,1.08,.24),.07,.005,.18,"food",collection,root,axis="Z")
-        for side in (-1,1): sphere(f"eye_{side}",(side*.07,1.13,.16),(.025,.025,.018),"white",collection,root,1); sphere(f"pupil_{side}",(side*.07,1.13,.178),(.012,.012,.008),"black",collection,root,1)
+        attach(cone("beak",(0,1.08,.24),.07,.005,.18,"food",collection,root,axis="Z"), head)
+        for side in (-1,1): sphere(f"eye_{side}",(side*.07,1.13,.16),(.025,.025,.018),"white",collection,head,1); sphere(f"pupil_{side}",(side*.07,1.13,.178),(.012,.012,.008),"black",collection,head,1)
         for side in (-1,1):
-            wing=box(f"wing_{side}",(side*.27,.64,0),(.1,.38,.1),"penguin",collection,root); animate_rotation(wing,"walk","Y",side*.35)
+            wing=joint(box(f"wing_{side}",(side*.27,.64,0),(.1,.38,.1),"penguin",collection,root)); animate_rotation(wing,"walk","Y",side*.35)
             box(f"foot_{side}",(side*.11,.08,.1),(.17,.07,.26),"food",collection,root,.015)
         animate_idle(root,head,"Z",.08); return collection,["idle","walk"]
     raise ValueError(asset)
