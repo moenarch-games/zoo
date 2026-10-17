@@ -13,5 +13,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f89127d8c7ac55e6225588b35610c5d1032fdc96" }
 three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f89127d8c7ac55e6225588b35610c5d1032fdc96" }
-three-d-projective = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "f89127d8c7ac55e6225588b35610c5d1032fdc96" }
+three-d-projective = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "231d8fe1a4766753b3f6f2eb03c113b6a0cd206f" }
 wasm-bindgen = "0.2"
