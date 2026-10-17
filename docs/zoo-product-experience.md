@@ -1,6 +1,6 @@
 # Zoo product experience: first minute and visual identity
 
-**Authority:** Owner decisions from the 10-question Zoo design session on 2026-10-11. These define product intent; they are not evidence that the currently deployed site implements the experience. The [1.0 roadmap](https://github.com/moritzbrantner/zoo/issues/20) remains the authority for broader scope and sequencing, and [architecture](architecture.md) remains the authority for component ownership.
+**Product-intent authority:** The [Decision Atlas](decisions/atlas.md) holds the durable owner-approved choices. This document preserves the detailed 2026-10-11 ten-question design source and owner-verifiable acceptance as supporting specification; it is not a second independent decision database, nor evidence that the deployed site implements the experience. The [1.0 roadmap](https://github.com/moritzbrantner/zoo/issues/20) remains the authority for broader scope and sequencing, and [architecture](architecture.md) remains the authority for component ownership.
 
 ## Ten settled decisions
 
