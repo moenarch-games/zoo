@@ -575,6 +575,8 @@ def validate_outputs():
         dev_triangles = document_triangle_count(dev_doc); prod_triangles = document_triangle_count(prod_doc)
         assert dev_triangles == prod_triangles == catalog[asset]["triangles"], f"triangle drift: {asset}"
         assert dev_triangles <= TRIANGLE_BUDGETS[asset], f"triangle budget exceeded: {asset}"
+        # catalog.json declares the budget consumers read; enforce the declaration too.
+        assert dev_triangles <= catalog[asset]["triangleBudget"], f"triangle budget exceeded: {asset} (catalog triangleBudget {catalog[asset]['triangleBudget']})"
         expected = ["idle", "walk"] if asset in {"capybara","flamingo","zebra","giraffe","elephant","penguin","guest","keeper","janitor","mechanic"} else []
         assert [clip.get("name") for clip in dev_doc.get("animations", [])] == expected, f"development clips: {development}"
         assert [clip.get("name") for clip in prod_doc.get("animations", [])] == expected, f"production clips: {production}"
