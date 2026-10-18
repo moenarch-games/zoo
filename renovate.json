@@ -8,5 +8,6 @@
       "matchPackageNames": ["three-d-*"],
       "groupName": "3d-lab cargo crates"
     }
-  ]
+  ],
+  "platformAutomerge": true
 }

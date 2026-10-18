@@ -10,10 +10,44 @@ permissions:
 
 jobs:
   verify:
+    outputs:
+      allow-skipped: ${{ steps.merge-scope.outputs.allow-skipped }}
+      validate-runtime-evidence: ${{ steps.merge-scope.outputs.validate-runtime-evidence }}
+      validate-foundation-audit: ${{ steps.merge-scope.outputs.validate-foundation-audit }}
+      validate-assets: ${{ steps.merge-scope.outputs.validate-assets }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Determine required PR validation scope
+        id: merge-scope
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, re, subprocess
+          paths = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "-z", os.environ["BASE_SHA"], os.environ["HEAD_SHA"]]).decode().split("\0")
+          filters = {'validate-runtime-evidence': {'paths': None, 'branches': ['main']}, 'validate-foundation-audit': {'paths': ['.github/workflows/foundation-audit.yml', '.repository-environment.toml', 'scripts/codex-environment.sh', '.coding-tooling.json', 'conventions.json', 'conventions.lock.json', '.conventions/**', 'renovate.json', 'AGENTS.md', '.editorconfig', 'apps/web/package.json', 'apps/web/bun.lock', 'apps/web/tsconfig.json', 'apps/web/.oxlintrc.json', 'apps/web/.oxfmtrc.json', 'Makefile'], 'branches': None}, 'validate-assets': {'paths': ['tools/build_assets.py', 'tools/tests/**', 'assets/3d/**', '.github/workflows/assets.yml', 'Makefile'], 'branches': None}}
+          def matches(path, pattern):
+              pattern = re.escape(pattern).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+              return re.fullmatch(pattern, path) is not None
+          skipped = []
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              for name, scope in filters.items():
+                  matches_paths = scope["paths"] is None or any(matches(path, pattern) for path in paths if path for pattern in scope["paths"])
+                  matches_branch = scope["branches"] is None or any(matches(os.environ["BASE_BRANCH"], pattern) for pattern in scope["branches"])
+                  required = matches_paths and matches_branch
+                  print(f"{name}={str(required).lower()}", file=output)
+                  if not required:
+                      skipped.append(name)
+              print("allow-skipped=" + json.dumps(skipped), file=output)
+          PYTHON
       - name: Checkout pinned asset-tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -77,3 +111,36 @@ jobs:
           path: apps/web/dist
           if-no-files-found: error
           retention-days: 7
+
+  validate-runtime-evidence:
+    needs: verify
+    if: github.event_name == 'pull_request' && needs.verify.outputs.validate-runtime-evidence == 'true'
+    uses: ./.github/workflows/runtime-evidence.yml
+    permissions:
+      contents: read
+
+  validate-foundation-audit:
+    needs: verify
+    if: github.event_name == 'pull_request' && needs.verify.outputs.validate-foundation-audit == 'true'
+    uses: ./.github/workflows/foundation-audit.yml
+    permissions:
+      contents: read
+
+  validate-assets:
+    needs: verify
+    if: github.event_name == 'pull_request' && needs.verify.outputs.validate-assets == 'true'
+    uses: ./.github/workflows/assets.yml
+    permissions:
+      contents: read
+
+  merge-ready:
+    name: merge-ready
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: ["verify", "validate-runtime-evidence", "validate-foundation-audit", "validate-assets"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
+        with:
+          needs: ${{ toJSON(needs) }}
+          required: '["verify", "validate-runtime-evidence", "validate-foundation-audit", "validate-assets"]'
+          allow-skipped: ${{ needs.verify.outputs.allow-skipped || '[]' }}
