@@ -5,7 +5,7 @@
     "": {
       "name": "@zoo/web",
       "dependencies": {
-        "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#acbe27217505da87559c5018ba0afe0d3f5efe86",
+        "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#235774615f1367065093deb6988f5217bdf4d7e1",
         "react": "19.2.8",
         "react-dom": "19.2.8",
       },
@@ -22,7 +22,7 @@
     },
   },
   "packages": {
-    "@moritzbrantner/three-d-renderer": ["@moritzbrantner/three-d-renderer@github:moritzbrantner/3d-lab#acbe272", { "dependencies": { "three": "0.185.1" } }, "moritzbrantner-3d-lab-acbe272", "sha512-/hEruZMiVwIA8DQ8TBboD6o0dqdQ8Z8FXPZmnrP6+fovA+gGlhBp/n7E66KvQ3OX9OIIHYlHzzTUeWUIRMTnpg=="],
+    "@moritzbrantner/three-d-renderer": ["@moritzbrantner/three-d-renderer@github:moritzbrantner/3d-lab#2357746", { "dependencies": { "three": "0.186.1" } }, "moritzbrantner-3d-lab-2357746", "sha512-WCsapeHt1tKhNQ1bNYKKQ9BLeR7QNOElAvtXLcgdPnIDy6g43xOVwHsUwQ3M6zAVt6LkeiyEWAoOJsQ55vCjvw=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.152.0", "", {}, "sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw=="],
 
@@ -248,7 +248,7 @@
 
     "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
 
-    "three": ["three@0.185.1", "", {}, "sha512-5aojFCXKwnjBRZvUnt3WFfEcvUJgkN5LlijRFN95hMy8WVkG4I0QNcJE+OuWvuJ0bOdStrbfXn0pkd6/QyiAlg=="],
+    "three": ["three@0.186.1", "", {}, "sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA=="],
 
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 
