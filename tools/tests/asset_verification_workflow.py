@@ -9,6 +9,7 @@ path filter as intended; that remains an independent review item in
 docs/acceptance/asset-verification.md.
 """
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
@@ -76,6 +77,54 @@ def triggers(text):
     return result
 
 
+def workflow_jobs(text):
+    """Read job blocks from the existing block-style workflow format."""
+    body = text.partition('\njobs:\n')[2]
+    starts = list(re.finditer(r'^  ([A-Za-z0-9_-]+):\s*$', body, re.MULTILINE))
+    return {match.group(1): body[match.start():starts[index + 1].start() if index + 1 < len(starts) else len(body)]
+            for index, match in enumerate(starts)}
+
+
+def called_pull_request_paths(relative, texts, failures):
+    """Resolve PR callers only when their explicit guard uses a declared path output."""
+    scopes = []
+    for parent, text in texts.items():
+        if 'pull_request' not in triggers(text):
+            continue
+        jobs = workflow_jobs(text)
+        for name, body in jobs.items():
+            if not re.search(r'^    uses: [\'"]?\./' + re.escape(relative) + r'[\'"]?\s*$', body, re.MULTILINE):
+                continue
+            condition = re.search(r'^    if: (.+)$', body, re.MULTILINE)
+            guard = re.fullmatch(r"github\.event_name == ['\"]pull_request['\"] && needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+) == ['\"]true['\"]",
+                                 condition.group(1).strip() if condition else '')
+            if not guard:
+                failures.append(f'{parent.name}:{name}: asset call lacks an explicit PR/path guard')
+                continue
+            owner, output = guard.groups()
+            scope_job = jobs.get(owner, '')
+            needs = re.search(r'^    needs: ' + re.escape(owner) + r'\s*$', body, re.MULTILINE)
+            binding = re.search(re.escape(output) + r': \$\{\{ steps\.([A-Za-z0-9_-]+)\.outputs\.' + re.escape(output) + r' \}\}', scope_job)
+            step_id = binding.group(1) if binding else ''
+            steps = re.split(r'^      - ', scope_job, flags=re.MULTILINE)[1:]
+            classifier = next((step for step in steps if step_id and re.search(
+                r'^        id: ' + re.escape(step_id) + r'\s*$', step, re.MULTILINE)), '')
+            filters = re.search(r'^\s+filters = (.+)$', classifier, re.MULTILINE)
+            try:
+                scope = ast.literal_eval(filters.group(1))[output] if filters else {}
+            except (ValueError, SyntaxError, KeyError, TypeError):
+                scope = {}
+            if not needs or not binding or scope.get('branches') is not None or not isinstance(scope.get('paths'), list):
+                failures.append(f'{parent.name}:{name}: asset path classification is missing or disconnected')
+                continue
+            parent_paths = triggers(text)['pull_request']
+            if parent_paths is not None and not set(scope['paths']).issubset(parent_paths):
+                failures.append(f'{parent.name}:{name}: parent trigger excludes required asset paths')
+                continue
+            scopes.append((f'{parent.name}:{name}', scope['paths']))
+    return scopes
+
+
 def make_targets(text):
     targets, current = {}, None
     for line in logical_lines(text):
@@ -134,19 +183,25 @@ def main():
         text = texts[path]
         relative = path.relative_to(root).as_posix()
         events = triggers(text)
-        pull_request = events.get('pull_request')
-        if 'pull_request' not in events:
-            failures.append(f'{path.name}: no pull_request trigger')
-        elif pull_request is None:
-            failures.append(f'{path.name}: pull_request is not path-scoped')
-        else:
+        scopes = [(path.name, events['pull_request'])] if 'pull_request' in events else []
+        if 'workflow_call' in events:
+            callers = called_pull_request_paths(relative, texts, failures)
+            scopes.extend(callers)
+        if len(scopes) > 1:
+            failures.append(f'{path.name}: multiple PR entrypoints duplicate asset validation')
+        if not scopes:
+            failures.append(f'{path.name}: no path-scoped pull_request entrypoint')
+        for origin, pull_request in scopes:
+            if pull_request is None:
+                failures.append(f'{origin}: pull_request is not path-scoped')
+                continue
             required = list(REQUIRED_PATHS) + [relative]
             lines = logical_lines(text)
             if any(re.search(r'(^|\s)make\s', strip_comment(line)) for line in lines):
                 required.append('Makefile')
             for item in required:
                 if item not in pull_request:
-                    failures.append(f'{path.name}: pull_request paths missing `{item}`')
+                    failures.append(f'{origin}: pull_request paths missing `{item}`')
         commands = [strip_comment(line) for line in logical_lines(text)]
         blender_commands = blender_python_commands(commands)
         for command in blender_commands:
