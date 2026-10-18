@@ -134,7 +134,7 @@ jobs:
       contents: read
 
   merge-ready:
-    name: merge-ready
+    name: ${{ github.event_name == 'pull_request' && 'merge-ready' || 'validation-summary' }}
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs: ["verify", "validate-runtime-evidence", "validate-foundation-audit", "validate-assets"]
     runs-on: ubuntu-latest
