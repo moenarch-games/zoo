@@ -126,16 +126,24 @@ name = "three-d-animation"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f#231d8fe1a4766753b3f6f2eb03c113b6a0cd206f"
 dependencies = [
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f)",
+]
+
+[[package]]
+name = "three-d-animation"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc#3854f81fec92b81d365f7dba0fdc96210fb03dcc"
+dependencies = [
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc)",
 ]
 
 [[package]]
 name = "three-d-camera"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f#231d8fe1a4766753b3f6f2eb03c113b6a0cd206f"
+source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc#3854f81fec92b81d365f7dba0fdc96210fb03dcc"
 dependencies = [
- "three-d-animation",
- "three-d-core",
+ "three-d-animation 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc)",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc)",
 ]
 
 [[package]]
@@ -144,12 +152,17 @@ version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f#231d8fe1a4766753b3f6f2eb03c113b6a0cd206f"
 
 [[package]]
+name = "three-d-core"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=3854f81fec92b81d365f7dba0fdc96210fb03dcc#3854f81fec92b81d365f7dba0fdc96210fb03dcc"
+
+[[package]]
 name = "three-d-projective"
 version = "0.1.0"
 source = "git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f#231d8fe1a4766753b3f6f2eb03c113b6a0cd206f"
 dependencies = [
- "three-d-animation",
- "three-d-core",
+ "three-d-animation 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f)",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f)",
 ]
 
 [[package]]
@@ -226,7 +239,7 @@ dependencies = [
  "serde",
  "serde_json",
  "three-d-camera",
- "three-d-core",
+ "three-d-core 0.1.0 (git+https://github.com/moritzbrantner/3d-lab.git?rev=231d8fe1a4766753b3f6f2eb03c113b6a0cd206f)",
  "three-d-projective",
  "wasm-bindgen",
 ]
