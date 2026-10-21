@@ -12,6 +12,6 @@ crate-type = ["cdylib", "rlib"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 three-d-camera = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "231d8fe1a4766753b3f6f2eb03c113b6a0cd206f" }
-three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "231d8fe1a4766753b3f6f2eb03c113b6a0cd206f" }
+three-d-core = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "3854f81fec92b81d365f7dba0fdc96210fb03dcc" }
 three-d-projective = { git = "https://github.com/moritzbrantner/3d-lab.git", rev = "231d8fe1a4766753b3f6f2eb03c113b6a0cd206f" }
 wasm-bindgen = "0.2"
