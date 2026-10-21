@@ -15,7 +15,7 @@
     "build:web": "tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#235774615f1367065093deb6988f5217bdf4d7e1",
+    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#bfeb9fafd8fef541e51236bf76b5b57ab73213d4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
