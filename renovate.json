@@ -1,12 +1,28 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>moritzbrantner/coding-agent-conventions"],
+  "extends": [
+    "github>moritzbrantner/coding-agent-conventions"
+  ],
   "packageRules": [
     {
       "description": "3d-lab Cargo crates share types across crates and must move to one revision together; split pins compile two incompatible copies of three-d-core.",
-      "matchManagers": ["cargo"],
-      "matchPackageNames": ["three-d-*"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "three-d-*"
+      ],
       "groupName": "3d-lab cargo crates"
+    },
+    {
+      "description": "Crates from one git repository must move together; single-crate digest bumps split the graph across revisions.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "groupName": "git-pinned crate revisions"
     }
   ]
 }
