@@ -24,5 +24,6 @@
       ],
       "groupName": "git-pinned crate revisions"
     }
-  ]
+  ],
+  "platformAutomerge": true
 }

@@ -82,7 +82,7 @@ The harness is not attachment semantics. A clip that keeps any moving sampler pa
 This is a static text invariant over `.github/workflows/*.yml` and `Makefile`. It requires:
 
 - a workflow that runs `tools/build_assets.py -- --validate` under Blender;
-- a path-scoped `pull_request` trigger with the required paths;
+- a path-scoped `pull_request` trigger, or a reusable workflow called by an explicit PR/path guard with the required paths;
 - both #73 runs on all ten candidates, plus the negative harness;
 - `--python-exit-code 1` on every Blender `--python` invocation, in that workflow and in every Makefile target;
 - Blender `5.0.1` and its archive SHA-256 checked with `sha256sum`;
@@ -94,6 +94,8 @@ The check was exercised against a scratch conforming workflow, which gave 0 fail
 - `pull_request` left unscoped;
 - `make verify` calling `assets-validate`;
 - Blender added to `verify.yml`.
+
+The reusable-workflow wiring also rejects missing path classification, a disconnected scope output, an unguarded caller, or simultaneous direct and called PR entrypoints.
 
 ## Baseline observations (f621454, Blender 5.0.1 build a3db93c5b259)
 

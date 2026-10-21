@@ -3,21 +3,16 @@ name: 3D asset catalog
 # Path-scoped: only changes to the 3D generator, its Blender tests, the asset
 # catalog or this workflow pay for Blender. Unrelated PRs never run it.
 on:
-  pull_request:
-    paths:
-      - tools/build_assets.py
-      - tools/tests/**
-      - assets/3d/**
-      - .github/workflows/assets.yml
-      - Makefile
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - tools/build_assets.py
-      - tools/tests/**
-      - assets/3d/**
-      - .github/workflows/assets.yml
-      - Makefile
+    - tools/build_assets.py
+    - tools/tests/**
+    - assets/3d/**
+    - .github/workflows/assets.yml
+    - Makefile
+  workflow_call: null
 
 permissions:
   contents: read

@@ -1,11 +1,10 @@
 name: Runtime evidence and Moonlight
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_call: null
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: zoo-runtime-evidence-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:

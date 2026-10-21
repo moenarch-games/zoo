@@ -1,46 +1,30 @@
 name: Foundation Fleet Audit
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/foundation-audit.yml
-      - .repository-environment.toml
-      - scripts/codex-environment.sh
-      - .coding-tooling.json
-      - conventions.json
-      - conventions.lock.json
-      - .conventions/**
-      - renovate.json
-      - AGENTS.md
-      - .editorconfig
-      - apps/web/package.json
-      - apps/web/bun.lock
-      - apps/web/tsconfig.json
-      - apps/web/.oxlintrc.json
-      - apps/web/.oxfmtrc.json
-      - Makefile
   push:
-    branches: [main]
+    branches:
+    - main
     paths:
-      - .github/workflows/foundation-audit.yml
-      - .repository-environment.toml
-      - scripts/codex-environment.sh
-      - .coding-tooling.json
-      - conventions.json
-      - conventions.lock.json
-      - .conventions/**
-      - renovate.json
-      - AGENTS.md
-      - .editorconfig
-      - apps/web/package.json
-      - apps/web/bun.lock
-      - apps/web/tsconfig.json
-      - apps/web/.oxlintrc.json
-      - apps/web/.oxfmtrc.json
-      - Makefile
+    - .github/workflows/foundation-audit.yml
+    - .repository-environment.toml
+    - scripts/codex-environment.sh
+    - .coding-tooling.json
+    - conventions.json
+    - conventions.lock.json
+    - .conventions/**
+    - renovate.json
+    - AGENTS.md
+    - .editorconfig
+    - apps/web/package.json
+    - apps/web/bun.lock
+    - apps/web/tsconfig.json
+    - apps/web/.oxlintrc.json
+    - apps/web/.oxfmtrc.json
+    - Makefile
   schedule:
-    - cron: '59 3 * * *'
-  workflow_dispatch:
+  - cron: 59 3 * * *
+  workflow_dispatch: null
+  workflow_call: null
 
 permissions:
   contents: read
