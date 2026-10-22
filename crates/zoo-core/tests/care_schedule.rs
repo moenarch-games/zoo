@@ -64,3 +64,41 @@ fn replay_preserves_schedule_overrides_due_and_missed_work() {
         .expect("complete log replays");
     assert_eq!(replayed.snapshot_json(), game.snapshot_json());
 }
+
+/// #95: replayed command logs rebuild the deterministic default gate, moved gates and the
+/// walking keepers' positions and routes exactly.
+#[test]
+fn replay_rebuilds_service_gates_and_walking_keepers() {
+    let mut game = ZooGame::new();
+    for x in 5..=7 {
+        ok(game.place_path(x, 7));
+    }
+    for y in 8..=10 {
+        ok(game.place_path(7, y));
+    }
+    ok(game.place_habitat_rect(3, 8, 6, 10));
+    let gate = &snapshot(&game)["habitats"][0]["service_gate"];
+    assert_eq!((gate["x"].as_u64(), gate["y"].as_u64()), (Some(3), Some(8)));
+    assert_eq!(gate["side"], "north");
+
+    ok(game.buy_animal_feed());
+    ok(game.hire_keeper());
+    ok(game.schedule_keeper(1));
+    ok(game.adopt(1, "capybara".to_owned()));
+    let preview: Value = serde_json::from_str(&game.evaluate_service_gate(1, 7, 10)).unwrap();
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["segment"]["side"], "east");
+    ok(game.set_service_gate(1, 6, 10, "east".to_owned()));
+    game.tick(7);
+
+    let view = snapshot(&game);
+    assert_eq!(view["habitats"][0]["service_gate"]["access"]["x"], 7);
+    assert_eq!(
+        view["animal_care_depot"]["keepers"][0]["activity"],
+        "to_gate"
+    );
+
+    let replayed = ZooGame::replay(&game.content_json(), &game.diagnostics_json())
+        .expect("complete log replays");
+    assert_eq!(replayed.snapshot_json(), game.snapshot_json());
+}
