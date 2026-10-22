@@ -33,7 +33,7 @@ jobs:
   foundation:
     permissions:
       contents: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/coding-tooling-validation.yml@d473ea958fc23c61cef4c171fb40a643c6b3609b # main
+    uses: moritzbrantner/reusable-workflows/.github/workflows/coding-tooling-validation.yml@3b01b02c90cd295e6a395a15255ae540848bc714 # main
     with:
       operation: foundation
       install_mode: none
