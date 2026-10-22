@@ -639,3 +639,37 @@ dd {
 .side-panel.gate-mode .habitat-card > :not(.gate-controls) {
   display: none;
 }
+
+/* Likewise, resizing or moving a work zone shrinks its inspector to the edit controls. */
+.side-panel.zone-edit-mode .zone-card > :not(.zone-edit-controls) {
+  display: none;
+}
+
+.zone-swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 6px;
+  border: 1px solid #2d2a1f;
+  border-radius: 2px;
+  vertical-align: -0.05em;
+}
+
+.zone-warning dd,
+.guest-thought.zone-warning {
+  color: #b3261e;
+}
+
+.zone-keeper-select {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 800;
+}
+
+.zone-keeper-select select {
+  flex: 1;
+  min-height: 36px;
+  font: inherit;
+}

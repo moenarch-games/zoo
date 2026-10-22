@@ -67,6 +67,8 @@ fn definition_only_species_uses_existing_adoption_and_finance() {
     let mut game = load(&definition);
     accepted(game.place_habitat_rect(3, 8, 7, 10));
     accepted(game.hire_keeper());
+    accepted(game.create_work_zone(0, 0, 19, 13));
+    accepted(game.assign_keeper_zone(1, 1));
     accepted(game.schedule_keeper(1));
     let before = view(&game)["cash_cents"].as_i64().unwrap();
     accepted(game.adopt(1, "acceptance_species".to_owned()));
@@ -117,6 +119,8 @@ fn same_rules_and_commands_replay_identically() {
     for game in [&mut first, &mut second] {
         accepted(game.place_habitat_rect(3, 8, 7, 10));
         accepted(game.hire_keeper());
+        accepted(game.create_work_zone(0, 0, 19, 13));
+        accepted(game.assign_keeper_zone(1, 1));
         accepted(game.schedule_keeper(1));
         accepted(game.adopt(1, "capybara".to_owned()));
         game.tick(137);

@@ -345,6 +345,17 @@ try {
   for (const label of ["feed crates", "Hire keeper", "Hire janitor", "Hire mechanic"]) {
     assert(await clickButton(label), `Depot action missing: ${label}`)
   }
+  // #135: keepers only work inside a work zone around the habitat's service gate.
+  assert(await clickButton("Zones"), "Zones tool missing")
+  await drag(await tile(0, 0), await tile(19, 13))
+  assert((await message()).includes("Work zone #1 created"), "Zone drag did not create a zone", await message())
+  await waitFor("the zone inspector", `document.querySelector('.window-title span')?.textContent.includes('Work zone #1') ?? false`)
+  await drag(await tile(2, 2), await tile(4, 4))
+  assert((await message()).includes("may not overlap"), "Overlapping zone was not rejected", await message())
+  assert(await clickButton("Assign keeper"), "Zone keeper assignment missing")
+  assert((await message()).includes("Keeper #1 assigned to work zone #1"), "Keeper was not assigned", await message())
+  await screenshot("test-results/park-view-work-zone.png")
+  assert(await clickButton("Inspect"), "Inspect tool missing after zones")
   await click(await tile(8, 3))
   await waitFor("the habitat inspector", `document.querySelector('.window-title span')?.textContent === 'Habitat #1'`)
   assert(await clickButton("Schedule available keeper"), "Keeper scheduling missing")

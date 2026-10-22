@@ -529,16 +529,21 @@ impl GameState {
                 _,
             ) => format!("{task} in habitat #{habitat} · {remaining_minutes} min left"),
             (KeeperActivity::ToDepot, Some(_)) => "Returning to the depot".to_owned(),
-            (KeeperActivity::AtDepot, _) => keeper.assigned_habitat_id.map_or_else(
-                || "Available for assignment".to_owned(),
-                |habitat_id| format!("At the depot · scheduled for habitat #{habitat_id}"),
-            ),
+            (KeeperActivity::AtDepot, _) => match (keeper.zone_id, keeper.assigned_habitat_id) {
+                (None, _) => "Idle · needs a work zone".to_owned(),
+                (Some(zone_id), None) => format!("Available in work zone #{zone_id}"),
+                (Some(_), Some(habitat_id)) => {
+                    format!("At the depot · scheduled for habitat #{habitat_id}")
+                }
+            },
         };
         super::KeeperView {
             id: keeper.id,
             x: keeper.x,
             y: keeper.y,
             assigned_habitat_id: keeper.assigned_habitat_id,
+            zone_id: keeper.zone_id,
+            needs_zone: keeper.zone_id.is_none(),
             deliveries_completed: keeper.deliveries_completed,
             activity: keeper.activity.key(),
             job_id: keeper.activity.job_id(),

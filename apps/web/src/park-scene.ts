@@ -13,7 +13,10 @@ import type {
   SpeciesKey,
   Tile,
   Tool,
+  WorkZoneEvaluation,
+  ZoneBounds,
 } from "./game-types"
+import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
 // Zoo scene composition: maps authoritative zoo-core state onto shared 3d-lab renderer nodes.
 // World convention (shared with zoo-scene): park tile (x, y) covers [x, x + 1] × [y, y + 1] on
@@ -37,6 +40,11 @@ export type SceneOverlay = {
   selectedDepot: boolean
   /** Rust's evaluation of the fence segment under the pointer while moving a gate. */
   gatePreview: GateEvaluation | null
+  /** Work zones are drawn only while the Zones tool is active or a zone is selected. */
+  zonesVisible: boolean
+  selectedZoneId: number | null
+  /** Rust's evaluation of the zone being drawn, resized, or moved. */
+  zonePreview: WorkZoneEvaluation | null
 }
 
 /** Resolves the presented (smoothed) ground position for a moving actor. */
@@ -586,6 +594,12 @@ function gateNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode
     if (!gate.reachable) {
       color = "#d0584a"
     }
+    if (overlay.zonesVisible) {
+      color = habitat.work_zone_id === null ? NO_ZONE_COLOR : zoneColor(habitat.work_zone_id)
+      if (habitat.work_zone_id === null) {
+        nodes.push(...noZoneMarker(`gate:${habitat.id}:no-zone`, gate))
+      }
+    }
     nodes.push(...gateMarker(`gate:${habitat.id}`, gate, color, { highlighted: selected }))
     if (selected && gate.access) {
       nodes.push(
@@ -607,6 +621,53 @@ function gateNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode
         opacity: 0.75,
       }),
     )
+  }
+  return nodes
+}
+
+/** A red flag above a service gate that no work zone covers ("No zone"). */
+function noZoneMarker(id: string, segment: FenceSegment): RendererSceneNode[] {
+  const [start, end] = fenceEndpoints(segment.x, segment.y, segment.side)
+  const cx = (start[0] + end[0]) / 2
+  const cz = (start[2] + end[2]) / 2
+  return [
+    node(`${id}:pole`, [cx, 0.75, cz], boxGeometry([0.05, 1.5, 0.05]), "#5b4636"),
+    node(`${id}:flag`, [cx, 1.38, cz], sphereGeometry(0.18), NO_ZONE_COLOR),
+  ]
+}
+
+// ---------------------------------------------------------------------------------------------
+// Keeper work zones: a translucent fill plus an outline per map-aligned rectangle.
+
+function zoneRect(id: string, bounds: ZoneBounds, color: Hex, fill: number): RendererSceneNode[] {
+  const { x, y, width, height } = bounds
+  const cx = x + width / 2
+  const cz = y + height / 2
+  const edge = 0.08
+  const lift = 0.06
+  return [
+    node(`${id}:fill`, [cx, 0.04, cz], boxGeometry([width, 0.01, height]), color, {
+      opacity: fill,
+    }),
+    node(`${id}:n`, [cx, lift, y + edge / 2], boxGeometry([width, 0.03, edge]), color),
+    node(`${id}:s`, [cx, lift, y + height - edge / 2], boxGeometry([width, 0.03, edge]), color),
+    node(`${id}:w`, [x + edge / 2, lift, cz], boxGeometry([edge, 0.03, height]), color),
+    node(`${id}:e`, [x + width - edge / 2, lift, cz], boxGeometry([edge, 0.03, height]), color),
+  ]
+}
+
+function zoneNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode[] {
+  const nodes: RendererSceneNode[] = []
+  if (!overlay.zonesVisible) {
+    return nodes
+  }
+  for (const zone of snapshot.work_zones) {
+    const selected = zone.id === overlay.selectedZoneId
+    nodes.push(...zoneRect(`zone:${zone.id}`, zone, zoneColor(zone.id), selected ? 0.32 : 0.18))
+  }
+  const preview = overlay.zonePreview
+  if (preview) {
+    nodes.push(...zoneRect("zone:preview", preview.bounds, preview.ok ? "#9fe07a" : "#e0604f", 0.3))
   }
   return nodes
 }
@@ -1419,6 +1480,8 @@ function toolColor(tool: Tool): Hex {
     case "habitat":
     case "gate":
       return "#f6d36f"
+    case "zone":
+      return "#9fd0f6"
     case "select":
       return "#ffffff"
     default:
@@ -1485,6 +1548,7 @@ export function buildStaticNodes(snapshot: Snapshot, overlay: SceneOverlay): Ren
       habitatNodes(habitat, habitat.id === overlay.selectedHabitatId),
     ),
     ...fenceNodes(snapshot, overlay.placement),
+    ...zoneNodes(snapshot, overlay),
     ...gateNodes(snapshot, overlay),
     ...entranceGateNodes(snapshot),
     ...depotNodes(snapshot),
