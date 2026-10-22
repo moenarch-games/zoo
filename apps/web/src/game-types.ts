@@ -29,6 +29,29 @@ export type Tile = Point & {
   concession_id: number | null
 }
 
+export type CareCategory = "feeding" | "cleaning" | "inspection" | "enrichment"
+
+export type CareTask = {
+  category: CareCategory
+  first_minute_of_day: number
+  interval_minutes: number
+  priority: number
+  customized: boolean
+  next_due_in_minutes: number
+}
+
+export type CareJob = {
+  id: number
+  habitat_id: number
+  category: CareCategory
+  due_day: number
+  due_minute_of_day: number
+  priority: number
+  required_keepers: number
+  state: "due" | "completed" | "missed"
+  expires_in_minutes: number
+}
+
 export type Habitat = Point & {
   id: number
   width: number
@@ -53,7 +76,9 @@ export type Habitat = Point & {
   cleanliness: number
   has_shelter: boolean
   keeper_id: number | null
-  next_feed_delivery_in_minutes: number | null
+  care_required_keepers: number | null
+  care_schedule: CareTask[]
+  care_jobs: CareJob[]
   feeding_status: string
   care_status: string
   appeal: number
