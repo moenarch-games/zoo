@@ -1,6 +1,13 @@
 // Shapes of the zoo-core WASM snapshot and command results consumed by the web adapter.
 
-export type Tool = "select" | "path" | "habitat" | "bulldoze" | "gate" | `facility:${string}`
+export type Tool =
+  | "select"
+  | "path"
+  | "habitat"
+  | "bulldoze"
+  | "gate"
+  | "zone"
+  | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
 export type SpeciesKey = string
 export type ConcessionKind = string
@@ -67,6 +74,28 @@ export type GateEvaluation = {
   message: string
   segment: FenceSegment | null
   access: Point | null
+  /** The work zone the habitat would belong to with its gate on this segment. */
+  zone_id: number | null
+}
+
+export type ZoneBounds = Point & {
+  width: number
+  height: number
+}
+
+/** A keeper work zone; membership is derived by Rust from habitat service gates. */
+export type WorkZone = ZoneBounds & {
+  id: number
+  habitat_ids: number[]
+  keeper_ids: number[]
+}
+
+/** Rust's create/resize/move preview for a work zone. */
+export type WorkZoneEvaluation = {
+  ok: boolean
+  message: string
+  bounds: ZoneBounds
+  habitat_ids: number[]
 }
 
 export type Habitat = Point & {
@@ -94,6 +123,8 @@ export type Habitat = Point & {
   cleanliness: number
   has_shelter: boolean
   keeper_id: number | null
+  /** The work zone containing the service gate; null means "No zone". */
+  work_zone_id: number | null
   care_required_keepers: number | null
   care_schedule: CareTask[]
   care_jobs: CareJob[]
@@ -126,6 +157,9 @@ export type Concession = Point & {
 export type Keeper = Point & {
   id: number
   assigned_habitat_id: number | null
+  zone_id: number | null
+  /** Idle until assigned a work zone. */
+  needs_zone: boolean
   deliveries_completed: number
   activity: "at_depot" | "to_gate" | "working" | "to_depot"
   job_id: number | null
@@ -261,6 +295,7 @@ export type Snapshot = {
   guests: Guest[]
   litter: LitterTask[]
   maintenance: MaintenanceTask[]
+  work_zones: WorkZone[]
   operations: {
     cleanliness: number
     litter_backlog: number

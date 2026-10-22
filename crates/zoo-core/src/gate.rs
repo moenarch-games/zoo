@@ -21,6 +21,15 @@ pub(crate) struct GateEvaluation {
     message: String,
     segment: Option<FenceSegment>,
     access: Option<Position>,
+    /// The work zone the habitat would belong to with its gate on this segment.
+    zone_id: Option<u32>,
+}
+
+#[cfg(test)]
+impl GateEvaluation {
+    pub(crate) fn zone_id(&self) -> Option<u32> {
+        self.zone_id
+    }
 }
 
 /// The habitat's fence segments in clockwise order starting at its north-west corner.
@@ -146,6 +155,7 @@ impl GameState {
             message,
             segment,
             access: segment.and_then(|segment| self.gate_access_tile(segment)),
+            zone_id: None,
         };
         let Some(habitat) = self.habitats.iter().find(|h| h.id == habitat_id) else {
             return rejected("Select a habitat first".to_owned(), None);
@@ -179,15 +189,24 @@ impl GameState {
         if let Err(message) = self.validate_service_gate(habitat, segment) {
             return rejected(message, Some(segment));
         }
+        let zone_id = self.zone_at(Position {
+            x: segment.x,
+            y: segment.y,
+        });
+        let zone = zone_id.map_or_else(
+            || "no work zone".to_owned(),
+            |zone_id| format!("work zone #{zone_id}"),
+        );
         GateEvaluation {
             ok: true,
             message: if segment == habitat.service_gate {
-                "The service gate is already here".to_owned()
+                format!("The service gate is already here · {zone}")
             } else {
-                "Move the service gate here".to_owned()
+                format!("Move the service gate here · {zone}")
             },
             segment: Some(segment),
             access: self.gate_access_tile(segment),
+            zone_id,
         }
     }
 
@@ -231,7 +250,11 @@ impl GameState {
             return ActionResult::error(message);
         }
         self.habitats[index].service_gate = segment;
-        ActionResult::ok(format!("Habitat #{habitat_id} service gate moved"))
+        let released = self.release_out_of_zone_schedules();
+        ActionResult::ok(format!(
+            "Habitat #{habitat_id} service gate moved{}",
+            crate::zone::released_suffix(released)
+        ))
     }
 }
 

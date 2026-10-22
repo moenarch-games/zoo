@@ -21,6 +21,8 @@ fn configured_game() -> ZooGame {
     require_ok(game.place_habitat(3, 8, 0));
     require_ok(game.buy_animal_feed());
     require_ok(game.hire_keeper());
+    require_ok(game.create_work_zone(0, 0, 19, 13));
+    require_ok(game.assign_keeper_zone(1, 1));
     require_ok(game.schedule_keeper(1));
     require_ok(game.add_shelter(1));
     require_ok(game.adopt(1, "capybara".to_owned()));
