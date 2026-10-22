@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import type {
   ActionResult,
+  CareTask,
   Guest,
   PlacementEvaluation,
   Point,
@@ -568,6 +569,22 @@ export default function App() {
     }
   }
 
+  const setCarePriority = (task: CareTask, priority: number) => {
+    const game = gameRef.current
+    if (!game || selectedHabitatId === null) {
+      return
+    }
+    perform(() =>
+      game.set_care_task(
+        selectedHabitatId,
+        task.category,
+        task.first_minute_of_day,
+        task.interval_minutes,
+        priority,
+      ),
+    )
+  }
+
   const scheduleKeeper = () => {
     const game = gameRef.current
     if (!game || selectedHabitatId === null) {
@@ -1090,16 +1107,65 @@ export default function App() {
                         : `Keeper #${selectedHabitat.keeper_id}`}
                     </dd>
                   </div>
+                  {selectedHabitat.care_required_keepers !== null &&
+                    selectedHabitat.care_required_keepers > 1 && (
+                      <div>
+                        <dt>Staffing</dt>
+                        <dd>{selectedHabitat.care_required_keepers} keepers per job</dd>
+                      </div>
+                    )}
                   <div>
-                    <dt>Next food run</dt>
+                    <dt>Missed care (24 h)</dt>
                     <dd>
-                      {selectedHabitat.next_feed_delivery_in_minutes === null
-                        ? "Not scheduled"
-                        : `${selectedHabitat.next_feed_delivery_in_minutes} min`}
+                      {selectedHabitat.care_jobs.filter((job) => job.state === "missed").length}
                     </dd>
                   </div>
                 </dl>
                 <div className="guest-thought">{selectedHabitat.feeding_status}</div>
+                {selectedHabitat.care_schedule.length === 0 ? (
+                  <div className="guest-thought">
+                    The care schedule starts from species defaults with the first animals.
+                  </div>
+                ) : (
+                  <dl>
+                    {selectedHabitat.care_schedule.map((task) => {
+                      const due = selectedHabitat.care_jobs.find(
+                        (job) => job.category === task.category && job.state === "due",
+                      )
+                      return (
+                        <div key={task.category}>
+                          <dt>
+                            {task.category}
+                            {task.customized ? " *" : ""}
+                          </dt>
+                          <dd>
+                            from {clock(task.first_minute_of_day)} every{" "}
+                            {task.interval_minutes / 60} h ·{" "}
+                            {due
+                              ? `due, ${due.expires_in_minutes} min left`
+                              : `next in ${task.next_due_in_minutes} min`}{" "}
+                            · priority{" "}
+                            <button
+                              disabled={task.priority <= 1}
+                              aria-label={`Lower ${task.category} priority`}
+                              onClick={() => setCarePriority(task, task.priority - 1)}
+                            >
+                              −
+                            </button>{" "}
+                            {task.priority}{" "}
+                            <button
+                              disabled={task.priority >= 5}
+                              aria-label={`Raise ${task.category} priority`}
+                              onClick={() => setCarePriority(task, task.priority + 1)}
+                            >
+                              +
+                            </button>
+                          </dd>
+                        </div>
+                      )
+                    })}
+                  </dl>
+                )}
                 {selectedHabitat.keeper_id === null && (
                   <button className="shop-row" onClick={scheduleKeeper}>
                     <span>

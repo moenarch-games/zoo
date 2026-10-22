@@ -34,6 +34,58 @@ pub(crate) struct Species {
     pub space_per_animal: u32,
     pub asset_ref: String,
     pub unlock_ref: String,
+    pub care: CareProfile,
+}
+
+/// Recurring keeper work categories a habitat schedule can generate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CareCategory {
+    Feeding,
+    Cleaning,
+    Inspection,
+    Enrichment,
+}
+
+impl CareCategory {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "feeding" => Some(Self::Feeding),
+            "cleaning" => Some(Self::Cleaning),
+            "inspection" => Some(Self::Inspection),
+            "enrichment" => Some(Self::Enrichment),
+            _ => None,
+        }
+    }
+}
+
+/// Species care defaults copied into a habitat when it is first stocked. The habitat owns
+/// its copy afterwards, so neither catalog edits nor other habitats can rewrite it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CareProfile {
+    /// Keepers every in-habitat job of this species needs at once (two for dangerous animals).
+    pub required_keepers: u32,
+    pub schedule: Vec<CareTaskDefault>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CareTaskDefault {
+    pub category: CareCategory,
+    pub first_minute_of_day: u32,
+    pub interval_minutes: u32,
+    pub priority: u32,
+}
+
+pub(crate) const MAX_CARE_PRIORITY: u32 = 5;
+pub(crate) const MAX_REQUIRED_KEEPERS: u32 = 2;
+/// The grace window is one in-game hour, so a cadence of at least an hour never lets two
+/// occurrences of the same task be eligible at once. Dividing the day keeps times stable.
+pub(crate) fn valid_care_timing(first_minute_of_day: u32, interval_minutes: u32) -> bool {
+    first_minute_of_day < 24 * 60
+        && (60..=24 * 60).contains(&interval_minutes)
+        && (24 * 60) % interval_minutes == 0
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -154,6 +206,30 @@ impl Catalog {
             ] {
                 if value == 0 || value > MAX_RULE_VALUE {
                     return Err(format!("{prefix}/{field}: expected 1..={MAX_RULE_VALUE}"));
+                }
+            }
+            if !(1..=MAX_REQUIRED_KEEPERS).contains(&species.care.required_keepers) {
+                return Err(format!(
+                    "{prefix}/care/required_keepers: expected 1..={MAX_REQUIRED_KEEPERS}"
+                ));
+            }
+            let schedule = &species.care.schedule;
+            if schedule.is_empty() || schedule.len() > 4 {
+                return Err(format!("{prefix}/care/schedule: expected 1..=4 tasks"));
+            }
+            let mut categories = HashSet::new();
+            for (t, task) in schedule.iter().enumerate() {
+                let path = format!("{prefix}/care/schedule/{t}");
+                if !categories.insert(task.category) {
+                    return Err(format!("{path}/category: duplicate care category"));
+                }
+                if !valid_care_timing(task.first_minute_of_day, task.interval_minutes) {
+                    return Err(format!(
+                        "{path}: expected first_minute_of_day < 1440 and an interval of 60..=1440 minutes dividing the day"
+                    ));
+                }
+                if !(1..=MAX_CARE_PRIORITY).contains(&task.priority) {
+                    return Err(format!("{path}/priority: expected 1..={MAX_CARE_PRIORITY}"));
                 }
             }
             // These are the animal presentation profiles supported by the

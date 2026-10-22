@@ -16,7 +16,30 @@
       "minimum_social_group": 2,
       "space_per_animal": 4,
       "asset_ref": "capybara",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 4
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          }
+        ]
+      }
     },
     {
       "key": "flamingo",
@@ -26,7 +49,30 @@
       "minimum_social_group": 3,
       "space_per_animal": 2,
       "asset_ref": "flamingo",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 4
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          }
+        ]
+      }
     },
     {
       "key": "zebra",
@@ -36,7 +82,30 @@
       "minimum_social_group": 3,
       "space_per_animal": 5,
       "asset_ref": "zebra",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 4
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          }
+        ]
+      }
     },
     {
       "key": "giraffe",
@@ -46,7 +115,36 @@
       "minimum_social_group": 2,
       "space_per_animal": 8,
       "asset_ref": "giraffe",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 4
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          },
+          {
+            "category": "enrichment",
+            "first_minute_of_day": 840,
+            "interval_minutes": 1440,
+            "priority": 1
+          }
+        ]
+      }
     },
     {
       "key": "elephant",
@@ -56,7 +154,36 @@
       "minimum_social_group": 2,
       "space_per_animal": 12,
       "asset_ref": "elephant",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 5
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          },
+          {
+            "category": "enrichment",
+            "first_minute_of_day": 840,
+            "interval_minutes": 1440,
+            "priority": 2
+          }
+        ]
+      }
     },
     {
       "key": "penguin",
@@ -66,7 +193,36 @@
       "minimum_social_group": 4,
       "space_per_animal": 3,
       "asset_ref": "penguin",
-      "unlock_ref": "available"
+      "unlock_ref": "available",
+      "care": {
+        "required_keepers": 1,
+        "schedule": [
+          {
+            "category": "feeding",
+            "first_minute_of_day": 420,
+            "interval_minutes": 120,
+            "priority": 4
+          },
+          {
+            "category": "cleaning",
+            "first_minute_of_day": 360,
+            "interval_minutes": 360,
+            "priority": 3
+          },
+          {
+            "category": "inspection",
+            "first_minute_of_day": 600,
+            "interval_minutes": 1440,
+            "priority": 2
+          },
+          {
+            "category": "enrichment",
+            "first_minute_of_day": 900,
+            "interval_minutes": 1440,
+            "priority": 1
+          }
+        ]
+      }
     }
   ],
   "facilities": [

@@ -1,3 +1,4 @@
+mod care;
 mod content;
 mod session;
 
@@ -49,8 +50,6 @@ const MAINTENANCE_WEAR_PER_INTERVAL: u32 = 8;
 const MAINTENANCE_WEAR_PER_SALE: u32 = 2;
 const MAINTENANCE_SERVICE_THRESHOLD: u32 = 60;
 const MAINTENANCE_FAILURE_THRESHOLD: u32 = 20;
-const FEED_DELIVERY_INTERVAL_MINUTES: u32 = 60;
-const FEED_DELIVERY_RETRY_MINUTES: u32 = 15;
 const FEED_DELIVERY_THRESHOLD: u32 = 90;
 const MAX_GUEST_HABITATS_PER_VISIT: usize = 3;
 const MIN_ENGAGING_HABITAT_WELFARE: u32 = 40;
@@ -381,7 +380,8 @@ struct Habitat {
     cleanliness: u32,
     has_shelter: bool,
     keeper_id: Option<u32>,
-    next_feed_delivery_minute: Option<u64>,
+    /// Instantiated from the species defaults on first adoption, then owned by the habitat.
+    care_schedule: Option<care::CareSchedule>,
 }
 
 impl Habitat {
@@ -722,6 +722,8 @@ struct GameState {
     elapsed_minutes: u64,
     /// Domain events produced by the latest command or advance, drained by the recorder.
     pending_events: Vec<session::DomainEvent>,
+    care_jobs: Vec<care::CareJob>,
+    next_care_job_id: u32,
     work: WorkCounters,
 }
 
@@ -775,6 +777,8 @@ impl Default for GameState {
             finance_previous: None,
             elapsed_minutes: 0,
             pending_events: Vec::new(),
+            care_jobs: Vec::new(),
+            next_care_job_id: 1,
             work: WorkCounters::default(),
         };
 
@@ -1095,7 +1099,7 @@ impl GameState {
             cleanliness: 100,
             has_shelter: false,
             keeper_id: None,
-            next_feed_delivery_minute: None,
+            care_schedule: None,
         });
 
         ActionResult::ok(format!(
@@ -1193,6 +1197,7 @@ impl GameState {
                     }
                 }
                 self.habitats.retain(|habitat| habitat.id != id);
+                self.care_jobs.retain(|job| job.habitat_id != id);
                 for keeper in &mut self.keepers {
                     if keeper.assigned_habitat_id == Some(id) {
                         keeper.assigned_habitat_id = None;
@@ -1249,7 +1254,11 @@ impl GameState {
         if let Err(message) = self.spend(species.purchase_cost(), ExpenseCategory::AnimalPurchase) {
             return ActionResult::error(message);
         }
+        let now = self.absolute_minute();
         let habitat = &mut self.habitats[index];
+        if habitat.care_schedule.is_none() {
+            habitat.care_schedule = Some(care::CareSchedule::instantiate(&species.care, now));
+        }
         habitat.species = Some(species.clone());
         habitat.animals += 1;
         ActionResult::ok(format!(
@@ -1373,12 +1382,8 @@ impl GameState {
         };
 
         let keeper_id = self.keepers[keeper_index].id;
-        let next_delivery = self
-            .absolute_minute()
-            .saturating_add(u64::from(FEED_DELIVERY_INTERVAL_MINUTES));
         self.keepers[keeper_index].assigned_habitat_id = Some(habitat_id);
         self.habitats[habitat_index].keeper_id = Some(keeper_id);
-        self.habitats[habitat_index].next_feed_delivery_minute = Some(next_delivery);
         ActionResult::ok(format!(
             "Keeper #{keeper_id} scheduled for habitat #{habitat_id}"
         ))
@@ -1404,10 +1409,6 @@ impl GameState {
 
         self.feed_crates -= 1;
         self.habitats[index].food = 100;
-        self.habitats[index].next_feed_delivery_minute = Some(
-            self.absolute_minute()
-                .saturating_add(u64::from(FEED_DELIVERY_INTERVAL_MINUTES)),
-        );
         if let Some(keeper) = self
             .keepers
             .iter_mut()
@@ -1512,7 +1513,7 @@ impl GameState {
             {
                 self.advance_concession_maintenance();
             }
-            self.advance_keeper_deliveries();
+            self.advance_care_jobs();
 
             self.advance_animal_welfare();
             self.advance_guest_needs();
@@ -1595,6 +1596,13 @@ impl GameState {
         })
         .or_else(|| {
             ordered(
+                "care job",
+                self.care_jobs.iter().map(|j| j.id),
+                self.next_care_job_id,
+            )
+        })
+        .or_else(|| {
+            ordered(
                 "guest",
                 self.guests.iter().map(|g| g.id),
                 self.next_guest_id,
@@ -1611,45 +1619,6 @@ impl GameState {
             habitat.water = habitat.water.saturating_sub(habitat.animals);
             let waste = habitat.animals.saturating_add(1) / 2;
             habitat.cleanliness = habitat.cleanliness.saturating_sub(waste.max(1));
-        }
-    }
-
-    fn advance_keeper_deliveries(&mut self) {
-        let now = self.absolute_minute();
-        let due: Vec<(usize, u32)> = self
-            .habitats
-            .iter()
-            .enumerate()
-            .filter_map(|(index, habitat)| {
-                let keeper_id = habitat.keeper_id?;
-                let delivery_minute = habitat.next_feed_delivery_minute?;
-                (delivery_minute <= now).then_some((index, keeper_id))
-            })
-            .collect();
-
-        for (habitat_index, keeper_id) in due {
-            let needs_feed = self.habitats[habitat_index].animals > 0
-                && self.habitats[habitat_index].food < FEED_DELIVERY_THRESHOLD;
-            let retry_minutes = if needs_feed && self.feed_crates == 0 {
-                FEED_DELIVERY_RETRY_MINUTES
-            } else {
-                FEED_DELIVERY_INTERVAL_MINUTES
-            };
-
-            if needs_feed && self.feed_crates > 0 {
-                self.feed_crates -= 1;
-                self.habitats[habitat_index].food = 100;
-                if let Some(keeper) = self
-                    .keepers
-                    .iter_mut()
-                    .find(|keeper| keeper.id == keeper_id)
-                {
-                    keeper.deliveries_completed = keeper.deliveries_completed.saturating_add(1);
-                }
-            }
-
-            self.habitats[habitat_index].next_feed_delivery_minute =
-                Some(now.saturating_add(u64::from(retry_minutes)));
         }
     }
 
@@ -3066,11 +3035,19 @@ impl GameState {
         if self.feed_crates == 0 {
             return format!("Keeper #{keeper_id} is waiting for depot feed stock");
         }
-        let minutes = habitat
-            .next_feed_delivery_minute
-            .map(|due| due.saturating_sub(self.absolute_minute()))
-            .unwrap_or(0);
-        format!("Keeper #{keeper_id} scheduled · next food run in {minutes} min")
+        let next_feeding = habitat.care_schedule.as_ref().and_then(|schedule| {
+            schedule
+                .tasks
+                .iter()
+                .find(|task| task.category == content::CareCategory::Feeding)
+        });
+        match next_feeding {
+            Some(task) => format!(
+                "Keeper #{keeper_id} scheduled · next feeding in {} min",
+                task.next_due_minute.saturating_sub(self.absolute_minute())
+            ),
+            None => format!("Keeper #{keeper_id} scheduled · care starts with the first animals"),
+        }
     }
 
     fn janitor_status(&self, janitor: &Janitor) -> String {
@@ -3396,9 +3373,16 @@ impl GameState {
                     cleanliness: habitat.cleanliness,
                     has_shelter: habitat.has_shelter,
                     keeper_id: habitat.keeper_id,
-                    next_feed_delivery_in_minutes: habitat
-                        .next_feed_delivery_minute
-                        .map(|due| due.saturating_sub(self.absolute_minute())),
+                    care_required_keepers: habitat
+                        .care_schedule
+                        .as_ref()
+                        .map(|schedule| schedule.required_keepers),
+                    care_schedule: habitat
+                        .care_schedule
+                        .as_ref()
+                        .map(|schedule| self.care_task_views(schedule))
+                        .unwrap_or_default(),
+                    care_jobs: self.care_job_views(habitat.id),
                     feeding_status: self.feeding_status(habitat),
                     care_status: habitat.care_status(),
                     appeal: habitat.appeal(),
@@ -3653,7 +3637,9 @@ struct HabitatView {
     cleanliness: u32,
     has_shelter: bool,
     keeper_id: Option<u32>,
-    next_feed_delivery_in_minutes: Option<u64>,
+    care_required_keepers: Option<u32>,
+    care_schedule: Vec<care::CareTaskView>,
+    care_jobs: Vec<care::CareJobView>,
     feeding_status: String,
     care_status: String,
     appeal: u32,
@@ -3953,6 +3939,13 @@ impl ZooGame {
             "refill_water" => self.refill_water(number("habitat_id")?),
             "clean_habitat" => self.clean_habitat(number("habitat_id")?),
             "add_shelter" => self.add_shelter(number("habitat_id")?),
+            "set_care_task" => self.set_care_task(
+                number("habitat_id")?,
+                text("category")?,
+                number("first_minute_of_day")?,
+                number("interval_minutes")?,
+                number("priority")?,
+            ),
             "inject_fault" => self.inject_fault(&text("kind")?),
             "advance" => self
                 .advance(number("minutes")?)
@@ -4192,6 +4185,33 @@ impl ZooGame {
         self.command("add_shelter", args, |state| state.add_shelter(habitat_id))
     }
 
+    /// Overrides one recurring care task of one habitat (times, cadence and priority).
+    pub fn set_care_task(
+        &mut self,
+        habitat_id: u32,
+        category: String,
+        first_minute_of_day: u32,
+        interval_minutes: u32,
+        priority: u32,
+    ) -> String {
+        let args = serde_json::json!({
+            "habitat_id": habitat_id,
+            "category": category,
+            "first_minute_of_day": first_minute_of_day,
+            "interval_minutes": interval_minutes,
+            "priority": priority,
+        });
+        self.command("set_care_task", args, |state| {
+            state.set_care_task(
+                habitat_id,
+                &category,
+                first_minute_of_day,
+                interval_minutes,
+                priority,
+            )
+        })
+    }
+
     pub fn tick(&mut self, minutes: u32) {
         let _ = self.advance(minutes.min(240));
     }
@@ -4229,7 +4249,7 @@ mod tests {
             cleanliness: 100,
             has_shelter: true,
             keeper_id: Some(1),
-            next_feed_delivery_minute: None,
+            care_schedule: None,
         }
     }
 
@@ -5186,18 +5206,24 @@ mod tests {
         staff_habitat(&mut state, habitat_id);
         assert!(state.adopt(habitat_id, "capybara").ok);
         state.habitats[0].food = 40;
-        state.habitats[0].next_feed_delivery_minute = Some(state.absolute_minute() + 1);
         let before = state.feed_crates;
 
+        // Capybara feeding falls due every two hours from 07:00; the park opens at 09:00.
         state.tick(1);
 
         assert_eq!(state.habitats[0].food, 100);
         assert_eq!(state.feed_crates, before - 1);
         assert_eq!(state.keepers[0].deliveries_completed, 1);
+        let feeding = state
+            .care_jobs
+            .iter()
+            .find(|job| job.category == content::CareCategory::Feeding)
+            .expect("feeding job generated");
+        assert_eq!(feeding.state, care::CareJobState::Completed);
     }
 
     #[test]
-    fn empty_depot_retries_without_creating_free_feed() {
+    fn empty_depot_leaves_feeding_due_then_missed_without_free_feed() {
         let mut state = GameState::default();
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
@@ -5205,15 +5231,203 @@ mod tests {
         assert!(state.schedule_keeper(habitat_id).ok);
         assert!(state.adopt(habitat_id, "capybara").ok);
         state.habitats[0].food = 40;
-        state.habitats[0].next_feed_delivery_minute = Some(state.absolute_minute() + 1);
+        let feeding = |state: &GameState| {
+            *state
+                .care_jobs
+                .iter()
+                .find(|job| job.category == content::CareCategory::Feeding)
+                .expect("feeding job generated")
+        };
 
         state.tick(1);
+        assert_eq!(feeding(&state).state, care::CareJobState::Due);
+        assert!(state.habitats[0].food < 100);
 
+        // Due at 09:00 and still eligible until 09:59.
+        state.tick(58);
+        assert_eq!(feeding(&state).state, care::CareJobState::Due);
+        state.tick(1);
+        assert_eq!(feeding(&state).state, care::CareJobState::Missed);
         assert_eq!(state.feed_crates, 0);
         assert!(state.habitats[0].food < 100);
+        assert!(
+            state
+                .pending_events
+                .iter()
+                .any(|event| event.kind == "care_job_missed")
+        );
+    }
+
+    fn stocked_habitat(state: &mut GameState, x: u32, species: &str) -> u32 {
+        assert!(state.place_habitat_rect(x, 8, x + 2, 10).ok);
+        let habitat_id = state.habitats.last().unwrap().id;
+        staff_habitat(state, habitat_id);
+        assert!(state.adopt(habitat_id, species).ok);
+        habitat_id
+    }
+
+    fn two_habitat_park() -> GameState {
+        let mut state = GameState::default();
+        for x in 5..=11 {
+            assert!(state.place_path(x, ENTRANCE_Y).ok);
+        }
+        stocked_habitat(&mut state, 3, "zebra");
+        stocked_habitat(&mut state, 7, "zebra");
+        state
+    }
+
+    #[test]
+    fn new_habitat_instantiates_species_default_schedule() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        assert!(state.habitats[0].care_schedule.is_none());
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "elephant").ok);
+
+        let elephant = Species::parse("elephant").unwrap();
+        let schedule = state.habitats[0].care_schedule.as_ref().unwrap();
+        assert_eq!(schedule.required_keepers, elephant.care.required_keepers);
+        assert_eq!(schedule.tasks.len(), elephant.care.schedule.len());
+        for (task, default) in schedule.tasks.iter().zip(&elephant.care.schedule) {
+            assert_eq!(task.category, default.category);
+            assert_eq!(task.first_minute_of_day, default.first_minute_of_day);
+            assert_eq!(task.interval_minutes, default.interval_minutes);
+            assert_eq!(task.priority, default.priority);
+            assert!(!task.customized);
+        }
+
+        // A full day without manual configuration generates every category exactly as often
+        // as its cadence implies.
+        state.tick(24 * 60);
+        for default in &elephant.care.schedule {
+            let generated = state
+                .care_jobs
+                .iter()
+                .filter(|job| job.category == default.category)
+                .count() as u32;
+            assert!(
+                generated >= 24 * 60 / default.interval_minutes,
+                "{default:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overriding_one_habitat_leaves_other_habitats_and_catalog_untouched() {
+        let mut state = two_habitat_park();
+        let catalog_before = state.catalog.species.clone();
+        let other_before = state.habitats[1].care_schedule.clone();
+
+        let result = state.set_care_task(1, "cleaning", 0, 240, 5);
+        assert!(result.ok, "{}", result.message);
+        assert!(state.set_care_task(1, "cleaning", 0, 240, 5).ok);
+
+        let task = state.habitats[0]
+            .care_schedule
+            .as_ref()
+            .unwrap()
+            .tasks
+            .iter()
+            .find(|task| task.category == content::CareCategory::Cleaning)
+            .copied()
+            .unwrap();
+        assert_eq!((task.first_minute_of_day, task.interval_minutes), (0, 240));
+        assert_eq!(task.priority, 5);
+        assert!(task.customized);
+        assert_eq!(state.habitats[1].care_schedule, other_before);
+        assert_eq!(state.catalog.species, catalog_before);
+
+        assert!(!state.set_care_task(1, "cleaning", 0, 25, 3).ok);
+        assert!(!state.set_care_task(1, "cleaning", 0, 240, 9).ok);
+        assert!(!state.set_care_task(1, "grooming", 0, 240, 3).ok);
+        assert!(!state.set_care_task(1, "enrichment", 0, 240, 3).ok);
+    }
+
+    #[test]
+    fn rescheduling_never_duplicates_an_occurrence() {
+        let mut state = two_habitat_park();
+        state.tick(1);
+        let feeding_jobs = |state: &GameState| {
+            state
+                .care_jobs
+                .iter()
+                .filter(|job| job.habitat_id == 1 && job.category == content::CareCategory::Feeding)
+                .count()
+        };
+        let before = feeding_jobs(&state);
+        // Re-anchoring so the current minute is an occurrence again must not re-issue it.
+        assert!(state.set_care_task(1, "feeding", 540, 120, 2).ok);
+        assert!(state.set_care_task(1, "feeding", 420, 120, 4).ok);
+        state.tick(1);
+        assert_eq!(feeding_jobs(&state), before);
+
+        let mut keys: Vec<_> = state
+            .care_jobs
+            .iter()
+            .map(|job| (job.habitat_id, job.category, job.due_minute))
+            .collect();
+        let total = keys.len();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), total);
+    }
+
+    #[test]
+    fn unstaffed_two_keeper_jobs_are_missed_after_the_grace_hour() {
+        let mut state = two_habitat_park();
+        state.habitats[0]
+            .care_schedule
+            .as_mut()
+            .unwrap()
+            .required_keepers = 2;
+        state.tick(61);
+        let first: Vec<_> = state
+            .care_jobs
+            .iter()
+            .filter(|job| {
+                job.habitat_id == 1
+                    && job.due_minute + care::CARE_GRACE_MINUTES <= state.absolute_minute()
+            })
+            .collect();
+        assert!(!first.is_empty());
+        assert!(
+            first
+                .iter()
+                .all(|job| job.required_keepers == 2 && job.state == care::CareJobState::Missed)
+        );
+        assert!(
+            state
+                .care_jobs
+                .iter()
+                .filter(|job| job.habitat_id == 2)
+                .all(|job| job.state != care::CareJobState::Missed)
+        );
+    }
+
+    #[test]
+    fn one_large_advance_matches_many_small_advances() {
+        let mut large = two_habitat_park();
+        let mut small = two_habitat_park();
+        assert!(large.set_care_task(2, "inspection", 30, 60, 1).ok);
+        assert!(small.set_care_task(2, "inspection", 30, 60, 1).ok);
+        large.tick(3 * 24 * 60 + 17);
+        for _ in 0..(3 * 24 * 60 + 17) {
+            small.tick(1);
+        }
+        assert_eq!(large.care_jobs, small.care_jobs);
+        assert_eq!(large.next_care_job_id, small.next_care_job_id);
         assert_eq!(
-            state.habitats[0].next_feed_delivery_minute,
-            Some(state.absolute_minute() + u64::from(FEED_DELIVERY_RETRY_MINUTES))
+            serde_json::to_string(&large.snapshot()).unwrap(),
+            serde_json::to_string(&small.snapshot()).unwrap()
+        );
+        // Resolved history stays bounded to one day.
+        let now = large.absolute_minute();
+        assert!(
+            large
+                .care_jobs
+                .iter()
+                .all(|job| job.due_minute + 24 * 60 + 60 > now)
         );
     }
 
