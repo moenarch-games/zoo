@@ -10,6 +10,22 @@ fn snapshot(game: &ZooGame) -> Value {
     serde_json::from_str(&game.snapshot_json()).unwrap()
 }
 
+/// Covers the park with one work zone (once) and assigns the newest keeper to it.
+fn zone_newest_keeper(game: &mut ZooGame) {
+    let view = snapshot(game);
+    if view["work_zones"].as_array().unwrap().is_empty() {
+        accepted(game.create_work_zone(0, 0, 19, 13));
+    }
+    let keeper = view["animal_care_depot"]["keepers"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap() as u32;
+    accepted(game.assign_keeper_zone(keeper, 1));
+}
+
 fn populate(game: &mut ZooGame, rect: (u32, u32, u32, u32), species: &str) -> u32 {
     accepted(game.place_habitat_rect(rect.0, rect.1, rect.2, rect.3));
     let view = snapshot(game);
@@ -17,6 +33,7 @@ fn populate(game: &mut ZooGame, rect: (u32, u32, u32, u32), species: &str) -> u3
         .as_u64()
         .unwrap() as u32;
     accepted(game.hire_keeper());
+    zone_newest_keeper(game);
     accepted(game.schedule_keeper(habitat_id));
     accepted(game.adopt(habitat_id, species.to_owned()));
     habitat_id

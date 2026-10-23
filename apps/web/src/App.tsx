@@ -13,10 +13,19 @@ import type {
   SpeciesOffer,
   Speed,
   Tool,
+  WorkZoneEvaluation,
 } from "./game-types"
 import type { SceneOverlay } from "./park-scene"
 import type { ParkPick } from "./ParkView"
 import init, { ZooGame } from "./wasm/zoo_core"
+import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
+
+/** How the selected work zone is being edited with the Zones tool. */
+type ZoneEdit = "resize" | "move" | null
+
+function idList(ids: number[]) {
+  return ids.length === 0 ? "None" : ids.map((id) => `#${id}`).join(", ")
+}
 
 // The 3D park view (three.js renderer + zoo-scene WASM) is its own chunk so the HUD and the
 // simulation can start without it. The request starts at module load, in parallel with the
@@ -91,6 +100,8 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
       return "Click a path or any tile inside a habitat to remove it."
     case "gate":
       return "Tap a fence segment of the selected habitat, then confirm the new service gate."
+    case "zone":
+      return "Drag corner to corner to draw a work zone · tap a zone to select it · zones may not overlap."
     case "select":
       return "Click to inspect · drag to pan · right-drag or two-finger twist to rotate · scroll or pinch to zoom."
   }
@@ -150,6 +161,9 @@ export default function App() {
   const [fenceStart, setFenceStart] = useState<Point | null>(null)
   const [fenceEnd, setFenceEnd] = useState<Point | null>(null)
   const [gateCandidate, setGateCandidate] = useState<GateEvaluation | null>(null)
+  const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null)
+  const [zoneEdit, setZoneEdit] = useState<ZoneEdit>(null)
+  const [assignKeeperId, setAssignKeeperId] = useState<number | null>(null)
   const [cameraResetToken, setCameraResetToken] = useState(0)
 
   const clearFenceGesture = useCallback(() => {
@@ -349,10 +363,16 @@ export default function App() {
 
   useEffect(() => {
     paintedTilesRef.current.clear()
-    if (tool !== "habitat") {
-      clearFenceGesture()
+    clearFenceGesture()
+    if (tool !== "zone") {
+      setZoneEdit(null)
     }
   }, [clearFenceGesture, tool])
+
+  useEffect(() => {
+    setZoneEdit(null)
+    setAssignKeeperId(null)
+  }, [selectedZoneId])
 
   const selectedHabitat = useMemo(
     () => snapshot?.habitats.find((habitat) => habitat.id === selectedHabitatId) ?? null,
@@ -363,6 +383,40 @@ export default function App() {
     () => snapshot?.guests.find((guest) => guest.id === selectedGuestId) ?? null,
     [selectedGuestId, snapshot],
   )
+
+  const selectedZone = useMemo(
+    () => snapshot?.work_zones.find((zone) => zone.id === selectedZoneId) ?? null,
+    [selectedZoneId, snapshot],
+  )
+
+  // Drawing, resizing, or moving a work zone: Rust evaluates the rectangle and lists the
+  // service gates it would include. While moving, the tile under the pointer becomes the
+  // zone's north-west corner.
+  const zonePreview = useMemo(() => {
+    const game = gameRef.current
+    if (!game || tool !== "zone") {
+      return null
+    }
+    let corners: [Point, Point] | null = null
+    if (zoneEdit === "move" && selectedZone) {
+      const anchor = fenceEnd ?? hoveredTile
+      if (anchor) {
+        corners = [
+          anchor,
+          { x: anchor.x + selectedZone.width - 1, y: anchor.y + selectedZone.height - 1 },
+        ]
+      }
+    } else if (fenceStart && fenceEnd) {
+      corners = [fenceStart, fenceEnd]
+    }
+    if (!corners) {
+      return null
+    }
+    const [a, b] = corners
+    const zoneId = zoneEdit && selectedZone ? selectedZone.id : 0
+    const text = callGame(() => game.evaluate_work_zone(zoneId, a.x, a.y, b.x, b.y))
+    return text === undefined ? null : (JSON.parse(text) as WorkZoneEvaluation)
+  }, [callGame, fenceEnd, fenceStart, hoveredTile, selectedZone, snapshot, tool, zoneEdit])
 
   const placement = useMemo(() => {
     const game = gameRef.current
@@ -401,9 +455,11 @@ export default function App() {
   const gatePreview = gateCandidate ?? (gateHover?.segment ? gateHover : null)
 
   const ghostTiles = useMemo(
-    () => (snapshot ? previewTiles(fenceStart, fenceEnd, snapshot) : []),
-    [fenceEnd, fenceStart, snapshot?.width, snapshot?.height],
+    () => (snapshot && tool === "habitat" ? previewTiles(fenceStart, fenceEnd, snapshot) : []),
+    [fenceEnd, fenceStart, snapshot?.width, snapshot?.height, tool],
   )
+
+  const zonesVisible = tool === "zone" || selectedZoneId !== null
 
   const overlay = useMemo<SceneOverlay>(
     () => ({
@@ -415,6 +471,9 @@ export default function App() {
       selectedGuestId,
       selectedDepot,
       gatePreview,
+      zonesVisible,
+      selectedZoneId,
+      zonePreview,
     }),
     [
       gatePreview,
@@ -424,7 +483,10 @@ export default function App() {
       selectedDepot,
       selectedGuestId,
       selectedHabitatId,
+      selectedZoneId,
       tool,
+      zonePreview,
+      zonesVisible,
     ],
   )
 
@@ -448,7 +510,7 @@ export default function App() {
     if (tool === "path") {
       paintedTilesRef.current.clear()
       paintPath(tile)
-    } else if (tool === "habitat") {
+    } else if (tool === "habitat" || tool === "zone") {
       fenceStartRef.current = tile
       fenceEndRef.current = tile
       setFenceStart(tile)
@@ -459,14 +521,82 @@ export default function App() {
   const onTileDrag = (tile: Point) => {
     if (tool === "path") {
       paintPath(tile)
-    } else if (tool === "habitat" && fenceStartRef.current) {
+    } else if ((tool === "habitat" || tool === "zone") && fenceStartRef.current) {
       fenceEndRef.current = tile
       setFenceEnd(tile)
     }
   }
 
+  const finishZoneGesture = (commit: boolean) => {
+    const game = gameRef.current
+    const start = fenceStartRef.current
+    const end = fenceEndRef.current
+    clearFenceGesture()
+    if (!commit || !game || !snapshot || !start || !end) {
+      return
+    }
+    const tap = start.x === end.x && start.y === end.y
+    if (zoneEdit === "move" && selectedZone) {
+      const result = perform(() =>
+        game.set_work_zone_bounds(
+          selectedZone.id,
+          end.x,
+          end.y,
+          end.x + selectedZone.width - 1,
+          end.y + selectedZone.height - 1,
+        ),
+      )
+      if (result.ok) {
+        setZoneEdit(null)
+      }
+      return
+    }
+    if (zoneEdit === "resize" && selectedZone) {
+      if (tap) {
+        inform("Drag from one corner to the opposite corner to resize the zone.")
+        return
+      }
+      const result = perform(() =>
+        game.set_work_zone_bounds(selectedZone.id, start.x, start.y, end.x, end.y),
+      )
+      if (result.ok) {
+        setZoneEdit(null)
+      }
+      return
+    }
+    if (tap) {
+      // Picking which drawn rectangle was tapped is presentation, not a rule decision.
+      const zone = snapshot.work_zones.find(
+        (candidate) =>
+          end.x >= candidate.x &&
+          end.x < candidate.x + candidate.width &&
+          end.y >= candidate.y &&
+          end.y < candidate.y + candidate.height,
+      )
+      selectZone(zone?.id ?? null)
+      inform(
+        zone
+          ? `Work zone #${zone.id} selected`
+          : "Drag from one corner to the opposite corner to draw a work zone.",
+      )
+      return
+    }
+    const result = perform(() => game.create_work_zone(start.x, start.y, end.x, end.y))
+    if (result.ok) {
+      const text = callGame((current) => current.snapshot_json())
+      const zones = text === undefined ? [] : (JSON.parse(text) as Snapshot).work_zones
+      selectZone(
+        zones.reduce<number | null>((newest, zone) => Math.max(newest ?? 0, zone.id), null),
+      )
+    }
+  }
+
   const onToolGestureEnd = (commit: boolean) => {
     paintedTilesRef.current.clear()
+    if (tool === "zone") {
+      finishZoneGesture(commit)
+      return
+    }
     if (tool !== "habitat") {
       return
     }
@@ -487,12 +617,21 @@ export default function App() {
   const selectHabitat = (habitatId: number | null) => {
     setSelectedGuestId(null)
     setSelectedDepot(false)
+    setSelectedZoneId(null)
     setSelectedHabitatId(habitatId)
+  }
+
+  const selectZone = (zoneId: number | null) => {
+    setSelectedGuestId(null)
+    setSelectedDepot(false)
+    setSelectedHabitatId(null)
+    setSelectedZoneId(zoneId)
   }
 
   const selectDepot = () => {
     setSelectedGuestId(null)
     setSelectedHabitatId(null)
+    setSelectedZoneId(null)
     setSelectedDepot(true)
     inform("Central operations depot selected · stock animal feed and hire park staff here.")
   }
@@ -522,6 +661,7 @@ export default function App() {
         case "guest":
           setSelectedGuestId(pick.id)
           setSelectedHabitatId(null)
+          setSelectedZoneId(null)
           setSelectedDepot(false)
           return
         case "animal":
@@ -658,6 +798,36 @@ export default function App() {
     }
   }
 
+  const startZoneEdit = (edit: Exclude<ZoneEdit, null>) => {
+    setTool("zone")
+    setZoneEdit(edit)
+    clearFenceGesture()
+    inform(
+      edit === "resize"
+        ? "Drag from one corner to the opposite corner to set the zone's new size."
+        : "Tap or drag: the zone's north-west corner follows the tile under your pointer.",
+    )
+  }
+
+  const deleteZone = () => {
+    const game = gameRef.current
+    if (!game || !selectedZone) {
+      return
+    }
+    const result = perform(() => game.delete_work_zone(selectedZone.id))
+    if (result.ok) {
+      setSelectedZoneId(null)
+    }
+  }
+
+  const assignKeeper = (keeperId: number) => {
+    const game = gameRef.current
+    if (!game || !selectedZone) {
+      return
+    }
+    perform(() => game.assign_keeper_zone(keeperId, selectedZone.id))
+  }
+
   const scheduleKeeper = () => {
     const game = gameRef.current
     if (!game || selectedHabitatId === null) {
@@ -778,6 +948,7 @@ export default function App() {
     setSelectedHabitatId(null)
     setSelectedGuestId(null)
     setSelectedDepot(false)
+    setSelectedZoneId(null)
     setHoveredTile(null)
     setCameraResetToken((token) => token + 1)
     setMessage("New park started.")
@@ -793,8 +964,20 @@ export default function App() {
     )
   }
 
+  const zoneTooltip =
+    zonePreview && hoveredTile ? (
+      <div className={zonePreview.ok ? "valid" : "invalid"}>
+        <b>
+          {zonePreview.ok ? "✓ Work zone" : "! Cannot place zone"} · {zonePreview.bounds.width}×
+          {zonePreview.bounds.height}
+        </b>
+        <small>{zonePreview.message}</small>
+      </div>
+    ) : undefined
+
   const tooltip =
-    placement && hoveredTile ? (
+    zoneTooltip ??
+    (placement && hoveredTile ? (
       <div className={placement.ok ? "valid" : "invalid"}>
         <b>
           {placement.ok ? "✓ Fence closes" : "! Cannot build"} · {placement.width}×
@@ -802,7 +985,16 @@ export default function App() {
         </b>
         <small>{placement.message}</small>
       </div>
-    ) : undefined
+    ) : undefined)
+
+  const uncoveredHabitats = snapshot.habitats.filter((habitat) => habitat.work_zone_id === null)
+  const keeperChoice =
+    selectedZone === null
+      ? null
+      : (snapshot.animal_care_depot.keepers.find((keeper) => keeper.id === assignKeeperId) ??
+        snapshot.animal_care_depot.keepers.find((keeper) => keeper.needs_zone) ??
+        snapshot.animal_care_depot.keepers.find((keeper) => keeper.zone_id !== selectedZone.id) ??
+        null)
 
   return (
     <main className="game-shell">
@@ -865,7 +1057,7 @@ export default function App() {
             snapshot={snapshot}
             overlay={overlay}
             paused={speed === 0}
-            dragTool={tool === "path" || tool === "habitat"}
+            dragTool={tool === "path" || tool === "habitat" || tool === "zone"}
             resetToken={cameraResetToken}
             tooltip={tooltip}
             onTileDown={onTileDown}
@@ -910,7 +1102,11 @@ export default function App() {
           </section>
         )}
 
-        <aside className={`side-panel bevel${tool === "gate" ? " gate-mode" : ""}`}>
+        <aside
+          className={`side-panel bevel${tool === "gate" ? " gate-mode" : ""}${
+            tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
+          }`}
+        >
           {selectedDepot && (
             <>
               <div className="window-title">
@@ -981,7 +1177,7 @@ export default function App() {
                 <button className="shop-row" onClick={hireKeeper}>
                   <span>
                     <b>Hire keeper</b>
-                    <small>One keeper can currently serve one habitat</small>
+                    <small>Assign new keepers to a work zone; one serves one habitat</small>
                   </span>
                   <strong>{money(snapshot.animal_care_depot.keeper_hire_cost_cents)}</strong>
                 </button>
@@ -1008,6 +1204,12 @@ export default function App() {
                       <div>
                         <dt>Keeper #{keeper.id}</dt>
                         <dd>{keeper.status}</dd>
+                      </div>
+                      <div className={keeper.needs_zone ? "zone-warning" : ""}>
+                        <dt>Work zone</dt>
+                        <dd>
+                          {keeper.zone_id === null ? "Needs a zone" : `Zone #${keeper.zone_id}`}
+                        </dd>
                       </div>
                       <div>
                         <dt>Food deliveries</dt>
@@ -1053,6 +1255,114 @@ export default function App() {
                       </div>
                     </dl>
                   ))
+                )}
+              </div>
+            </>
+          )}
+          {!selectedDepot && !selectedGuest && !selectedHabitat && selectedZone && (
+            <>
+              <div className="window-title">
+                <span>
+                  <i
+                    className="zone-swatch"
+                    style={{ background: zoneColor(selectedZone.id) }}
+                    aria-hidden="true"
+                  />
+                  Work zone #{selectedZone.id}
+                </span>
+                <button onClick={() => setSelectedZoneId(null)}>×</button>
+              </div>
+              <div className="manager-card zone-card">
+                <dl>
+                  <div>
+                    <dt>Area</dt>
+                    <dd>
+                      {selectedZone.width}×{selectedZone.height} from ({selectedZone.x},{" "}
+                      {selectedZone.y})
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Service gates</dt>
+                    <dd>{idList(selectedZone.habitat_ids)}</dd>
+                  </div>
+                  <div>
+                    <dt>Keepers</dt>
+                    <dd>{idList(selectedZone.keeper_ids)}</dd>
+                  </div>
+                </dl>
+                {uncoveredHabitats.length > 0 && (
+                  <div className="guest-thought zone-warning">
+                    No zone: habitats {idList(uncoveredHabitats.map((habitat) => habitat.id))} have
+                    a service gate outside every work zone.
+                  </div>
+                )}
+                {zoneEdit !== null ? (
+                  <div className="zone-edit-controls">
+                    <div className="guest-thought">
+                      {zonePreview?.message ??
+                        (zoneEdit === "resize"
+                          ? "Drag from one corner to the opposite corner to set the new size."
+                          : "Tap or drag: the zone's north-west corner follows your pointer.")}
+                    </div>
+                    <button className="shop-row" onClick={() => setZoneEdit(null)}>
+                      <span>
+                        <b>Cancel</b>
+                        <small>Keep the current zone bounds</small>
+                      </span>
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button className="shop-row" onClick={() => startZoneEdit("resize")}>
+                      <span>
+                        <b>Resize</b>
+                        <small>Drag a new rectangle for this zone</small>
+                      </span>
+                    </button>
+                    <button className="shop-row" onClick={() => startZoneEdit("move")}>
+                      <span>
+                        <b>Move</b>
+                        <small>Keep the size and pick a new north-west corner</small>
+                      </span>
+                    </button>
+                    <button className="shop-row" onClick={deleteZone}>
+                      <span>
+                        <b>Delete</b>
+                        <small>Its keepers become unassigned and idle</small>
+                      </span>
+                    </button>
+                  </>
+                )}
+                <h3>Assign keeper</h3>
+                {snapshot.animal_care_depot.keepers.length === 0 ? (
+                  <div className="guest-thought">Hire keepers at the central operations depot.</div>
+                ) : (
+                  <>
+                    <label className="zone-keeper-select">
+                      <span>Keeper</span>
+                      <select
+                        value={keeperChoice?.id ?? ""}
+                        onChange={(event) => setAssignKeeperId(Number(event.target.value))}
+                      >
+                        {snapshot.animal_care_depot.keepers.map((keeper) => (
+                          <option key={keeper.id} value={keeper.id}>
+                            Keeper #{keeper.id} ·{" "}
+                            {keeper.zone_id === null ? "needs a zone" : `zone #${keeper.zone_id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="shop-row"
+                      disabled={!keeperChoice}
+                      onClick={() => keeperChoice && assignKeeper(keeperChoice.id)}
+                    >
+                      <span>
+                        <b>Assign keeper</b>
+                        <small>Keepers only take care work in their own zone</small>
+                      </span>
+                    </button>
+                  </>
                 )}
               </div>
             </>
@@ -1184,6 +1494,30 @@ export default function App() {
                         {selectedHabitat.service_gate.reachable ? "Reachable" : "Gate unreachable"}
                       </dd>
                     </div>
+                    <div className={selectedHabitat.work_zone_id === null ? "zone-warning" : ""}>
+                      <dt>Work zone</dt>
+                      <dd>
+                        {selectedHabitat.work_zone_id === null ? (
+                          <>
+                            <i
+                              className="zone-swatch"
+                              style={{ background: NO_ZONE_COLOR }}
+                              aria-hidden="true"
+                            />
+                            No zone
+                          </>
+                        ) : (
+                          <>
+                            <i
+                              className="zone-swatch"
+                              style={{ background: zoneColor(selectedHabitat.work_zone_id) }}
+                              aria-hidden="true"
+                            />
+                            Zone #{selectedHabitat.work_zone_id}
+                          </>
+                        )}
+                      </dd>
+                    </div>
                   </dl>
                   {tool === "gate" ? (
                     <>
@@ -1299,7 +1633,7 @@ export default function App() {
                   <button className="shop-row" onClick={scheduleKeeper}>
                     <span>
                       <b>Schedule available keeper</b>
-                      <small>Hire keepers at the central care depot first</small>
+                      <small>Picks a free keeper assigned to this gate's work zone</small>
                     </span>
                   </button>
                 )}
@@ -1366,7 +1700,7 @@ export default function App() {
               </div>
             </>
           )}
-          {!selectedDepot && !selectedGuest && !selectedHabitat && (
+          {!selectedDepot && !selectedGuest && !selectedHabitat && !selectedZone && (
             <>
               <div className="window-title">
                 <span>Park manager</span>
@@ -1380,6 +1714,10 @@ export default function App() {
                   <li>Open the operations depot, buy animal feed, and hire a keeper.</li>
                   <li>Hire a janitor so path litter has a visible service response.</li>
                   <li>Hire a mechanic before concession wear turns into closures.</li>
+                  <li>
+                    Choose Zones, drag a work zone around the habitat's service gate, and assign the
+                    keeper to it.
+                  </li>
                   <li>Select the enclosure and schedule an available keeper.</li>
                   <li>Adopt animals after the habitat has a food-delivery schedule.</li>
                   <li>Place guest food and drink stands on clear grass beside busy paths.</li>
@@ -1535,6 +1873,12 @@ export default function App() {
             icon="⌗"
             label="Draw habitat"
             onClick={() => setTool("habitat")}
+          />
+          <ToolButton
+            active={tool === "zone"}
+            icon="▢"
+            label="Zones"
+            onClick={() => setTool("zone")}
           />
           {snapshot?.facility_catalog
             .filter((offer) => offer.service === "food" || offer.service === "drink")

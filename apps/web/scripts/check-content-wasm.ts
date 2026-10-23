@@ -10,6 +10,8 @@ for (const row of nativeOracle) {
   const accepted = (result: string) => assert.equal(JSON.parse(result).ok, true)
   accepted(game.place_habitat_rect(3, 8, 7, 10))
   accepted(game.hire_keeper())
+  accepted(game.create_work_zone(0, 0, 19, 13))
+  accepted(game.assign_keeper_zone(1, 1))
   accepted(game.schedule_keeper(1))
   accepted(game.buy_animal_feed())
   accepted(game.adopt(1, row.species))
