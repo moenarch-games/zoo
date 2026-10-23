@@ -24,19 +24,22 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 4
+            "priority": 4,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           }
         ]
       }
@@ -57,19 +60,22 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 4
+            "priority": 4,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           }
         ]
       }
@@ -90,19 +96,22 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 4
+            "priority": 4,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           }
         ]
       }
@@ -123,25 +132,29 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 4
+            "priority": 4,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           },
           {
             "category": "enrichment",
             "first_minute_of_day": 840,
             "interval_minutes": 1440,
-            "priority": 1
+            "priority": 1,
+            "work_minutes": 20
           }
         ]
       }
@@ -162,25 +175,29 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 5
+            "priority": 5,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           },
           {
             "category": "enrichment",
             "first_minute_of_day": 840,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 20
           }
         ]
       }
@@ -201,25 +218,29 @@
             "category": "feeding",
             "first_minute_of_day": 420,
             "interval_minutes": 120,
-            "priority": 4
+            "priority": 4,
+            "work_minutes": 15
           },
           {
             "category": "cleaning",
             "first_minute_of_day": 360,
             "interval_minutes": 360,
-            "priority": 3
+            "priority": 3,
+            "work_minutes": 30
           },
           {
             "category": "inspection",
             "first_minute_of_day": 600,
             "interval_minutes": 1440,
-            "priority": 2
+            "priority": 2,
+            "work_minutes": 10
           },
           {
             "category": "enrichment",
             "first_minute_of_day": 900,
             "interval_minutes": 1440,
-            "priority": 1
+            "priority": 1,
+            "work_minutes": 20
           }
         ]
       }

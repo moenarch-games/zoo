@@ -75,6 +75,24 @@
     display: none;
   }
 
+  /* Moving a gate keeps only the prompt and the two actions, side by side, so most of the
+     map stays tappable above the sheet. */
+  .side-panel.gate-mode .gate-controls > :is(h3, dl),
+  .side-panel.gate-mode .gate-controls small {
+    display: none;
+  }
+
+  .side-panel.gate-mode .gate-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .side-panel.gate-mode .gate-controls > .guest-thought {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
   .side-panel {
     left: 8px;
     right: 8px;

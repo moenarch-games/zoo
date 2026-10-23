@@ -1,6 +1,6 @@
 // Shapes of the zoo-core WASM snapshot and command results consumed by the web adapter.
 
-export type Tool = "select" | "path" | "habitat" | "bulldoze" | `facility:${string}`
+export type Tool = "select" | "path" | "habitat" | "bulldoze" | "gate" | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
 export type SpeciesKey = string
 export type ConcessionKind = string
@@ -36,6 +36,7 @@ export type CareTask = {
   first_minute_of_day: number
   interval_minutes: number
   priority: number
+  work_minutes: number
   customized: boolean
   next_due_in_minutes: number
 }
@@ -48,8 +49,24 @@ export type CareJob = {
   due_minute_of_day: number
   priority: number
   required_keepers: number
-  state: "due" | "completed" | "missed"
+  work_minutes: number
+  state: "due" | "in_progress" | "completed" | "missed"
+  keeper_id: number | null
   expires_in_minutes: number
+}
+
+export type ServiceGate = FenceSegment & {
+  /** The outside tile keepers enter from; it can never be built on. */
+  access: Point | null
+  reachable: boolean
+}
+
+/** Rust's resolution of a tapped tile into a gate-move preview. */
+export type GateEvaluation = {
+  ok: boolean
+  message: string
+  segment: FenceSegment | null
+  access: Point | null
 }
 
 export type Habitat = Point & {
@@ -60,6 +77,7 @@ export type Habitat = Point & {
   footprint_area: number
   fence_length: number
   fence_segments: FenceSegment[]
+  service_gate: ServiceGate
   species: SpeciesKey | null
   animals: number
   capacity: number
@@ -105,10 +123,14 @@ export type Concession = Point & {
   maintenance_status: string
 }
 
-export type Keeper = {
+export type Keeper = Point & {
   id: number
   assigned_habitat_id: number | null
   deliveries_completed: number
+  activity: "at_depot" | "to_gate" | "working" | "to_depot"
+  job_id: number | null
+  /** Rust-owned remaining walk from the keeper's tile to its destination. */
+  route: Point[]
   status: string
 }
 

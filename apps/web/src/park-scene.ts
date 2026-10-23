@@ -2,7 +2,9 @@ import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer"
 
 import type {
   Animal,
+  FenceSegment,
   FenceSide,
+  GateEvaluation,
   Guest,
   Habitat,
   PlacementEvaluation,
@@ -33,6 +35,8 @@ export type SceneOverlay = {
   selectedHabitatId: number | null
   selectedGuestId: number | null
   selectedDepot: boolean
+  /** Rust's evaluation of the fence segment under the pointer while moving a gate. */
+  gatePreview: GateEvaluation | null
 }
 
 /** Resolves the presented (smoothed) ground position for a moving actor. */
@@ -527,6 +531,87 @@ function rock(id: string, x: number, z: number, scale: number, turn: number) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Service gates: a gap in the habitat fence framed by two coloured posts and a threshold.
+
+function gateMarker(
+  id: string,
+  segment: FenceSegment,
+  color: Hex,
+  options: { highlighted: boolean; opacity?: number },
+): RendererSceneNode[] {
+  const [start, end] = fenceEndpoints(segment.x, segment.y, segment.side)
+  const alongX = segment.side === "north" || segment.side === "south"
+  const height = options.highlighted ? 0.85 : 0.62
+  const opacity = options.opacity ?? 1
+  const nodes = [start, end].map((point, index) =>
+    node(
+      `${id}:post:${index}`,
+      [point[0], height / 2, point[2]],
+      boxGeometry([0.12, height, 0.12]),
+      color,
+      { opacity },
+    ),
+  )
+  const cx = (start[0] + end[0]) / 2
+  const cz = (start[2] + end[2]) / 2
+  nodes.push(
+    node(
+      `${id}:threshold`,
+      [cx, 0.035, cz],
+      boxGeometry(alongX ? [0.9, 0.03, 0.22] : [0.22, 0.03, 0.9]),
+      color,
+      { opacity: opacity * 0.85 },
+    ),
+  )
+  if (options.highlighted) {
+    nodes.push(
+      node(
+        `${id}:lintel`,
+        [cx, height, cz],
+        boxGeometry(alongX ? [1.05, 0.08, 0.1] : [0.1, 0.08, 1.05]),
+        color,
+        { opacity },
+      ),
+    )
+  }
+  return nodes
+}
+
+function gateNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode[] {
+  const nodes: RendererSceneNode[] = []
+  for (const habitat of snapshot.habitats) {
+    const gate = habitat.service_gate
+    const selected = habitat.id === overlay.selectedHabitatId
+    let color: Hex = selected ? "#ffb347" : "#d98a2b"
+    if (!gate.reachable) {
+      color = "#d0584a"
+    }
+    nodes.push(...gateMarker(`gate:${habitat.id}`, gate, color, { highlighted: selected }))
+    if (selected && gate.access) {
+      nodes.push(
+        node(
+          `gate:${habitat.id}:access`,
+          [gate.access.x + 0.5, 0.045, gate.access.y + 0.5],
+          boxGeometry([0.9, 0.02, 0.9]),
+          color,
+          { opacity: 0.3 },
+        ),
+      )
+    }
+  }
+  const preview = overlay.gatePreview
+  if (preview?.segment) {
+    nodes.push(
+      ...gateMarker("gate:preview", preview.segment, preview.ok ? "#9fe07a" : "#e0604f", {
+        highlighted: true,
+        opacity: 0.75,
+      }),
+    )
+  }
+  return nodes
+}
+
+// ---------------------------------------------------------------------------------------------
 // Fences
 
 type FenceRun = { id: string; start: Vec3; end: Vec3; kind: "boundary" | "habitat" | "preview" }
@@ -609,7 +694,12 @@ function fenceRuns(snapshot: Snapshot, placement: PlacementEvaluation | null): F
   }
 
   for (const habitat of snapshot.habitats) {
+    const gate = habitat.service_gate
     for (const segment of habitat.fence_segments) {
+      if (segment.x === gate.x && segment.y === gate.y && segment.side === gate.side) {
+        // The service gate is a gap in the fence; gateNodes marks it.
+        continue
+      }
       const [start, end] = fenceEndpoints(segment.x, segment.y, segment.side)
       push({ id: `habitat:${habitat.id}:${edgeKey(start, end)}`, start, end, kind: "habitat" })
     }
@@ -1246,6 +1336,42 @@ function staffNodes(snapshot: Snapshot, input: SceneFrameInput): RendererSceneNo
       model(key, { x, z }, yaw).box("toolbox", [0.1, 0.08, 0], [0.08, 0.06, 0.05], "#c9483b"),
     )
   }
+  for (const keeper of snapshot.animal_care_depot.keepers) {
+    // Keepers at the depot are inside the building; walking and working keepers are shown
+    // exactly where zoo-core puts them.
+    if (keeper.activity === "at_depot") {
+      continue
+    }
+    const key = `keeper:${keeper.id}`
+    const [x, z] = input.resolveActor(key, keeper.x + 0.5, keeper.y + 0.5)
+    const yaw = hash(keeper.id, 11) * Math.PI * 2
+    const bob =
+      input.animate && keeper.activity !== "working"
+        ? Math.abs(Math.sin(input.timeSeconds * 9 + keeper.id)) * 0.03
+        : 0
+    nodes.push(
+      ...person(key, x, z, yaw, bob, {
+        shirt: "#c99a3c",
+        skin: SKIN[(keeper.id + 4) % SKIN.length] ?? "#f1c9a5",
+        legs: "#5b4a2f",
+        hat: "#8a6d3b",
+      }),
+      node(`${key}:marker`, [x, 0.62, z], sphereGeometry(0.05), "#ffb347"),
+    )
+    if (keeper.assigned_habitat_id === input.overlay.selectedHabitatId) {
+      for (const [index, step] of keeper.route.slice(1).entries()) {
+        nodes.push(
+          node(
+            `${key}:route:${index}`,
+            [step.x + 0.5, 0.06, step.y + 0.5],
+            cylinderGeometry(0.06, 0.02),
+            "#ffb347",
+            { opacity: 0.7 },
+          ),
+        )
+      }
+    }
+  }
   return nodes
 }
 
@@ -1291,6 +1417,7 @@ function toolColor(tool: Tool): Hex {
     case "path":
       return "#f3e3b8"
     case "habitat":
+    case "gate":
       return "#f6d36f"
     case "select":
       return "#ffffff"
@@ -1358,6 +1485,7 @@ export function buildStaticNodes(snapshot: Snapshot, overlay: SceneOverlay): Ren
       habitatNodes(habitat, habitat.id === overlay.selectedHabitatId),
     ),
     ...fenceNodes(snapshot, overlay.placement),
+    ...gateNodes(snapshot, overlay),
     ...entranceGateNodes(snapshot),
     ...depotNodes(snapshot),
     ...concessionNodes(snapshot),

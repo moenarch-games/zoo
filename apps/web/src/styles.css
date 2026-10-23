@@ -633,3 +633,9 @@ dd {
   box-sizing: border-box;
   font: 11px monospace;
 }
+
+/* While moving a service gate the inspector shrinks to the gate controls so the fence stays
+   tappable, including under the phone bottom sheet. */
+.side-panel.gate-mode .habitat-card > :not(.gate-controls) {
+  display: none;
+}

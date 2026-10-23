@@ -4,6 +4,7 @@ import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./di
 import type {
   ActionResult,
   CareTask,
+  GateEvaluation,
   Guest,
   PlacementEvaluation,
   Point,
@@ -88,6 +89,8 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
       return "Press on one corner, drag to the opposite corner, and release to close the fence."
     case "bulldoze":
       return "Click a path or any tile inside a habitat to remove it."
+    case "gate":
+      return "Tap a fence segment of the selected habitat, then confirm the new service gate."
     case "select":
       return "Click to inspect · drag to pan · right-drag or two-finger twist to rotate · scroll or pinch to zoom."
   }
@@ -146,6 +149,7 @@ export default function App() {
   const [hoveredTile, setHoveredTile] = useState<Point | null>(null)
   const [fenceStart, setFenceStart] = useState<Point | null>(null)
   const [fenceEnd, setFenceEnd] = useState<Point | null>(null)
+  const [gateCandidate, setGateCandidate] = useState<GateEvaluation | null>(null)
   const [cameraResetToken, setCameraResetToken] = useState(0)
 
   const clearFenceGesture = useCallback(() => {
@@ -371,6 +375,31 @@ export default function App() {
     return text === undefined ? null : (JSON.parse(text) as PlacementEvaluation)
   }, [callGame, fenceEnd, fenceStart, snapshot, tool])
 
+  // Moving a gate: hovering previews the segment Rust resolves for that tile (desktop); a tap
+  // pins the candidate until it is confirmed or cancelled (desktop and touch).
+  const gateHover = useMemo(() => {
+    const game = gameRef.current
+    if (!game || tool !== "gate" || selectedHabitatId === null || !hoveredTile) {
+      return null
+    }
+    const text = callGame(() =>
+      game.evaluate_service_gate(selectedHabitatId, hoveredTile.x, hoveredTile.y),
+    )
+    return text === undefined ? null : (JSON.parse(text) as GateEvaluation)
+  }, [callGame, hoveredTile, selectedHabitatId, snapshot, tool])
+
+  useEffect(() => {
+    if (tool !== "gate") {
+      setGateCandidate(null)
+    }
+  }, [tool])
+
+  useEffect(() => {
+    setTool((current) => (current === "gate" ? "select" : current))
+  }, [selectedHabitatId])
+
+  const gatePreview = gateCandidate ?? (gateHover?.segment ? gateHover : null)
+
   const ghostTiles = useMemo(
     () => (snapshot ? previewTiles(fenceStart, fenceEnd, snapshot) : []),
     [fenceEnd, fenceStart, snapshot?.width, snapshot?.height],
@@ -385,8 +414,18 @@ export default function App() {
       selectedHabitatId,
       selectedGuestId,
       selectedDepot,
+      gatePreview,
     }),
-    [ghostTiles, hoveredTile, placement, selectedDepot, selectedGuestId, selectedHabitatId, tool],
+    [
+      gatePreview,
+      ghostTiles,
+      hoveredTile,
+      placement,
+      selectedDepot,
+      selectedGuestId,
+      selectedHabitatId,
+      tool,
+    ],
   )
 
   const paintPath = useCallback(
@@ -521,6 +560,20 @@ export default function App() {
     }
 
     const target = pick.kind === "none" ? null : pick.tile
+    if (tool === "gate") {
+      if (!target || selectedHabitatId === null) {
+        return
+      }
+      const text = callGame(() => game.evaluate_service_gate(selectedHabitatId, target.x, target.y))
+      if (text === undefined) {
+        return
+      }
+      const evaluation = JSON.parse(text) as GateEvaluation
+      setGateCandidate(evaluation.segment ? evaluation : null)
+      setMessage(evaluation.message)
+      setMessageKind(evaluation.ok ? "info" : "error")
+      return
+    }
     if (tool === "bulldoze") {
       if (pick.kind === "depot" || isDepotTile(target)) {
         setMessage("The central animal-care depot cannot be demolished.")
@@ -583,6 +636,26 @@ export default function App() {
         priority,
       ),
     )
+  }
+
+  const startGateMove = () => {
+    setGateCandidate(null)
+    setTool("gate")
+    inform("Tap a fence segment of the selected habitat to preview its new service gate.")
+  }
+
+  const confirmGateMove = () => {
+    const game = gameRef.current
+    const segment = gateCandidate?.segment
+    if (!game || selectedHabitatId === null || !segment) {
+      return
+    }
+    const result = perform(() =>
+      game.set_service_gate(selectedHabitatId, segment.x, segment.y, segment.side),
+    )
+    if (result.ok) {
+      setTool("select")
+    }
   }
 
   const scheduleKeeper = () => {
@@ -837,7 +910,7 @@ export default function App() {
           </section>
         )}
 
-        <aside className="side-panel bevel">
+        <aside className={`side-panel bevel${tool === "gate" ? " gate-mode" : ""}`}>
           {selectedDepot && (
             <>
               <div className="window-title">
@@ -1096,6 +1169,56 @@ export default function App() {
                   </div>
                 )}
 
+                <div className="gate-controls">
+                  <h3>Service gate</h3>
+                  <dl>
+                    <div>
+                      <dt>Gate</dt>
+                      <dd>
+                        {`${selectedHabitat.service_gate.side} fence at (${selectedHabitat.service_gate.x}, ${selectedHabitat.service_gate.y})`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Keeper access</dt>
+                      <dd>
+                        {selectedHabitat.service_gate.reachable ? "Reachable" : "Gate unreachable"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {tool === "gate" ? (
+                    <>
+                      <div className="guest-thought">
+                        {gateCandidate
+                          ? gateCandidate.message
+                          : "Tap a fence segment of this habitat to preview the new gate."}
+                      </div>
+                      <button
+                        className="shop-row"
+                        disabled={!gateCandidate?.ok}
+                        onClick={confirmGateMove}
+                      >
+                        <span>
+                          <b>Place gate here</b>
+                          <small>Keepers enter through the previewed segment</small>
+                        </span>
+                      </button>
+                      <button className="shop-row" onClick={() => setTool("select")}>
+                        <span>
+                          <b>Cancel</b>
+                          <small>Keep the current gate</small>
+                        </span>
+                      </button>
+                    </>
+                  ) : (
+                    <button className="shop-row" onClick={startGateMove}>
+                      <span>
+                        <b>Move gate</b>
+                        <small>Then tap a fence segment; the tile outside stays clear</small>
+                      </span>
+                    </button>
+                  )}
+                </div>
+
                 <h3>Care</h3>
                 <div className="guest-thought">{selectedHabitat.care_status}</div>
                 <dl>
@@ -1132,6 +1255,15 @@ export default function App() {
                       const due = selectedHabitat.care_jobs.find(
                         (job) => job.category === task.category && job.state === "due",
                       )
+                      const active = selectedHabitat.care_jobs.find(
+                        (job) => job.category === task.category && job.state === "in_progress",
+                      )
+                      let progress = `next in ${task.next_due_in_minutes} min`
+                      if (active) {
+                        progress = `keeper #${active.keeper_id ?? "?"} on the job`
+                      } else if (due) {
+                        progress = `due, ${due.expires_in_minutes} min left`
+                      }
                       return (
                         <div key={task.category}>
                           <dt>
@@ -1140,11 +1272,8 @@ export default function App() {
                           </dt>
                           <dd>
                             from {clock(task.first_minute_of_day)} every{" "}
-                            {task.interval_minutes / 60} h ·{" "}
-                            {due
-                              ? `due, ${due.expires_in_minutes} min left`
-                              : `next in ${task.next_due_in_minutes} min`}{" "}
-                            · priority{" "}
+                            {task.interval_minutes / 60} h · {task.work_minutes} min work ·{" "}
+                            {progress} · priority{" "}
                             <button
                               disabled={task.priority <= 1}
                               aria-label={`Lower ${task.category} priority`}

@@ -76,9 +76,12 @@ pub(crate) struct CareTaskDefault {
     pub first_minute_of_day: u32,
     pub interval_minutes: u32,
     pub priority: u32,
+    /// Minutes a keeper spends inside the habitat on one occurrence, after walking in.
+    pub work_minutes: u32,
 }
 
 pub(crate) const MAX_CARE_PRIORITY: u32 = 5;
+pub(crate) const MAX_CARE_WORK_MINUTES: u32 = 60;
 pub(crate) const MAX_REQUIRED_KEEPERS: u32 = 2;
 /// The grace window is one in-game hour, so a cadence of at least an hour never lets two
 /// occurrences of the same task be eligible at once. Dividing the day keeps times stable.
@@ -230,6 +233,11 @@ impl Catalog {
                 }
                 if !(1..=MAX_CARE_PRIORITY).contains(&task.priority) {
                     return Err(format!("{path}/priority: expected 1..={MAX_CARE_PRIORITY}"));
+                }
+                if !(1..=MAX_CARE_WORK_MINUTES).contains(&task.work_minutes) {
+                    return Err(format!(
+                        "{path}/work_minutes: expected 1..={MAX_CARE_WORK_MINUTES}"
+                    ));
                 }
             }
             // These are the animal presentation profiles supported by the

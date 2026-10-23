@@ -1,8 +1,10 @@
 mod care;
 mod content;
+mod gate;
 mod session;
 
 use content::{Catalog, Facility, Species};
+use gate::gate_access_message;
 use serde::Serialize;
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
@@ -64,6 +66,8 @@ const VIEWING_HALF_WIDTH_TILES: u32 = 2;
 const VIEWPOINT_PHYSICAL_CAPACITY: u32 = 4;
 const VIEWERS_PER_VISIBLE_ANIMAL: u32 = 2;
 const VIEWING_PENALTY_INTERVAL_MINUTES: u32 = 5;
+const GATE_UNREACHABLE: &str =
+    "Gate unreachable: connect a path from the care depot to the service gate";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,6 +121,12 @@ struct Keeper {
     id: u32,
     assigned_habitat_id: Option<u32>,
     deliveries_completed: u32,
+    /// The keeper's tile; the depot tile itself while at the depot.
+    x: u32,
+    y: u32,
+    activity: care::KeeperActivity,
+    /// The outside gate tile the keeper entered its habitat through, used to walk back out.
+    exit: Option<Position>,
 }
 
 #[derive(Clone, Debug)]
@@ -301,6 +311,18 @@ enum FenceSide {
     West,
 }
 
+impl FenceSide {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "north" => Some(Self::North),
+            "east" => Some(Self::East),
+            "south" => Some(Self::South),
+            "west" => Some(Self::West),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 struct FenceSegment {
     x: u32,
@@ -382,6 +404,8 @@ struct Habitat {
     keeper_id: Option<u32>,
     /// Instantiated from the species defaults on first adoption, then owned by the habitat.
     care_schedule: Option<care::CareSchedule>,
+    /// The fence segment keepers walk through; its outside tile must stay unbuilt.
+    service_gate: FenceSegment,
 }
 
 impl Habitat {
@@ -481,7 +505,7 @@ impl Habitat {
             / 8
     }
 
-    fn welfare_status(&self) -> String {
+    fn welfare_status(&self, gate_reachable: bool) -> String {
         let Some(species) = &self.species else {
             return "Ready for animals".to_owned();
         };
@@ -493,13 +517,16 @@ impl Habitat {
             (true, true) => "Social group is too small and habitat space is crowded".to_owned(),
             (true, false) => format!("Social group needs at least {minimum_group} animals"),
             (false, true) => "Habitat space is crowded for this group".to_owned(),
-            (false, false) => self.care_status(),
+            (false, false) => self.care_status(gate_reachable),
         }
     }
 
-    fn care_status(&self) -> String {
+    fn care_status(&self, gate_reachable: bool) -> String {
         if self.keeper_id.is_none() {
             return "No keeper is scheduled for food deliveries".to_owned();
+        }
+        if !gate_reachable {
+            return GATE_UNREACHABLE.to_owned();
         }
         if self.animals == 0 {
             return "Keeper scheduled; care supplies are ready".to_owned();
@@ -910,6 +937,9 @@ impl GameState {
         }
 
         let position = Position { x, y };
+        if let Some(habitat_id) = self.service_gate_owner(position) {
+            return ActionResult::error(gate_access_message(habitat_id));
+        }
         let touches_path = self
             .neighbors(position)
             .into_iter()
@@ -1006,6 +1036,19 @@ impl GameState {
                 occupied_tiles,
             );
         }
+        if let Some(habitat_id) = occupied_tiles
+            .iter()
+            .find_map(|tile| self.service_gate_owner(*tile))
+        {
+            return PlacementEvaluation::rejected(
+                gate_access_message(habitat_id),
+                x,
+                y,
+                width,
+                height,
+                occupied_tiles,
+            );
+        }
 
         let touches_path = occupied_tiles.iter().any(|tile| {
             self.neighbors(*tile).into_iter().any(|neighbor| {
@@ -1084,6 +1127,12 @@ impl GameState {
         for tile in &evaluation.occupied_tiles {
             self.set_tile(tile.x, tile.y, TileKind::Habitat(id));
         }
+        let service_gate = self.default_service_gate(
+            evaluation.x,
+            evaluation.y,
+            evaluation.width,
+            evaluation.height,
+        );
         self.habitats.push(Habitat {
             id,
             x: evaluation.x,
@@ -1100,6 +1149,7 @@ impl GameState {
             has_shelter: false,
             keeper_id: None,
             care_schedule: None,
+            service_gate,
         });
 
         ActionResult::ok(format!(
@@ -1189,6 +1239,7 @@ impl GameState {
                 ActionResult::error("The central animal-care depot cannot be demolished")
             }
             Some(TileKind::Habitat(id)) => {
+                self.release_habitat_keepers(id);
                 for tile_y in 0..self.height {
                     for tile_x in 0..self.width {
                         if self.tile(tile_x, tile_y) == Some(TileKind::Habitat(id)) {
@@ -1197,12 +1248,6 @@ impl GameState {
                     }
                 }
                 self.habitats.retain(|habitat| habitat.id != id);
-                self.care_jobs.retain(|job| job.habitat_id != id);
-                for keeper in &mut self.keepers {
-                    if keeper.assigned_habitat_id == Some(id) {
-                        keeper.assigned_habitat_id = None;
-                    }
-                }
                 let departing: Vec<u32> = self
                     .guests
                     .iter()
@@ -1293,6 +1338,10 @@ impl GameState {
             id,
             assigned_habitat_id: None,
             deliveries_completed: 0,
+            x: ANIMAL_CARE_DEPOT_X,
+            y: ANIMAL_CARE_DEPOT_Y,
+            activity: care::KeeperActivity::AtDepot,
+            exit: None,
         });
         ActionResult::ok(format!("Keeper #{id} hired at the animal-care depot"))
     }
@@ -1523,6 +1572,7 @@ impl GameState {
                 self.advance_guest_movement();
                 self.advance_janitor_work();
                 self.advance_mechanic_work();
+                self.advance_keeper_movement();
             }
 
             self.advance_viewing();
@@ -2926,8 +2976,21 @@ impl GameState {
         if !self.is_walkable(start) || goals.is_empty() {
             return None;
         }
+        self.count_path_search();
+        self.search_path(start, goals)
+    }
+
+    fn count_path_search(&self) {
         let searches = &self.work.path_searches;
         searches.set(searches.get().saturating_add(1));
+    }
+
+    /// The breadth-first walk shared by every staff and guest route. Presentation queries call
+    /// it directly so rendering a snapshot never changes the simulation work counters.
+    fn search_path(&self, start: Position, goals: &[Position]) -> Option<Vec<Position>> {
+        if !self.is_walkable(start) || goals.is_empty() {
+            return None;
+        }
 
         let mut queue = VecDeque::from([start]);
         let mut previous: HashMap<(u32, u32), Option<Position>> =
@@ -3252,15 +3315,7 @@ impl GameState {
             keepers: self
                 .keepers
                 .iter()
-                .map(|keeper| KeeperView {
-                    id: keeper.id,
-                    assigned_habitat_id: keeper.assigned_habitat_id,
-                    deliveries_completed: keeper.deliveries_completed,
-                    status: keeper.assigned_habitat_id.map_or_else(
-                        || "Available for assignment".to_owned(),
-                        |habitat_id| format!("Scheduled for habitat #{habitat_id}"),
-                    ),
-                })
+                .map(|keeper| self.keeper_view(keeper))
                 .collect(),
             janitors: self
                 .janitors
@@ -3333,6 +3388,7 @@ impl GameState {
                     .iter()
                     .map(|spot| spot.occupancy)
                     .fold(0_u32, u32::saturating_add);
+                let gate_reachable = self.service_gate_reachable(habitat);
                 HabitatView {
                     id: habitat.id,
                     x: habitat.x,
@@ -3343,6 +3399,13 @@ impl GameState {
                     footprint_area: habitat.area(),
                     fence_length: habitat.fence_length(),
                     fence_segments: habitat.fence_segments(),
+                    service_gate: ServiceGateView {
+                        x: habitat.service_gate.x,
+                        y: habitat.service_gate.y,
+                        side: habitat.service_gate.side,
+                        access: self.gate_access_tile(habitat.service_gate),
+                        reachable: gate_reachable,
+                    },
                     species: habitat
                         .species
                         .as_ref()
@@ -3367,7 +3430,7 @@ impl GameState {
                     welfare_target: habitat.welfare_target(),
                     social_score: habitat.social_score(),
                     space_score: habitat.space_score(),
-                    welfare_status: habitat.welfare_status(),
+                    welfare_status: habitat.welfare_status(gate_reachable),
                     food: habitat.food,
                     water: habitat.water,
                     cleanliness: habitat.cleanliness,
@@ -3384,7 +3447,7 @@ impl GameState {
                         .unwrap_or_default(),
                     care_jobs: self.care_job_views(habitat.id),
                     feeding_status: self.feeding_status(habitat),
-                    care_status: habitat.care_status(),
+                    care_status: habitat.care_status(gate_reachable),
                     appeal: habitat.appeal(),
                 }
             })
@@ -3534,9 +3597,25 @@ struct ConcessionView {
 #[derive(Serialize)]
 struct KeeperView {
     id: u32,
+    x: u32,
+    y: u32,
     assigned_habitat_id: Option<u32>,
     deliveries_completed: u32,
+    activity: &'static str,
+    job_id: Option<u32>,
+    /// Remaining walk from the keeper's tile to its destination; empty when blocked.
+    route: Vec<Position>,
     status: String,
+}
+
+#[derive(Serialize)]
+struct ServiceGateView {
+    x: u32,
+    y: u32,
+    side: FenceSide,
+    /// The outside tile keepers stand on before entering; never buildable.
+    access: Option<Position>,
+    reachable: bool,
 }
 
 #[derive(Serialize)]
@@ -3621,6 +3700,7 @@ struct HabitatView {
     footprint_area: u32,
     fence_length: u32,
     fence_segments: Vec<FenceSegment>,
+    service_gate: ServiceGateView,
     species: Option<String>,
     animals: u32,
     capacity: u32,
@@ -3946,6 +4026,12 @@ impl ZooGame {
                 number("interval_minutes")?,
                 number("priority")?,
             ),
+            "set_service_gate" => self.set_service_gate(
+                number("habitat_id")?,
+                number("x")?,
+                number("y")?,
+                text("side")?,
+            ),
             "inject_fault" => self.inject_fault(&text("kind")?),
             "advance" => self
                 .advance(number("minutes")?)
@@ -4212,6 +4298,20 @@ impl ZooGame {
         })
     }
 
+    /// Resolves a tapped tile to one of the habitat's fence segments for a gate-move preview.
+    pub fn evaluate_service_gate(&self, habitat_id: u32, x: u32, y: u32) -> String {
+        serde_json::to_string(&self.state.evaluate_service_gate(habitat_id, x, y))
+            .expect("gate evaluation serialization is infallible")
+    }
+
+    /// Moves a habitat's service gate onto one of its own fence segments.
+    pub fn set_service_gate(&mut self, habitat_id: u32, x: u32, y: u32, side: String) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "x": x, "y": y, "side": side });
+        self.command("set_service_gate", args, |state| {
+            state.set_service_gate(habitat_id, x, y, &side)
+        })
+    }
+
     pub fn tick(&mut self, minutes: u32) {
         let _ = self.advance(minutes.min(240));
     }
@@ -4250,6 +4350,11 @@ mod tests {
             has_shelter: true,
             keeper_id: Some(1),
             care_schedule: None,
+            service_gate: FenceSegment {
+                x,
+                y,
+                side: FenceSide::North,
+            },
         }
     }
 
@@ -5208,18 +5313,47 @@ mod tests {
         state.habitats[0].food = 40;
         let before = state.feed_crates;
 
-        // Capybara feeding falls due every two hours from 07:00; the park opens at 09:00.
-        state.tick(1);
+        let feeding = |state: &GameState| {
+            *state
+                .care_jobs
+                .iter()
+                .find(|job| job.category == content::CareCategory::Feeding)
+                .expect("feeding job generated")
+        };
 
-        assert_eq!(state.habitats[0].food, 100);
+        // Capybara feeding falls due every two hours from 07:00; the park opens at 09:00. The
+        // keeper takes a crate at dispatch, so the depot stock drops before food is delivered.
+        state.tick(1);
+        assert_eq!(feeding(&state).state, care::CareJobState::InProgress);
         assert_eq!(state.feed_crates, before - 1);
+        assert!(state.habitats[0].food < 100);
+
+        // Depot -> (2, 7) -> gate access (3, 7) -> inside (3, 8): three 3-minute steps, then
+        // fifteen minutes of feeding.
+        let mut minutes = 1;
+        while feeding(&state).state != care::CareJobState::Completed {
+            assert_eq!(state.keepers[0].deliveries_completed, 0);
+            if matches!(
+                state.keepers[0].activity,
+                care::KeeperActivity::Working { .. }
+            ) {
+                assert_eq!((state.keepers[0].x, state.keepers[0].y), (3, 8));
+            }
+            state.tick(1);
+            minutes += 1;
+            assert!(minutes <= 30, "feeding never completed");
+        }
+        assert!(minutes > 3 * 2 + 15, "completed after {minutes} min");
+        assert_eq!(state.habitats[0].food, 100);
         assert_eq!(state.keepers[0].deliveries_completed, 1);
-        let feeding = state
-            .care_jobs
-            .iter()
-            .find(|job| job.category == content::CareCategory::Feeding)
-            .expect("feeding job generated");
-        assert_eq!(feeding.state, care::CareJobState::Completed);
+
+        // Nothing else is due, so the keeper walks back out through the gate to the depot.
+        state.tick(12);
+        assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
+        assert_eq!(
+            (state.keepers[0].x, state.keepers[0].y),
+            (ANIMAL_CARE_DEPOT_X, ANIMAL_CARE_DEPOT_Y)
+        );
     }
 
     #[test]
@@ -5256,6 +5390,128 @@ mod tests {
                 .iter()
                 .any(|event| event.kind == "care_job_missed")
         );
+    }
+
+    fn feeding_job(state: &GameState) -> care::CareJob {
+        *state
+            .care_jobs
+            .iter()
+            .filter(|job| job.category == content::CareCategory::Feeding)
+            .min_by_key(|job| job.id)
+            .expect("feeding job generated")
+    }
+
+    #[test]
+    fn unreachable_gate_blocks_care_and_flags_the_habitat() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "capybara").ok);
+        state.habitats[0].food = 40;
+        // Losing the only path between depot and gate is allowed, not rejected.
+        assert!(state.bulldoze(3, ENTRANCE_Y).ok);
+        assert!(state.bulldoze(2, ENTRANCE_Y).ok);
+
+        let view = serde_json::to_value(state.snapshot()).unwrap();
+        assert_eq!(view["habitats"][0]["service_gate"]["reachable"], false);
+        assert_eq!(view["habitats"][0]["care_status"], GATE_UNREACHABLE);
+        assert!(GATE_UNREACHABLE.starts_with("Gate unreachable"));
+
+        state.tick(60);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::Missed);
+        assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
+        assert_eq!(state.feed_crates, FEED_BATCH_CRATES);
+    }
+
+    #[test]
+    fn a_job_dispatched_inside_the_grace_hour_runs_to_completion() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "capybara").ok);
+        state.habitats[0].food = 40;
+        assert!(state.bulldoze(2, ENTRANCE_Y).ok);
+
+        // Due at 09:00; the route returns at 09:50, ten minutes before the job would expire.
+        state.tick(50);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::Due);
+        assert!(state.place_path(2, ENTRANCE_Y).ok);
+        state.tick(1);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::InProgress);
+        assert_eq!(feeding_job(&state).keeper_id, Some(1));
+
+        // Walking plus fifteen minutes of work end well after the grace hour.
+        state.tick(20);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::InProgress);
+        state.tick(10);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::Completed);
+        assert!(state.habitats[0].food >= 99, "{}", state.habitats[0].food);
+    }
+
+    #[test]
+    fn demolishing_a_habitat_mid_walk_returns_the_keeper_and_its_feed() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "capybara").ok);
+        state.habitats[0].food = 40;
+        state.tick(4);
+        assert!(matches!(
+            state.keepers[0].activity,
+            care::KeeperActivity::ToGate { .. }
+        ));
+        assert_eq!(state.feed_crates, FEED_BATCH_CRATES - 1);
+
+        assert!(state.bulldoze(3, 8).ok);
+        assert_eq!(state.feed_crates, FEED_BATCH_CRATES);
+        assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
+        assert_eq!(
+            (state.keepers[0].x, state.keepers[0].y),
+            (ANIMAL_CARE_DEPOT_X, ANIMAL_CARE_DEPOT_Y)
+        );
+        assert!(state.care_jobs.is_empty());
+    }
+
+    #[test]
+    fn a_keeper_follows_a_moved_gate_and_publishes_its_route() {
+        let mut state = GameState::default();
+        for x in 5..=7 {
+            assert!(state.place_path(x, ENTRANCE_Y).ok);
+        }
+        for y in 8..=10 {
+            assert!(state.place_path(7, y).ok);
+        }
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "capybara").ok);
+        assert!(state.set_service_gate(habitat_id, 6, 10, "east").ok);
+        state.habitats[0].food = 40;
+        state.tick(1);
+
+        let view = serde_json::to_value(state.snapshot()).unwrap();
+        let keeper = &view["animal_care_depot"]["keepers"][0];
+        assert_eq!(keeper["activity"], "to_gate");
+        let route: Vec<(u64, u64)> = keeper["route"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["x"].as_u64().unwrap(), p["y"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(route.first(), Some(&(2, 6)));
+        assert_eq!(&route[route.len() - 2..], &[(7, 10), (6, 10)]);
+
+        while !matches!(
+            state.keepers[0].activity,
+            care::KeeperActivity::Working { .. }
+        ) {
+            state.tick(1);
+        }
+        assert_eq!((state.keepers[0].x, state.keepers[0].y), (6, 10));
+        assert_eq!(state.keepers[0].exit, Some(Position { x: 7, y: 10 }));
     }
 
     fn stocked_habitat(state: &mut GameState, x: u32, species: &str) -> u32 {
