@@ -16,18 +16,18 @@
   },
   "dependencies": {
     "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#d8130b38b74d58325d917c426d1b7b91fcda4b4d",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
-    "@vitejs/plugin-react": "6.1.1",
-    "oxfmt": "0.71.0",
-    "oxlint": "1.87.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
     "oxlint-tsgolint": "7.0.2004",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.3.4"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.3"
 }
