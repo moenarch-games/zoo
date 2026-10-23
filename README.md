@@ -21,7 +21,7 @@ The simulation core owns the game rules. Presentation code does not duplicate pl
 
 ## Run
 
-Requirements: stable Rust with the `wasm32-unknown-unknown` target, `wasm-pack`, and Bun 1.4.0 (declared in `apps/web/package.json`).
+Requirements: stable Rust with the `wasm32-unknown-unknown` target, `wasm-pack`, and the latest stable Bun.
 
 ```sh
 make install
