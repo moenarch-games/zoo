@@ -189,8 +189,27 @@
   }
 
   .tool-hint {
-    padding: 2px 4px 1px;
+    height: 20px;
+    padding: 0 4px;
     font-size: 9px;
+    line-height: 20px;
+  }
+
+  /* #98: the path brush takes the hint's line at the same height, so choosing Path never
+     resizes the map under the player's finger. */
+  .message-stack:has(.path-brush) .tool-hint {
+    display: none;
+  }
+
+  .path-brush {
+    height: 20px;
+    padding: 0 4px;
+  }
+
+  .path-brush button {
+    height: 20px;
+    min-height: 0;
+    padding: 0 6px;
   }
 
   .toolbar {

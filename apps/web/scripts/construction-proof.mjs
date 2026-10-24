@@ -163,7 +163,7 @@ export async function runConstructionAcceptance(context) {
     if (cycle === 0) assert(await clickButton("Undo"), "#92: undo button missing")
     else await chord("z", CTRL)
     assert(
-      (await message()).startsWith("Undid 5 path tiles"),
+      (await message()).startsWith("Undid 5 public path tiles"),
       "#92: undo did not reverse the stroke",
       await message(),
     )
@@ -174,7 +174,7 @@ export async function runConstructionAcceptance(context) {
     if (cycle === 0) await chord("z", CTRL | SHIFT)
     else assert(await clickButton("Redo"), "#92: redo button missing")
     assert(
-      (await message()).startsWith("Redid 5 path tiles"),
+      (await message()).startsWith("Redid 5 public path tiles"),
       "#92: redo did not rebuild the stroke",
       await message(),
     )
