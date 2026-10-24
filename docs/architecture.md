@@ -53,6 +53,8 @@ Camera orbit, zoom gestures, framing targets, and persistence are Zoo interactio
 
 The park has no DOM interaction layer. `apps/web/src/ParkView.tsx` interprets mouse, wheel, keyboard, and touch gestures (one-finger pan, pinch zoom, twist rotate, two-finger vertical tilt) into `zoo-scene` camera calls and tile/actor picks, and translates tool gestures into the same `zoo-core` commands on desktop and phone.
 
+Each park-view mount owns exactly one shared renderer. Unmounting disposes it and force-loses its WebGL context, so repeated load/dispose cannot accumulate contexts or GPU resources; `apps/web/scripts/renderer-lifetime-proof.mjs` remounts the view repeatedly and checks that live resources return to baseline. A catalog that fails the `zoo-core` content contract stops at a "Park could not start" screen with diagnostics export rather than booting a partial park.
+
 Mobile and desktop inputs must converge on the same commands. Touch-specific gesture handling is presentation state and must not create a second rules path.
 
 ## Asset boundary

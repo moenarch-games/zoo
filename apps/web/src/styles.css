@@ -612,6 +612,13 @@ dd {
   font-size: 13px;
 }
 
+.recovery-panel.startup-failure {
+  position: static;
+  max-height: none;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+
 .recovery-panel p {
   margin: 6px 0;
 }

@@ -1,6 +1,7 @@
 import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
+import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
 
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
@@ -253,6 +254,8 @@ try {
     await waitFor("Rust catalog asset_ref rejection", `document.body.textContent.includes('asset_ref')`)
     assert(catalogRequests > 0 && !catalogFailure, "Invalid fixture did not cross the real catalog boundary")
     assert(!(await evaluate(`window.__zooParkView?.ready === true`)), "Invalid catalog silently booted a fallback park")
+    assert(await evaluate(`Boolean(document.querySelector('[aria-label="Park recovery"]')?.textContent.includes('Park could not start'))`),
+      "Invalid catalog did not reach the startup failure screen")
     console.log("catalog browser rejection passed: actual invalid asset reference, no fallback park")
     process.exitCode = 0
   } else {
@@ -472,6 +475,9 @@ try {
   await runSessionRecorderAcceptance({
     cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, drag, mouse, wheel, key, frame, screenshot,
   })
+
+  // #59 S1: bounded renderer load/dispose and the incompatible-contract failure screen.
+  await runRendererLifetimeAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, screenshot})
   }
 } finally {
   cdp?.close()

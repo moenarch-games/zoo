@@ -176,6 +176,8 @@ export default function App() {
   const [zoneEdit, setZoneEdit] = useState<ZoneEdit>(null)
   const [assignKeeperId, setAssignKeeperId] = useState<number | null>(null)
   const [cameraResetToken, setCameraResetToken] = useState(0)
+  const [parkViewMount, setParkViewMount] = useState(0)
+  const [startupFailure, setStartupFailure] = useState<string | null>(null)
 
   const clearFenceGesture = useCallback(() => {
     fenceStartRef.current = null
@@ -309,11 +311,14 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+    let stage: "wasm" | "asset" = "wasm"
+    installDiagnosticsHook()
     init()
       .then(async () => {
         if (cancelled) {
           return
         }
+        stage = "asset"
         const response = await fetch(new URL("content/catalog.json", document.baseURI))
         if (!response.ok) {
           throw new Error(`catalog: HTTP ${response.status}`)
@@ -325,7 +330,6 @@ export default function App() {
         gameRef.current = ZooGame.from_content_json(documentText)
         diagnostics.connect(() => gameRef.current?.diagnostics_json() ?? "null")
         diagnostics.retain()
-        installDiagnosticsHook()
         if (faultInjectionEnabled()) {
           window.__zooFaults = {
             simulation: (kind: string) => {
@@ -333,6 +337,7 @@ export default function App() {
               diagnostics.retain()
               return result
             },
+            remountParkView: () => setParkViewMount((mount) => mount + 1),
           }
         }
         refresh()
@@ -340,8 +345,12 @@ export default function App() {
       .catch((error: unknown) => {
         console.error("Zoo simulation initialization failed", error)
         if (!cancelled) {
-          setMessage(`The park simulation could not load: ${String(error)}`)
-          setMessageKind("error")
+          diagnostics.record(stage, String(error), "frozen")
+          setStartupFailure(
+            stage === "asset"
+              ? `This build's park content does not match its simulation contract (${String(error)}).`
+              : `The park simulation could not be loaded in this browser (${String(error)}).`,
+          )
         }
       })
     return () => {
@@ -1037,7 +1046,24 @@ export default function App() {
   if (!snapshot) {
     return (
       <main className="loading">
-        {messageKind === "error" ? <p role="alert">{message}</p> : "Preparing the park simulation…"}
+        {startupFailure === null ? (
+          "Preparing the park simulation…"
+        ) : (
+          <section className="recovery-panel startup-failure bevel" aria-label="Park recovery">
+            <div className="window-title">
+              <span>Park could not start</span>
+            </div>
+            <p role="alert">{startupFailure}</p>
+            <p>Export the diagnostics, then reload once an updated build is available.</p>
+            <div className="recovery-actions">
+              <button onClick={downloadDiagnostics}>Download diagnostics</button>
+              <button onClick={copyDiagnostics}>Copy diagnostics</button>
+            </div>
+            {manualExport !== null && (
+              <textarea aria-label="Diagnostics bundle" readOnly value={manualExport} rows={4} />
+            )}
+          </section>
+        )}
       </main>
     )
   }
@@ -1133,6 +1159,7 @@ export default function App() {
       <section className="workspace">
         <Suspense fallback={<div className="park-view park-view-loading">Loading 3D park…</div>}>
           <ParkView
+            key={parkViewMount}
             snapshot={snapshot}
             overlay={overlay}
             paused={speed === 0}
