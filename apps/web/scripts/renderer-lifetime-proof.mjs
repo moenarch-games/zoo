@@ -8,6 +8,8 @@
 // `window.__zooParkView.resources()`. The incompatible contract is a real catalog document with
 // an unsupported schema version, served at the production catalog HTTP boundary.
 
+import { enterNewPark } from "./park-library-proof.mjs"
+
 const REMOUNTS = 12
 const PANEL = `[aria-label="Park recovery"]`
 
@@ -55,6 +57,7 @@ export async function runRendererLifetimeAcceptance(context) {
     const url = new URL(previewUrl)
     url.search = query
     await cdp.send("Page.navigate", { url: url.href })
+    await enterNewPark({ evaluate, sleep })
   }
   const resources = () => evaluate(`window.__zooParkView.resources()`)
   const lifetime = () => evaluate(`({...window.__zooRendererLifetime})`)
