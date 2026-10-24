@@ -1,7 +1,9 @@
+mod alerts;
 mod care;
 mod construction;
 mod content;
 mod gate;
+mod overlay;
 mod save;
 mod scenario;
 mod session;
@@ -793,6 +795,8 @@ struct GameState {
     next_work_zone_id: u32,
     /// Onboarding progress; it observes the park and never changes simulation rules.
     tutorial: tutorial::Tutorial,
+    /// The park's current problems (#94); saved so first occurrences survive a reload.
+    alerts: Vec<alerts::Alert>,
     /// Bounded construction undo/redo; session state, never saved (#92).
     #[serde(skip)]
     construction: construction::History,
@@ -880,6 +884,7 @@ impl GameState {
             work_zones: Vec::new(),
             next_work_zone_id: 1,
             tutorial: tutorial::Tutorial::off(),
+            alerts: Vec::new(),
             construction: construction::History::default(),
             work: WorkCounters::default(),
         };
@@ -1411,6 +1416,7 @@ impl GameState {
             }
 
             self.advance_viewing();
+            self.update_alerts();
         }
     }
 
@@ -3451,6 +3457,8 @@ impl GameState {
             ),
             tutorial: self.tutorial_view(),
             scenario: self.scenario_view(),
+            alerts: self.alerts.clone(),
+            summary: self.daily_summary(),
         }
     }
 }
@@ -3774,6 +3782,8 @@ struct Snapshot {
     finance: FinanceView,
     tutorial: tutorial::TutorialView,
     scenario: scenario::ScenarioView,
+    alerts: Vec<alerts::Alert>,
+    summary: overlay::DailySummary,
 }
 
 #[derive(Serialize)]
@@ -3816,7 +3826,8 @@ pub struct ZooGame {
 }
 
 impl ZooGame {
-    fn with_state(state: GameState) -> Self {
+    fn with_state(mut state: GameState) -> Self {
+        state.update_alerts();
         let content = serde_json::to_string(state.catalog.as_ref())
             .expect("validated catalog serialization is infallible");
         let start = session::start_identity(
@@ -3849,6 +3860,7 @@ impl ZooGame {
             ActionResult::error(session::FROZEN_MESSAGE)
         } else {
             let result = run(&mut self.state);
+            self.state.update_alerts();
             self.state.update_objectives();
             self.state.update_tutorial();
             self.state.tutorial.note_result(&result);
@@ -4105,6 +4117,18 @@ impl ZooGame {
 
     pub fn snapshot_json(&self) -> String {
         serde_json::to_string(&self.state.snapshot()).expect("snapshot serialization is infallible")
+    }
+
+    /// One management overlay (#94): `access`, `welfare`, `staff`, `cleanliness`,
+    /// `facilities` or `viewing`; `null` for an unknown kind. Read-only.
+    pub fn overlay_json(&self, kind: &str) -> String {
+        overlay::OverlayKind::parse(kind).map_or_else(
+            || "null".to_owned(),
+            |kind| {
+                serde_json::to_string(&self.state.overlay(kind))
+                    .expect("overlay serialization is infallible")
+            },
+        )
     }
 
     /// The bounded session diagnostics bundle (`zoo-diagnostics/1`, at most 1 MB).

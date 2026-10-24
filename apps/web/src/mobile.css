@@ -274,3 +274,76 @@
     line-height: 44px;
   }
 }
+
+/* #94: on a phone the workspace is a bottom drawer that replaces the inspector sheet, and the
+   overlay legend sits compactly above the park. */
+@media (max-width: 900px) {
+  .manage-controls {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .manage-controls button,
+  .overlay-picker select {
+    height: 44px;
+    min-width: 44px;
+  }
+
+  .overlay-picker > span,
+  .manage-label {
+    display: none;
+  }
+
+  .management-workspace {
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: 8px;
+    width: auto;
+    max-height: min(62dvh, 520px, calc(100% - 16px));
+    border: 1px solid #174439;
+    border-radius: 12px 12px 7px 7px;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / 28%);
+  }
+
+  .workspace-tabs {
+    scrollbar-width: none;
+  }
+
+  .workspace-tabs button {
+    min-height: 44px;
+  }
+
+  .side-panel.behind-workspace {
+    display: none;
+  }
+
+  .alert-actions button,
+  .overlay-items button,
+  .drill-list button,
+  .data-table th button,
+  .table-search input {
+    min-height: 44px;
+  }
+
+  .data-table td {
+    padding: 10px 6px;
+  }
+
+  .summary-row summary {
+    min-height: 44px;
+  }
+
+  .overlay-legend {
+    left: 8px;
+    right: auto;
+    top: 8px;
+    bottom: auto;
+    width: min(250px, calc(100% - 16px));
+    max-height: 34dvh;
+  }
+
+  .overlay-legend .overlay-items li:nth-child(n + 3) {
+    display: none;
+  }
+}

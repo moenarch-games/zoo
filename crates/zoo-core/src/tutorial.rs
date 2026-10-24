@@ -207,30 +207,9 @@ impl GameState {
     }
 
     fn unsuitable_group_problem(&self) -> Option<String> {
-        self.habitats.iter().find_map(|habitat| {
-            let species = habitat.species.as_ref()?;
-            let minimum = species.welfare_profile().minimum_social_group.max(1);
-            if habitat.animals < minimum {
-                Some(format!(
-                    "Habitat #{} has {} {}; they are social and need at least {minimum} together. \
-                     Adopt more of the same species.",
-                    habitat.id,
-                    habitat.animals,
-                    species.label()
-                ))
-            } else if habitat.space_score() < 100 {
-                Some(format!(
-                    "Habitat #{} is crowded: {} {} need more room than its {} tiles. Build a \
-                     larger habitat for this group.",
-                    habitat.id,
-                    habitat.animals,
-                    species.label(),
-                    habitat.area()
-                ))
-            } else {
-                None
-            }
-        })
+        self.habitats
+            .iter()
+            .find_map(|habitat| self.group_problem(habitat).map(|(message, _)| message))
     }
 
     fn guest_problem(&self) -> Option<String> {
@@ -259,18 +238,7 @@ impl GameState {
             .iter()
             .filter(|habitat| habitat.animals > 0 && habitat.welfare < at_least)
             .min_by_key(|habitat| habitat.welfare)?;
-        let components = [
-            ("social group", habitat.social_score()),
-            ("space", habitat.space_score()),
-            ("food", habitat.food_score()),
-            ("water", habitat.water_score()),
-            ("cleanliness", habitat.cleanliness_score()),
-            ("shelter", habitat.shelter_score()),
-        ];
-        let (name, score) = components
-            .into_iter()
-            .min_by_key(|(_, score)| *score)
-            .expect("components are not empty");
+        let (name, score) = Self::lowest_welfare_part(habitat);
         let trend = if habitat.welfare_target() > habitat.welfare {
             "rising"
         } else {

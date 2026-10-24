@@ -9,6 +9,7 @@ import {
 } from "./effects-kit"
 import type {
   ActionResult,
+  Alert,
   CareCategory,
   CareTask,
   ConstructionPreview,
@@ -17,6 +18,8 @@ import type {
   Guest,
   Keeper,
   Objective,
+  OverlayKind,
+  OverlayView,
   PlacementEvaluation,
   Point,
   ScenarioState,
@@ -29,6 +32,15 @@ import type {
   Tutorial,
   WorkZoneEvaluation,
 } from "./game-types"
+import {
+  AlertList,
+  DailySummaryView,
+  type JumpTarget,
+  ManagementWorkspace,
+  OVERLAY_KINDS,
+  OverlayLegend,
+  type WorkspaceTab,
+} from "./ManagementWorkspace"
 import type { SceneOverlay } from "./park-scene"
 import {
   background,
@@ -226,6 +238,10 @@ export default function App() {
   const [selectedHabitatId, setSelectedHabitatId] = useState<number | null>(null)
   const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null)
   const [selectedDepot, setSelectedDepot] = useState(false)
+  const [selectedConcessionId, setSelectedConcessionId] = useState<number | null>(null)
+  // #94: the management workspace (null when closed) and the active overlay.
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab | null>(null)
+  const [overlayKind, setOverlayKind] = useState<OverlayKind | null>(null)
   const [hoveredTile, setHoveredTile] = useState<Point | null>(null)
   const [fenceStart, setFenceStart] = useState<Point | null>(null)
   const [fenceEnd, setFenceEnd] = useState<Point | null>(null)
@@ -525,6 +541,42 @@ export default function App() {
     [selectedZoneId, snapshot],
   )
 
+  const selectedConcession = useMemo(
+    () => snapshot?.concessions.find((stand) => stand.id === selectedConcessionId) ?? null,
+    [selectedConcessionId, snapshot],
+  )
+
+  // A demolished, departed or deleted object leaves no stale selection behind.
+  useEffect(() => {
+    if (!snapshot) {
+      return
+    }
+    if (selectedHabitatId !== null && !snapshot.habitats.some((h) => h.id === selectedHabitatId)) {
+      setSelectedHabitatId(null)
+    }
+    if (selectedGuestId !== null && !snapshot.guests.some((g) => g.id === selectedGuestId)) {
+      setSelectedGuestId(null)
+    }
+    if (selectedZoneId !== null && !snapshot.work_zones.some((z) => z.id === selectedZoneId)) {
+      setSelectedZoneId(null)
+    }
+    if (
+      selectedConcessionId !== null &&
+      !snapshot.concessions.some((stand) => stand.id === selectedConcessionId)
+    ) {
+      setSelectedConcessionId(null)
+    }
+  }, [selectedConcessionId, selectedGuestId, selectedHabitatId, selectedZoneId, snapshot])
+
+  // The active overlay is re-read from zoo-core with each snapshot, never per rendered frame.
+  const overlayView = useMemo<OverlayView | null>(() => {
+    if (!snapshot || overlayKind === null) {
+      return null
+    }
+    const text = callGame((game) => game.overlay_json(overlayKind))
+    return text === undefined ? null : (JSON.parse(text) as OverlayView | null)
+  }, [callGame, overlayKind, snapshot])
+
   // Drawing, resizing, or moving a work zone: Rust evaluates the rectangle and lists the
   // service gates it would include. While moving, the tile under the pointer becomes the
   // zone's north-west corner.
@@ -653,12 +705,14 @@ export default function App() {
       zonesVisible,
       selectedZoneId,
       zonePreview,
+      management: overlayView,
     }),
     [
       constructionPreview,
       gatePreview,
       ghostTiles,
       hoveredTile,
+      overlayView,
       placement,
       selectedDepot,
       selectedGuestId,
@@ -854,6 +908,7 @@ export default function App() {
     setSelectedGuestId(null)
     setSelectedDepot(false)
     setSelectedZoneId(null)
+    setSelectedConcessionId(null)
     setSelectedHabitatId(habitatId)
   }
 
@@ -861,13 +916,153 @@ export default function App() {
     setSelectedGuestId(null)
     setSelectedDepot(false)
     setSelectedHabitatId(null)
+    setSelectedConcessionId(null)
     setSelectedZoneId(zoneId)
   }
+
+  const selectConcession = (standId: number) => {
+    setSelectedGuestId(null)
+    setSelectedDepot(false)
+    setSelectedHabitatId(null)
+    setSelectedZoneId(null)
+    setSelectedConcessionId(standId)
+    describeStand(standId)
+  }
+
+  const selectGuest = (guestId: number) => {
+    setSelectedHabitatId(null)
+    setSelectedZoneId(null)
+    setSelectedDepot(false)
+    setSelectedConcessionId(null)
+    setSelectedGuestId(guestId)
+  }
+
+  const isPhone = () => window.matchMedia("(max-width: 900px)").matches
+
+  /** Focuses an alert's, overlay item's or table row's object and opens its inspector. */
+  const jumpTo = (target: JumpTarget, focus: Point) => {
+    setTool("select")
+    switch (target.kind) {
+      case "habitat":
+        selectHabitat(target.id)
+        break
+      case "concession":
+        selectConcession(target.id)
+        break
+      case "depot":
+        selectDepot()
+        break
+      case "guest":
+        selectGuest(target.id)
+        break
+      case "zone":
+        selectZone(target.id)
+        break
+      case "keeper": {
+        const keeper = snapshot?.animal_care_depot.keepers.find((entry) => entry.id === target.id)
+        if (keeper?.zone_id != null) {
+          selectZone(keeper.zone_id)
+        } else {
+          selectDepot()
+        }
+        break
+      }
+      case "paths":
+        selectHabitat(null)
+        inform(`Showing path tile ${focus.x},${focus.y}`)
+        break
+    }
+    requestCamera(focus)
+    // On a phone the workspace drawer would cover the inspector it just opened.
+    if (isPhone()) {
+      setWorkspaceTab(null)
+    }
+  }
+
+  const alertActionLabel = (alert: Alert): string | null => {
+    if (!snapshot) {
+      return null
+    }
+    const depot = snapshot.animal_care_depot
+    switch (alert.action) {
+      case "buy_feed":
+        return `Buy ${depot.feed_batch_crates} feed · ${money(depot.feed_batch_cost_cents)}`
+      case "hire_keeper":
+        return `Hire keeper · ${money(depot.keeper_hire_cost_cents)}`
+      case "hire_janitor":
+        return `Hire janitor · ${money(depot.janitor_hire_cost_cents)}`
+      case "hire_mechanic":
+        return `Hire mechanic · ${money(depot.mechanic_hire_cost_cents)}`
+      case "build_path":
+        return "Build path here"
+      case "draw_zone":
+        return "Draw a work zone"
+      case "assign_keeper":
+        return "Assign a keeper"
+      case "adopt_animals":
+        return "Adopt animals"
+      case "inspect_habitat":
+        return "Open habitat"
+      case "inspect_facility":
+        return "Open stand"
+    }
+  }
+
+  /** Runs an alert's suggested fix: a command, or the tool and inspector that make it. */
+  const runAlertAction = (alert: Alert) => {
+    const game = gameRef.current
+    if (!game || !snapshot) {
+      return
+    }
+    switch (alert.action) {
+      case "buy_feed":
+        perform(() => game.buy_animal_feed())
+        return
+      case "hire_keeper":
+        perform(() => game.hire_keeper())
+        return
+      case "hire_janitor":
+        perform(() => game.hire_janitor())
+        return
+      case "hire_mechanic":
+        perform(() => game.hire_mechanic())
+        return
+      case "build_path":
+        jumpTo(alert.subject, alert.focus)
+        setTool("path")
+        setWorkspaceTab(null)
+        inform("Path tool: drag from a connected path to the highlighted problem.")
+        return
+      case "draw_zone":
+        jumpTo(alert.subject, alert.focus)
+        setTool("zone")
+        setWorkspaceTab(null)
+        return
+      case "assign_keeper": {
+        const { subject } = alert
+        const habitat =
+          subject.kind === "habitat"
+            ? snapshot.habitats.find((entry) => entry.id === subject.id)
+            : undefined
+        const zoneId = habitat?.work_zone_id ?? snapshot.work_zones[0]?.id ?? null
+        jumpTo(zoneId === null ? alert.subject : { kind: "zone", id: zoneId }, alert.focus)
+        return
+      }
+      case "adopt_animals":
+      case "inspect_habitat":
+      case "inspect_facility":
+        jumpTo(alert.subject, alert.focus)
+    }
+  }
+
+  const openWorkspace = (tab: WorkspaceTab) =>
+    setWorkspaceTab((current) => (current === tab ? null : tab))
 
   const selectDepot = () => {
     setSelectedGuestId(null)
     setSelectedHabitatId(null)
     setSelectedZoneId(null)
+    setSelectedConcessionId(null)
     setSelectedDepot(true)
     inform("Central operations depot selected · stock animal feed and hire park staff here.")
   }
@@ -973,7 +1168,7 @@ export default function App() {
     const label =
       snapshot?.facility_catalog.find((offer) => offer.key === stand.kind)?.label ?? stand.kind
     inform(
-      `${label} stand #${stand.id} · ${stand.condition}% condition · ${stand.service_state} · ${stand.maintenance_status}`,
+      `${label} #${stand.id} · ${stand.condition}% condition · ${stand.service_state} · ${stand.maintenance_status}`,
     )
   }
 
@@ -988,10 +1183,7 @@ export default function App() {
     if (tool === "select") {
       switch (pick.kind) {
         case "guest":
-          setSelectedGuestId(pick.id)
-          setSelectedHabitatId(null)
-          setSelectedZoneId(null)
-          setSelectedDepot(false)
+          selectGuest(pick.id)
           return
         case "animal":
           selectHabitat(pick.habitatId)
@@ -1001,8 +1193,7 @@ export default function App() {
           selectDepot()
           return
         case "concession":
-          selectHabitat(null)
-          describeStand(pick.id)
+          selectConcession(pick.id)
           return
         case "tile": {
           if (isDepotTile(pick.tile)) {
@@ -1016,7 +1207,7 @@ export default function App() {
           if (tile?.habitat_id) {
             inform(`Habitat #${tile.habitat_id} selected`)
           } else if (tile?.concession_id) {
-            describeStand(tile.concession_id)
+            selectConcession(tile.concession_id)
           } else {
             inform("Ground selected")
           }
@@ -1549,6 +1740,52 @@ export default function App() {
             {snapshot.day} · {clock(snapshot.minute_of_day)}
           </strong>
         </div>
+        <div className="manage-controls">
+          <button
+            className={`alerts-button${
+              snapshot.alerts.some((alert) => alert.severity === "critical") ? " critical" : ""
+            }${workspaceTab === "alerts" ? " active" : ""}`}
+            onClick={() => openWorkspace("alerts")}
+            aria-label={`Alerts: ${snapshot.alerts.length}`}
+            aria-expanded={workspaceTab === "alerts"}
+            title="Park alerts"
+          >
+            <span aria-hidden="true">⚠</span> {snapshot.alerts.length}
+          </button>
+          <button
+            className={workspaceTab !== null && workspaceTab !== "alerts" ? "active" : ""}
+            onClick={() =>
+              setWorkspaceTab((current) =>
+                current === null || current === "alerts" ? "summary" : null,
+              )
+            }
+            aria-label="Management workspace"
+            aria-expanded={workspaceTab !== null && workspaceTab !== "alerts"}
+            title="Management: today, habitats, guests, staff, facilities, finances"
+          >
+            <span aria-hidden="true">▤</span>
+            <span className="manage-label"> Manage</span>
+          </button>
+          <label className="overlay-picker">
+            <span>Overlay</span>
+            <select
+              aria-label="Overlay"
+              value={overlayKind ?? ""}
+              onChange={(event) =>
+                setOverlayKind(
+                  event.target.value === "" ? null : (event.target.value as OverlayKind),
+                )
+              }
+            >
+              <option value="">None</option>
+              {OVERLAY_KINDS.map((entry) => (
+                <option key={entry.kind} value={entry.kind}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="speed-controls" aria-label="Simulation speed">
           <button
             className="park-menu-button"
@@ -1612,6 +1849,22 @@ export default function App() {
 
         {(menuOpen || prompt !== null) && libraryPanel("menu")}
 
+        {workspaceTab !== null && (
+          <ManagementWorkspace
+            snapshot={snapshot}
+            tab={workspaceTab}
+            onTab={setWorkspaceTab}
+            onClose={() => setWorkspaceTab(null)}
+            onJump={jumpTo}
+            onAction={runAlertAction}
+            actionLabel={alertActionLabel}
+          />
+        )}
+
+        {overlayView && (
+          <OverlayLegend view={overlayView} onJump={jumpTo} onClose={() => setOverlayKind(null)} />
+        )}
+
         {recovery && (
           <section
             className="recovery-panel bevel"
@@ -1648,7 +1901,7 @@ export default function App() {
         <aside
           className={`side-panel bevel${tool === "gate" ? " gate-mode" : ""}${
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
-          }`}
+          }${workspaceTab !== null ? " behind-workspace" : ""}`}
         >
           {snapshot.scenario.objectives.length > 0 &&
             (snapshot.tutorial.status === "active" || snapshot.tutorial.status === "off") && (
@@ -2320,161 +2573,109 @@ export default function App() {
               </div>
             </>
           )}
-          {!selectedDepot && !selectedGuest && !selectedHabitat && !selectedZone && (
-            <>
-              <div className="window-title">
-                <span>Park manager</span>
-              </div>
-              <div className="manager-card">
-                <h2>Opening objective</h2>
-                <ol>
-                  <li>Guests enter through the gate on the west edge.</li>
-                  <li>Drag the path tool to extend the entrance route.</li>
-                  <li>Choose Habitat and drag a closed rectangular fence around clear grass.</li>
-                  <li>Open the operations depot, buy animal feed, and hire a keeper.</li>
-                  <li>Hire a janitor so path litter has a visible service response.</li>
-                  <li>Hire a mechanic before concession wear turns into closures.</li>
-                  <li>Follow the guide checklist to zone, staff and stock the first habitat.</li>
-                  <li>Place guest food and drink stands on clear grass beside busy paths.</li>
-                  <li>Watch staff respond as guests create animal-care and cleanup work.</li>
-                </ol>
-                <div className="finance-grid">
-                  <span>Income today</span>
-                  <strong>{money(snapshot.finance.current_day.income_cents)}</strong>
-                  <span>Expenses today</span>
-                  <strong>{money(snapshot.finance.current_day.expenses_cents)}</strong>
-                  <span>Profit today</span>
-                  <strong>{money(snapshot.finance.current_day.profit_cents)}</strong>
-                  <span>Admission price</span>
-                  <strong>{money(snapshot.finance.admission_price_cents)}</strong>
-                  <span>Trend</span>
-                  <strong>
-                    {snapshot.finance.profit_change_cents === null
-                      ? "First day"
-                      : `${snapshot.finance.profit_trend} · ${money(
-                          snapshot.finance.profit_change_cents,
-                        )}`}
-                  </strong>
-                </div>
-                <h3>Park operations</h3>
-                <div className="finance-grid">
-                  <span>Path cleanliness</span>
-                  <strong>{snapshot.operations.cleanliness}%</strong>
-                  <span>Litter backlog</span>
-                  <strong>{snapshot.operations.litter_backlog}</strong>
-                  <span>Oldest wait</span>
-                  <strong>{snapshot.operations.oldest_litter_age_minutes} min</strong>
-                  <span>Janitors</span>
-                  <strong>{snapshot.animal_care_depot.janitors.length}</strong>
-                  <span>Maintenance backlog</span>
-                  <strong>{snapshot.operations.maintenance_backlog}</strong>
-                  <span>Oldest maintenance</span>
-                  <strong>{snapshot.operations.oldest_maintenance_age_minutes} min</strong>
-                  <span>Degraded stands</span>
-                  <strong>{snapshot.operations.degraded_concessions}</strong>
-                  <span>Failed stands</span>
-                  <strong>{snapshot.operations.failed_concessions}</strong>
-                  <span>Mechanics</span>
-                  <strong>{snapshot.animal_care_depot.mechanics.length}</strong>
-                </div>
-                <h3>Income breakdown</h3>
-                <div className="finance-grid">
-                  <span>Admissions</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.admissions_income_cents)}
-                  </strong>
-                  <span>Guest concessions</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.concession_income_cents)}
-                  </strong>
-                </div>
-                <h3>Expense breakdown</h3>
-                <div className="finance-grid">
-                  <span>Construction</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.construction_expense_cents)}
-                  </strong>
-                  <span>Animal purchases</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.animal_purchase_expense_cents)}
-                  </strong>
-                  <span>Habitat care</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.habitat_care_expense_cents)}
-                  </strong>
-                  <span>Animal feed</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.animal_feed_expense_cents)}
-                  </strong>
-                  <span>Keeper hiring</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.keeper_hiring_expense_cents)}
-                  </strong>
-                  <span>Janitor hiring</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.janitor_hiring_expense_cents)}
-                  </strong>
-                  <span>Mechanic hiring</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.mechanic_hiring_expense_cents)}
-                  </strong>
-                  <span>Maintenance repairs</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.maintenance_repair_expense_cents)}
-                  </strong>
-                  <span>Park upkeep</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.park_upkeep_expense_cents)}
-                  </strong>
-                  <span>Keeper wages</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.keeper_wages_expense_cents)}
-                  </strong>
-                  <span>Janitor wages</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.janitor_wages_expense_cents)}
-                  </strong>
-                  <span>Mechanic wages</span>
-                  <strong>
-                    {money(snapshot.finance.current_day.breakdown.mechanic_wages_expense_cents)}
-                  </strong>
-                </div>
-                {snapshot.finance.previous_day !== null && (
-                  <div className="guest-thought">
-                    Day {snapshot.finance.previous_day.day} profit:{" "}
-                    {money(snapshot.finance.previous_day.profit_cents)}
-                  </div>
-                )}
-                <h3>Guest complaints</h3>
-                <div className="complaint-grid">
-                  <span>Hungry</span>
-                  <strong>{snapshot.complaints.hungry}</strong>
-                  <span>Thirsty</span>
-                  <strong>{snapshot.complaints.thirsty}</strong>
-                  <span>Tired</span>
-                  <strong>{snapshot.complaints.tired}</strong>
-                  <span>Poor value</span>
-                  <strong>{snapshot.complaints.poor_value}</strong>
-                </div>
-                {(snapshot.tutorial.status === "skipped" ||
-                  snapshot.tutorial.status === "completed") && (
-                  <button className="secondary" onClick={restartTutorial}>
-                    Restart guide
+          {!selectedDepot &&
+            !selectedGuest &&
+            !selectedHabitat &&
+            !selectedZone &&
+            selectedConcession && (
+              <>
+                <div className="window-title">
+                  <span>
+                    {snapshot.facility_catalog.find(
+                      (offer) => offer.key === selectedConcession.kind,
+                    )?.label ?? selectedConcession.kind}{" "}
+                    #{selectedConcession.id}
+                  </span>
+                  <button
+                    onClick={() => setSelectedConcessionId(null)}
+                    aria-label="Close stand inspector"
+                  >
+                    ×
                   </button>
-                )}
-                <button
-                  className="secondary"
-                  onClick={() => {
-                    setMenuView("new")
-                    setMenuOpen(true)
-                  }}
-                >
-                  Start new park
-                </button>
-                <SceneryCredits />
-              </div>
-            </>
-          )}
+                </div>
+                <div className="manager-card stand-card">
+                  <dl>
+                    <div
+                      className={
+                        selectedConcession.service_state === "healthy" ? "" : "zone-warning"
+                      }
+                    >
+                      <dt>Condition</dt>
+                      <dd>
+                        {selectedConcession.condition}% · {selectedConcession.service_state}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Maintenance</dt>
+                      <dd>{selectedConcession.maintenance_status}</dd>
+                    </div>
+                    <div>
+                      <dt>Price</dt>
+                      <dd>{money(selectedConcession.price_cents)}</dd>
+                    </div>
+                    <div>
+                      <dt>Sales today</dt>
+                      <dd>{selectedConcession.sales_today}</dd>
+                    </div>
+                    <div>
+                      <dt>Revenue</dt>
+                      <dd>{money(selectedConcession.total_revenue_cents)}</dd>
+                    </div>
+                  </dl>
+                  {snapshot.animal_care_depot.mechanics.length === 0 && (
+                    <button className="shop-row" onClick={hireMechanic}>
+                      <span>
+                        <b>Hire mechanic</b>
+                        <small>Mechanics repair worn stands before they break down</small>
+                      </span>
+                      <strong>{money(snapshot.animal_care_depot.mechanic_hire_cost_cents)}</strong>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          {!selectedDepot &&
+            !selectedGuest &&
+            !selectedHabitat &&
+            !selectedZone &&
+            !selectedConcession && (
+              <>
+                <div className="window-title">
+                  <span>Park manager</span>
+                </div>
+                <div className="manager-card">
+                  <h2>Alerts</h2>
+                  <AlertList
+                    alerts={snapshot.alerts}
+                    limit={3}
+                    onJump={jumpTo}
+                    onAction={runAlertAction}
+                    actionLabel={alertActionLabel}
+                  />
+                  <h3>Today</h3>
+                  <DailySummaryView snapshot={snapshot} onJump={jumpTo} />
+                  <button className="secondary" onClick={() => setWorkspaceTab("summary")}>
+                    Open management workspace
+                  </button>
+                  {(snapshot.tutorial.status === "skipped" ||
+                    snapshot.tutorial.status === "completed") && (
+                    <button className="secondary" onClick={restartTutorial}>
+                      Restart guide
+                    </button>
+                  )}
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setMenuView("new")
+                      setMenuOpen(true)
+                    }}
+                  >
+                    Start new park
+                  </button>
+                  <SceneryCredits />
+                </div>
+              </>
+            )}
         </aside>
       </section>
 
