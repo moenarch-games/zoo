@@ -672,6 +672,8 @@ export default function ParkView(props: Props) {
 
     const onPointerUp = (event: PointerEvent) => releasePointer(event, true)
     const onPointerCancel = (event: PointerEvent) => releasePointer(event, false)
+    // Losing capture without a pointerup (another element or the OS took the pointer) cancels.
+    const onLostPointerCapture = (event: PointerEvent) => releasePointer(event, false)
 
     const onPointerLeave = (event: PointerEvent) => {
       if (event.pointerType !== "mouse" || pointers.size > 0) {
@@ -709,6 +711,13 @@ export default function ParkView(props: Props) {
       const step = Math.min(rect.width, rect.height) * 0.08
       const pan = (dx: number, dy: number) => panBetween(center, [center[0] + dx, center[1] + dy])
       switch (event.key) {
+        case "Escape":
+          // Cancels the construction gesture in progress; nothing is committed or spent.
+          if (gesture?.kind === "tool" || gesture?.kind === "toolPending") {
+            endToolGesture(false)
+            gesture = null
+          }
+          break
         case "ArrowLeft":
         case "a":
         case "A":
@@ -878,6 +887,7 @@ export default function ParkView(props: Props) {
         canvas.addEventListener("pointermove", onPointerMove)
         canvas.addEventListener("pointerup", onPointerUp)
         canvas.addEventListener("pointercancel", onPointerCancel)
+        canvas.addEventListener("lostpointercapture", onLostPointerCapture)
         canvas.addEventListener("pointerleave", onPointerLeave)
         canvas.addEventListener("wheel", onWheel, { passive: false })
         canvas.addEventListener("contextmenu", onContextMenu)
@@ -897,6 +907,7 @@ export default function ParkView(props: Props) {
       canvas.removeEventListener("pointermove", onPointerMove)
       canvas.removeEventListener("pointerup", onPointerUp)
       canvas.removeEventListener("pointercancel", onPointerCancel)
+      canvas.removeEventListener("lostpointercapture", onLostPointerCapture)
       canvas.removeEventListener("pointerleave", onPointerLeave)
       canvas.removeEventListener("wheel", onWheel)
       canvas.removeEventListener("contextmenu", onContextMenu)

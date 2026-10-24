@@ -3,6 +3,7 @@ import { staticGlbSceneNodes } from "@moritzbrantner/three-d-renderer/static-glb
 
 import type {
   Animal,
+  ConstructionPreview,
   FenceSegment,
   FenceSide,
   GateEvaluation,
@@ -38,6 +39,8 @@ export type SceneOverlay = {
   hoveredTile: Point | null
   ghostTiles: Point[]
   placement: PlacementEvaluation | null
+  /** Rust's plan for the path stroke, facility or demolition under the pointer (#92). */
+  construction: ConstructionPreview | null
   selectedHabitatId: number | null
   selectedGuestId: number | null
   selectedDepot: boolean
@@ -1555,6 +1558,31 @@ function overlayNodes(overlay: SceneOverlay): RendererSceneNode[] {
           },
         ),
       )
+    }
+  } else if (
+    overlay.construction &&
+    overlay.construction.tiles.length + overlay.construction.blocked_tiles.length > 0
+  ) {
+    // Exactly the tiles Rust would build on or clear, plus the tiles that block the action.
+    const { construction } = overlay
+    const demolish = construction.action === "demolish"
+    let planned: Hex = demolish ? "#e0473a" : "#9fe07a"
+    if (!construction.ok) {
+      planned = "#e0a04f"
+    }
+    const ghost = (tile: Point, color: Hex, kind: string) =>
+      node(
+        `overlay:${kind}:${tile.x}:${tile.y}`,
+        [tile.x + 0.5, 0.05, tile.y + 0.5],
+        boxGeometry([0.96, 0.02, 0.96]),
+        color,
+        { opacity: 0.45 },
+      )
+    for (const tile of construction.tiles) {
+      nodes.push(ghost(tile, planned, "plan"))
+    }
+    for (const tile of construction.blocked_tiles) {
+      nodes.push(ghost(tile, "#e0473a", "blocked"))
     }
   } else if (overlay.hoveredTile) {
     const { x, y } = overlay.hoveredTile

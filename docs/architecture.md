@@ -32,6 +32,12 @@ The migration therefore proceeds upstream-first:
 7. Path construction, habitat ownership, guest choices, welfare, economy, staff tasks, and other game-specific rules remain in `zoo-core`.
 8. `physics-engine` is added only for interactions whose gameplay semantics require physical collision/motion truth. Tile occupancy and ordinary park pathfinding do not become physics problems merely because the game is rendered in 3D.
 
+## Construction transactions
+
+Construction is planned and committed in `zoo-core` (`crates/zoo-core/src/construction.rs`, #92). `evaluate_path_stroke`, `evaluate_concession`, `evaluate_habitat_rect` and `evaluate_demolition` return the exact tiles, price, affected objects, blocking tiles and rejection reason; the matching commands plan again against the current park, so a stale preview never spends or builds. One gesture is one all-or-nothing transaction: a path stroke is sent whole on release and Rust joins its points into a 4-connected line.
+
+Undo/redo reverses construction only, through validated inverses: at most 16 transactions; undo refunds exactly what the transaction spent and redo charges it again with the same stable IDs; undo is refused once the construction has been used (guests or staff on a path, litter, sales, maintenance, animals, shelters, care work), leaving ordinary demolition. Demolition is free and is undoable only when it destroyed nothing irreversible. History ends with the in-game day so refunds always land in the ledger that holds the spending, is never saved (a load starts empty), and is replayable because undo and redo are recorded session commands. The browser only gathers gesture tiles, shows Rust's preview, and cancels on Escape, pointer cancel, lost pointer capture or a second finger.
+
 ## Dependency policy
 
 Cross-repository dependencies must be pinned to exact accepted revisions. If a required shared contract is unavailable or incompatible, validation should fail closed rather than silently falling back to a second local implementation.

@@ -1,4 +1,5 @@
 mod care;
+mod construction;
 mod content;
 mod gate;
 mod save;
@@ -780,6 +781,9 @@ struct GameState {
     next_work_zone_id: u32,
     /// Onboarding progress; it observes the park and never changes simulation rules.
     tutorial: tutorial::Tutorial,
+    /// Bounded construction undo/redo; session state, never saved (#92).
+    #[serde(skip)]
+    construction: construction::History,
     #[serde(skip)]
     work: WorkCounters,
 }
@@ -841,6 +845,7 @@ impl Default for GameState {
             work_zones: Vec::new(),
             next_work_zone_id: 1,
             tutorial: tutorial::Tutorial::default(),
+            construction: construction::History::default(),
             work: WorkCounters::default(),
         };
 
@@ -907,106 +912,6 @@ impl GameState {
         self.cash_cents = cash;
         self.finance_today = ledger;
         true
-    }
-
-    fn place_path(&mut self, x: u32, y: u32) -> ActionResult {
-        match self.tile(x, y) {
-            None => ActionResult::error("That tile is outside the park"),
-            Some(TileKind::Path) => ActionResult::ok("Path already exists"),
-            Some(TileKind::Entrance) => ActionResult::ok("The entrance already acts as a path"),
-            Some(TileKind::Habitat(_)) => ActionResult::error("A habitat occupies that tile"),
-            Some(TileKind::Concession(_)) => {
-                ActionResult::error("A concession stand occupies that tile")
-            }
-            Some(TileKind::AnimalCareDepot) => {
-                ActionResult::error("The central animal-care depot occupies that tile")
-            }
-            Some(TileKind::Grass) => match self.spend(
-                self.catalog.balance.construction.path_tile_cents,
-                ExpenseCategory::Construction,
-            ) {
-                Ok(()) => {
-                    self.set_tile(x, y, TileKind::Path);
-                    self.refresh_guest_routes();
-                    ActionResult::ok("Path built")
-                }
-                Err(message) => ActionResult::error(message),
-            },
-        }
-    }
-
-    fn place_concession(&mut self, x: u32, y: u32, kind_name: &str) -> ActionResult {
-        let Some(definition) = self
-            .catalog
-            .facilities
-            .iter()
-            .find(|facility| facility.key == kind_name)
-            .cloned()
-        else {
-            return ActionResult::error("Unknown concession type");
-        };
-        let Some(kind) = ConcessionKind::parse(&definition.service) else {
-            return ActionResult::error("Unknown concession type");
-        };
-
-        match self.tile(x, y) {
-            None => return ActionResult::error("That tile is outside the park"),
-            Some(TileKind::Concession(id)) => {
-                let Some(existing) = self.concessions.iter().find(|stand| stand.id == id) else {
-                    return ActionResult::error("The concession tile is inconsistent");
-                };
-                if existing.definition.key == definition.key {
-                    return ActionResult::ok(format!("{} already stands here", definition.label));
-                }
-                return ActionResult::error(
-                    "A different concession stand already occupies that tile",
-                );
-            }
-            Some(TileKind::Path) | Some(TileKind::Entrance) => {
-                return ActionResult::error("Build the stand on grass beside the path");
-            }
-            Some(TileKind::Habitat(_)) => {
-                return ActionResult::error("A habitat occupies that tile");
-            }
-            Some(TileKind::AnimalCareDepot) => {
-                return ActionResult::error("The central animal-care depot occupies that tile");
-            }
-            Some(TileKind::Grass) => {}
-        }
-
-        let position = Position { x, y };
-        if let Some(habitat_id) = self.service_gate_owner(position) {
-            return ActionResult::error(gate_access_message(habitat_id));
-        }
-        let touches_path = self
-            .neighbors(position)
-            .into_iter()
-            .any(|neighbor| self.is_walkable(neighbor));
-        if !touches_path {
-            return ActionResult::error("Concession stands must touch a guest path");
-        }
-
-        if let Err(message) = self.spend(definition.build_cost_cents, ExpenseCategory::Construction)
-        {
-            return ActionResult::error(message);
-        }
-
-        let id = self.next_concession_id;
-        self.next_concession_id += 1;
-        self.set_tile(x, y, TileKind::Concession(id));
-        self.concessions.push(Concession {
-            id,
-            x,
-            y,
-            kind,
-            definition: definition.clone(),
-            sales_today: 0,
-            total_sales: 0,
-            total_revenue_cents: 0,
-            condition: 100,
-        });
-
-        ActionResult::ok(format!("{} #{id} built beside the path", definition.label))
     }
 
     fn habitat_cost(&self, width: u32, height: u32) -> i64 {
@@ -1160,59 +1065,6 @@ impl GameState {
         )
     }
 
-    fn place_habitat_rect(&mut self, ax: u32, ay: u32, bx: u32, by: u32) -> ActionResult {
-        let (x, y, width, height) = normalized_rect(ax, ay, bx, by);
-        if let Some(existing) = self.habitats.iter().find(|habitat| {
-            habitat.x == x && habitat.y == y && habitat.width == width && habitat.height == height
-        }) {
-            return ActionResult::ok(format!("Habitat #{} already uses this fence", existing.id));
-        }
-
-        let evaluation = self.evaluate_habitat_rect(ax, ay, bx, by);
-        if !evaluation.ok {
-            return ActionResult::error(evaluation.message);
-        }
-        if let Err(message) = self.spend(evaluation.cost_cents, ExpenseCategory::Construction) {
-            return ActionResult::error(message);
-        }
-
-        let id = self.next_habitat_id;
-        self.next_habitat_id += 1;
-        for tile in &evaluation.occupied_tiles {
-            self.set_tile(tile.x, tile.y, TileKind::Habitat(id));
-        }
-        let service_gate = self.default_service_gate(
-            evaluation.x,
-            evaluation.y,
-            evaluation.width,
-            evaluation.height,
-        );
-        self.habitats.push(Habitat {
-            id,
-            x: evaluation.x,
-            y: evaluation.y,
-            width: evaluation.width,
-            height: evaluation.height,
-            orientation: evaluation.orientation,
-            species: None,
-            animals: 0,
-            welfare: 100,
-            food: 100,
-            water: 100,
-            cleanliness: 100,
-            has_shelter: false,
-            care_schedule: None,
-            service_gate,
-        });
-
-        ActionResult::ok(format!(
-            "Habitat #{id} fenced · {}×{} · {} tiles",
-            evaluation.width,
-            evaluation.height,
-            evaluation.width.saturating_mul(evaluation.height)
-        ))
-    }
-
     fn place_habitat(&mut self, x: u32, y: u32, orientation: HabitatOrientation) -> ActionResult {
         let (width, height) = orientation.dimensions();
         self.place_habitat_rect(
@@ -1221,99 +1073,6 @@ impl GameState {
             x.saturating_add(width - 1),
             y.saturating_add(height - 1),
         )
-    }
-
-    fn bulldoze(&mut self, x: u32, y: u32) -> ActionResult {
-        match self.tile(x, y) {
-            None => ActionResult::error("That tile is outside the park"),
-            Some(TileKind::Grass) => ActionResult::ok("Nothing to demolish"),
-            Some(TileKind::Entrance) => {
-                ActionResult::error("The park entrance cannot be demolished")
-            }
-            Some(TileKind::Path) => {
-                if self.guests.iter().any(|guest| guest.x == x && guest.y == y) {
-                    return ActionResult::error("A guest is standing on that path tile");
-                }
-                if self
-                    .janitors
-                    .iter()
-                    .any(|janitor| janitor.x == x && janitor.y == y)
-                {
-                    return ActionResult::error("A janitor is standing on that path tile");
-                }
-                if self
-                    .mechanics
-                    .iter()
-                    .any(|mechanic| mechanic.x == x && mechanic.y == y)
-                {
-                    return ActionResult::error("A mechanic is standing on that path tile");
-                }
-                let removed_litter_ids: Vec<u32> = self
-                    .litter
-                    .iter()
-                    .filter(|task| task.x == x && task.y == y)
-                    .map(|task| task.id)
-                    .collect();
-                self.litter.retain(|task| task.x != x || task.y != y);
-                for janitor in &mut self.janitors {
-                    if janitor
-                        .target_litter_id
-                        .is_some_and(|id| removed_litter_ids.contains(&id))
-                    {
-                        janitor.target_litter_id = None;
-                    }
-                }
-                self.set_tile(x, y, TileKind::Grass);
-                self.refresh_guest_routes();
-                self.release_unreachable_mechanic_assignments();
-                ActionResult::ok("Path removed")
-            }
-            Some(TileKind::Concession(id)) => {
-                self.set_tile(x, y, TileKind::Grass);
-                let removed_task_ids: Vec<u32> = self
-                    .maintenance
-                    .iter()
-                    .filter(|task| task.concession_id == id)
-                    .map(|task| task.id)
-                    .collect();
-                self.maintenance.retain(|task| task.concession_id != id);
-                for mechanic in &mut self.mechanics {
-                    if mechanic
-                        .target_maintenance_id
-                        .is_some_and(|task_id| removed_task_ids.contains(&task_id))
-                    {
-                        mechanic.target_maintenance_id = None;
-                    }
-                }
-                self.concessions.retain(|stand| stand.id != id);
-                ActionResult::ok(format!("Concession stand #{id} removed"))
-            }
-            Some(TileKind::AnimalCareDepot) => {
-                ActionResult::error("The central animal-care depot cannot be demolished")
-            }
-            Some(TileKind::Habitat(id)) => {
-                self.release_habitat_keepers(id);
-                for tile_y in 0..self.height {
-                    for tile_x in 0..self.width {
-                        if self.tile(tile_x, tile_y) == Some(TileKind::Habitat(id)) {
-                            self.set_tile(tile_x, tile_y, TileKind::Grass);
-                        }
-                    }
-                }
-                self.habitats.retain(|habitat| habitat.id != id);
-                let departing: Vec<u32> = self
-                    .guests
-                    .iter()
-                    .filter(|guest| guest.target_habitat == id)
-                    .map(|guest| guest.id)
-                    .collect();
-                for guest_id in departing {
-                    self.emit("guest_left", Some(guest_id));
-                }
-                self.guests.retain(|guest| guest.target_habitat != id);
-                ActionResult::ok(format!("Habitat #{id} removed and its keeper released"))
-            }
-        }
     }
 
     fn adopt(&mut self, habitat_id: u32, species_name: &str) -> ActionResult {
@@ -1575,6 +1334,8 @@ impl GameState {
                 self.day += 1;
                 self.finance_previous = Some(self.finance_today);
                 self.finance_today = FinanceLedger::default();
+                // Construction undo spans one in-game day; refunds never cross the ledger.
+                self.construction.clear();
                 for stand in &mut self.concessions {
                     stand.sales_today = 0;
                 }
@@ -3637,6 +3398,7 @@ impl GameState {
             },
             species_catalog: self.species_catalog(),
             complaints: self.complaint_summary(),
+            construction: self.construction_view(),
             finance: FinanceView::new(
                 self.catalog.balance.admission_price_cents,
                 self.day,
@@ -3963,6 +3725,7 @@ struct Snapshot {
     operations: OperationsView,
     species_catalog: Vec<SpeciesOfferView>,
     complaints: ComplaintSummary,
+    construction: construction::HistoryView,
     finance: FinanceView,
     tutorial: tutorial::TutorialView,
 }
@@ -4100,7 +3863,18 @@ impl ZooGame {
                 .ok_or_else(|| format!("{kind}: missing text argument {name}"))
         };
         Ok(match kind {
-            "place_path" => self.place_path(number("x")?, number("y")?),
+            "build_path_stroke" => {
+                let points = args["points"]
+                    .as_array()
+                    .ok_or("build_path_stroke: missing points")?
+                    .iter()
+                    .map(|value| value.as_u64().and_then(|value| u32::try_from(value).ok()))
+                    .collect::<Option<Vec<u32>>>()
+                    .ok_or("build_path_stroke: points must be tile coordinates")?;
+                self.build_path_stroke(points)
+            }
+            "undo_construction" => self.undo_construction(),
+            "redo_construction" => self.redo_construction(),
             "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
             "place_habitat_rect" => {
                 self.place_habitat_rect(number("ax")?, number("ay")?, number("bx")?, number("by")?)
@@ -4161,6 +3935,13 @@ impl ZooGame {
                 .ok_or_else(|| "advance: recorded entry produced no result".to_owned())?,
             other => return Err(format!("unknown recorded command kind {other}")),
         })
+    }
+}
+
+impl ZooGame {
+    /// A one-tile path stroke.
+    pub fn place_path(&mut self, x: u32, y: u32) -> String {
+        self.build_path_stroke(vec![x, y])
     }
 }
 
@@ -4314,12 +4095,43 @@ impl ZooGame {
         result
     }
 
-    pub fn place_path(&mut self, x: u32, y: u32) -> String {
-        self.command(
-            "place_path",
-            serde_json::json!({ "x": x, "y": y }),
-            |state| state.place_path(x, y),
-        )
+    /// Previews a path stroke through `points` (flat `x, y` tile pairs) exactly as
+    /// `build_path_stroke` would commit it now.
+    pub fn evaluate_path_stroke(&self, points: Vec<u32>) -> String {
+        serde_json::to_string(&self.state.evaluate_path_stroke(&points))
+            .expect("construction preview serialization is infallible")
+    }
+
+    /// Builds one path stroke as a single all-or-nothing transaction.
+    pub fn build_path_stroke(&mut self, points: Vec<u32>) -> String {
+        let args = serde_json::json!({ "points": points });
+        self.command("build_path_stroke", args, |state| {
+            state.build_path_stroke(&points)
+        })
+    }
+
+    pub fn evaluate_concession(&self, x: u32, y: u32, kind: String) -> String {
+        serde_json::to_string(&self.state.evaluate_concession(x, y, &kind))
+            .expect("construction preview serialization is infallible")
+    }
+
+    pub fn evaluate_demolition(&self, x: u32, y: u32) -> String {
+        serde_json::to_string(&self.state.evaluate_demolition(x, y))
+            .expect("construction preview serialization is infallible")
+    }
+
+    /// Reverses the latest eligible construction transaction and refunds what it spent.
+    pub fn undo_construction(&mut self) -> String {
+        self.command("undo_construction", serde_json::json!({}), |state| {
+            state.undo_construction()
+        })
+    }
+
+    /// Re-applies the latest undone construction transaction at the same price and IDs.
+    pub fn redo_construction(&mut self) -> String {
+        self.command("redo_construction", serde_json::json!({}), |state| {
+            state.redo_construction()
+        })
     }
 
     pub fn place_concession(&mut self, x: u32, y: u32, kind: String) -> String {
