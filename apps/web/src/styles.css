@@ -360,6 +360,43 @@ dd {
   background: #f2d274;
 }
 
+.tool.history {
+  min-width: 64px;
+}
+
+.tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tool:disabled:hover {
+  color: inherit;
+  background: inherit;
+}
+
+.tool.history.blocked small {
+  text-decoration: line-through;
+}
+
+.habitat-size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 0;
+  color: #b8d6cc;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.habitat-size input {
+  width: 44px;
+  margin-left: 3px;
+}
+
+.habitat-size button {
+  font-size: 10px;
+}
+
 .tool span {
   font-size: 23px;
   line-height: 1;

@@ -353,6 +353,8 @@ export type Snapshot = {
     profit_trend: "up" | "down" | "flat" | "no_previous_day"
   }
   tutorial: Tutorial
+  /** Rust-owned bounded construction undo/redo (#92). */
+  construction: ConstructionHistory
 }
 
 export type ActionResult = {
@@ -371,4 +373,33 @@ export type PlacementEvaluation = {
   cost_cents: number
   occupied_tiles: Point[]
   fence_segments: FenceSegment[]
+}
+
+/** Rust's plan for a path stroke, facility placement or demolition; commits re-plan it. */
+export type ConstructionPreview = {
+  ok: boolean
+  /** False when committing would leave the park unchanged (an existing path, empty grass). */
+  changes: boolean
+  message: string
+  action: "path" | "facility" | "demolish"
+  cost_cents: number
+  tiles: Point[]
+  blocked_tiles: Point[]
+  affected: { kind: string; id: number | null; effect: string }[]
+  undoable: boolean
+}
+
+export type ConstructionStep = {
+  label: string
+  cost_cents: number
+  ok: boolean
+  message: string
+}
+
+export type ConstructionHistory = {
+  limit: number
+  undo_depth: number
+  redo_depth: number
+  undo: ConstructionStep | null
+  redo: ConstructionStep | null
 }

@@ -91,7 +91,21 @@ fn a_reloaded_park_continues_exactly_like_an_uninterrupted_one() {
     let mut resumed = ZooGame::new();
     ok(resumed.load_save(&saved));
     assert_eq!(resumed.save_json(), saved, "load then save is lossless");
-    assert_eq!(resumed.snapshot_json(), continuous.snapshot_json());
+    // Construction undo history is session state (#92): a load starts with none.
+    let without_history = |game: &ZooGame| {
+        let mut view = json(&game.snapshot_json());
+        let history = view
+            .as_object_mut()
+            .unwrap()
+            .remove("construction")
+            .unwrap();
+        (view, history)
+    };
+    let (resumed_view, resumed_history) = without_history(&resumed);
+    let (continuous_view, continuous_history) = without_history(&continuous);
+    assert_eq!(resumed_view, continuous_view);
+    assert_eq!(resumed_history["undo_depth"], 0);
+    assert_ne!(continuous_history["undo_depth"], 0);
 
     continue_run(&mut continuous);
     continue_run(&mut resumed);

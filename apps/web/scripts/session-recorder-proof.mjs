@@ -108,7 +108,7 @@ export async function runSessionRecorderAcceptance(context) {
 
   const assertCommandLog = (document, label) => {
     const log = document.session?.commands ?? []
-    assert(log.some((entry) => entry.kind === "place_path" && entry.result?.ok === true),
+    assert(log.some((entry) => entry.kind === "build_path_stroke" && entry.result?.ok === true),
       `${label}: accepted path command missing from exported log`, log.slice(-5))
     assert(log.some((entry) => entry.kind === "place_habitat_rect" && entry.result?.ok === false),
       `${label}: rejected fence command missing from exported log`, log.slice(-5))
