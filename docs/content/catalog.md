@@ -18,8 +18,9 @@ field is validated with its field path (for example
 `balance/staff/keeper/hourly_wage_cents`). Content of another shape (such as an
 older catalog embedded in a save) fails with the offending field path; save
 migrations rewrite embedded catalogs when the shape changes (schema 6 adds fences,
-schema 8 drops the catalog's old version number), and saves keep the catalog they
-were made with. Food/drink service behavior retains the existing core implementation.
+schema 8 drops the catalog's old version number, schema 9 adds habitat
+environment prices, furnishings and species requirements), and saves keep the
+catalog they were made with. Food/drink service behavior retains the existing core implementation.
 
 `fences` (#95) lists the fence types a habitat can be enclosed with: key, label,
 `material` (`wood` or `steel`, the supported looks), `height_cm` (1..=1000), and
@@ -31,6 +32,17 @@ type. A habitat owns a copy of its fence type, like its species definition.
 Rebuilding a whole fence as another type charges that type's full per-segment
 price, refunds nothing and is one undoable construction transaction; it cannot
 drop below the resident species' minimum.
+
+Habitat design (#97) is content too. `balance/habitat_environment` prices one
+tile painted grass, sand, shallow water or deep water and one elevation step
+raised or lowered. `habitat_objects` lists the one-tile shelters and enrichment
+items a habitat can be furnished with: key, label, `role` (`shelter` or
+`enrichment`), build price and how many animals one serves (1..=12); at least one
+of each role must exist, and the first shelter is what *Add basic shelter* places.
+Each species declares a `habitat` block: its preferred land `ground_cover` with
+the share of usable land it should cover, the shallow and deep water tiles it
+needs, and whether every animal needs a place in a shelter and a share of
+enrichment. These are authored game simplifications, not veterinary claims.
 Presentation references resolve against `assets/3d/catalog.json` and the existing
 animal/stand presentation profiles. This extraction does not load new GLB assets
 or change the accepted renderer. Fixed entrance and care-depot entries describe

@@ -17,9 +17,9 @@
 //! Lifecycle changes (arrival, renaming, departure) go through the `GameState` methods in this
 //! module and emit `animal_*` domain events, the seam later health, transfer and breeding work
 //! builds on.
-use super::{GameState, Habitat, Position, shape};
+use super::{GameState, Habitat, Position, environment::RoamArea, shape};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 /// How often animals take one movement/activity step.
 pub(crate) const STEP_INTERVAL_MINUTES: u32 = 2;
@@ -137,13 +137,13 @@ pub(crate) fn roam_tiles(tiles: &[Position]) -> Vec<Position> {
 /// Where the `slot`-th animal of habitat `habitat_id` arrives at `minute_of_day`: the roaming
 /// tile the count-based model (schema 6 and older) placed that slot at, so arrivals and
 /// migrated parks start exactly where animals used to stand.
+/// `roam` is the habitat's target tiles (see [`roam_tiles`] and the environment's roam area).
 pub(crate) fn arrival_tile(
-    tiles: &[Position],
+    roam: &[Position],
     habitat_id: u32,
     slot: u32,
     minute_of_day: u32,
 ) -> Position {
-    let roam = roam_tiles(tiles);
     let Some(count) = u32::try_from(roam.len()).ok().filter(|count| *count > 0) else {
         return Position { x: 0, y: 0 };
     };
@@ -154,59 +154,14 @@ pub(crate) fn arrival_tile(
     roam[index as usize]
 }
 
-/// The roaming tile nearest `from` (Manhattan distance, then row-major order).
-pub(crate) fn nearest_roam_tile(tiles: &[Position], from: Position) -> Position {
-    roam_tiles(tiles)
-        .into_iter()
-        .min_by_key(|tile| {
-            (
-                tile.x.abs_diff(from.x) + tile.y.abs_diff(from.y),
-                tile.y,
-                tile.x,
-            )
-        })
-        .unwrap_or(from)
-}
-
-/// The next tile from `from` towards `to` through the enclosure, or `from` once there.
-fn step_towards(tiles: &[Position], from: Position, to: Position) -> Position {
-    if from == to {
-        return from;
-    }
-    let inside: HashSet<(u32, u32)> = shape::tile_set(tiles);
-    let neighbours = |tile: Position| {
-        [(0i64, -1i64), (1, 0), (0, 1), (-1, 0)]
-            .into_iter()
-            .filter_map(move |(dx, dy)| {
-                let x = u32::try_from(i64::from(tile.x) + dx).ok()?;
-                let y = u32::try_from(i64::from(tile.y) + dy).ok()?;
-                Some(Position { x, y })
-            })
-    };
-    // Breadth-first from the target, so the first neighbour of `from` reached is a shortest step.
-    let mut seen = HashSet::from([(to.x, to.y)]);
-    let mut queue = VecDeque::from([to]);
-    while let Some(tile) = queue.pop_front() {
-        for next in neighbours(tile) {
-            if next == from {
-                return tile;
-            }
-            if inside.contains(&(next.x, next.y)) && seen.insert((next.x, next.y)) {
-                queue.push_back(next);
-            }
-        }
-    }
-    from
-}
-
 impl Animal {
-    /// One movement/activity step at `now` inside an enclosure of `tiles`.
-    fn step(&mut self, tiles: &[Position], now: u64) {
+    /// One movement/activity step at `now` inside the habitat's roam area.
+    fn step(&mut self, area: &RoamArea, now: u64) {
         match self.activity {
             Activity::Resting { until_minute } => {
                 self.energy = self.energy.saturating_add(REST_ENERGY_GAIN).min(MAX_ENERGY);
                 if now >= until_minute {
-                    self.choose_target(tiles);
+                    self.choose_target(area);
                 }
             }
             Activity::Walking { target } => {
@@ -220,15 +175,15 @@ impl Animal {
                         until_minute: now.saturating_add(minutes),
                     };
                 } else {
-                    self.position = step_towards(tiles, self.position, target);
+                    self.position = area.step_towards(self.position, target);
                     self.energy = self.energy.saturating_sub(WALK_ENERGY_COST);
                 }
             }
         }
     }
 
-    fn choose_target(&mut self, tiles: &[Position]) {
-        let roam = roam_tiles(tiles);
+    fn choose_target(&mut self, area: &RoamArea) {
+        let roam = area.pool();
         let target = roam
             .get(
                 (mix(self.cosmetic_seed, self.decisions.wrapping_add(1000)) as usize)
@@ -240,16 +195,16 @@ impl Animal {
         self.activity = Activity::Walking { target };
     }
 
-    /// Keeps the animal and its target inside a (possibly reshaped) enclosure.
-    pub(crate) fn settle_into(&mut self, tiles: &[Position]) {
-        if !shape::contains(tiles, self.position) {
-            self.position = nearest_roam_tile(tiles, self.position);
+    /// Keeps the animal and its target on ground it can reach after a reshape or terrain edit.
+    pub(crate) fn settle_into(&mut self, area: &RoamArea) {
+        if !area.contains(self.position) {
+            self.position = area.nearest(self.position);
         }
         if let Activity::Walking { target } = self.activity
-            && !shape::contains(tiles, target)
+            && !area.contains(target)
         {
             self.activity = Activity::Walking {
-                target: nearest_roam_tile(tiles, target),
+                target: area.nearest(target),
             };
         }
     }
@@ -283,7 +238,7 @@ impl GameState {
         let minute_of_day = self.minute_of_day;
         let habitat = &mut self.habitats[habitat_index];
         let position = arrival_tile(
-            &habitat.tiles,
+            habitat.roam_area().pool(),
             habitat.id,
             habitat.animal_count(),
             minute_of_day,
@@ -341,8 +296,12 @@ impl GameState {
     pub(crate) fn advance_animals(&mut self) {
         let now = self.absolute_minute();
         for habitat in &mut self.habitats {
+            if habitat.animals.is_empty() {
+                continue;
+            }
+            let area = habitat.roam_area();
             for animal in &mut habitat.animals {
-                animal.step(&habitat.tiles, now);
+                animal.step(&area, now);
             }
         }
     }
@@ -414,7 +373,12 @@ mod tests {
             Position { x: 1, y: 1 },
             Position { x: 2, y: 1 },
         ];
-        let next = step_towards(&tiles, Position { x: 1, y: 0 }, Position { x: 2, y: 1 });
+        let area = super::super::environment::roam_area(
+            &tiles,
+            &super::super::environment::Environment::default(),
+            Position { x: 0, y: 0 },
+        );
+        let next = area.step_towards(Position { x: 1, y: 0 }, Position { x: 2, y: 1 });
         assert_eq!(next, Position { x: 1, y: 1 });
     }
 

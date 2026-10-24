@@ -9,8 +9,14 @@
     },
     "habitat_care": {
       "water_refill_cents": 800,
-      "cleaning_cents": 2000,
-      "shelter_cents": 12000
+      "cleaning_cents": 2000
+    },
+    "habitat_environment": {
+      "grass_tile_cents": 200,
+      "sand_tile_cents": 400,
+      "shallow_water_tile_cents": 1500,
+      "deep_water_tile_cents": 2500,
+      "elevation_step_cents": 600
     },
     "feed_batch_cents": 6000,
     "maintenance_repair_cents": 2500,
@@ -41,6 +47,36 @@
       "segment_hourly_cents": 12
     }
   ],
+  "habitat_objects": [
+    {
+      "key": "basic_shelter",
+      "label": "Basic shelter",
+      "role": "shelter",
+      "build_cents": 12000,
+      "capacity": 4
+    },
+    {
+      "key": "large_shelter",
+      "label": "Large shelter",
+      "role": "shelter",
+      "build_cents": 22000,
+      "capacity": 8
+    },
+    {
+      "key": "log_pile",
+      "label": "Log pile",
+      "role": "enrichment",
+      "build_cents": 3000,
+      "capacity": 3
+    },
+    {
+      "key": "play_boulder",
+      "label": "Play boulder",
+      "role": "enrichment",
+      "build_cents": 5000,
+      "capacity": 6
+    }
+  ],
   "unlocks": [
     {
       "key": "available",
@@ -51,6 +87,14 @@
     {
       "key": "capybara",
       "label": "Capybara",
+      "habitat": {
+        "ground_cover": "grass",
+        "ground_cover_percent": 50,
+        "shallow_water_tiles": 2,
+        "deep_water_tiles": 1,
+        "shelter": true,
+        "enrichment": true
+      },
       "purchase_cost_cents": 25000,
       "appeal": 95,
       "minimum_social_group": 2,
@@ -89,6 +133,14 @@
     {
       "key": "flamingo",
       "label": "Flamingo",
+      "habitat": {
+        "ground_cover": "sand",
+        "ground_cover_percent": 30,
+        "shallow_water_tiles": 4,
+        "deep_water_tiles": 0,
+        "shelter": true,
+        "enrichment": false
+      },
       "purchase_cost_cents": 18000,
       "appeal": 80,
       "minimum_social_group": 3,
@@ -127,6 +179,14 @@
     {
       "key": "zebra",
       "label": "Zebra",
+      "habitat": {
+        "ground_cover": "grass",
+        "ground_cover_percent": 70,
+        "shallow_water_tiles": 0,
+        "deep_water_tiles": 0,
+        "shelter": true,
+        "enrichment": true
+      },
       "purchase_cost_cents": 40000,
       "appeal": 125,
       "minimum_social_group": 3,
@@ -165,6 +225,14 @@
     {
       "key": "giraffe",
       "label": "Giraffe",
+      "habitat": {
+        "ground_cover": "grass",
+        "ground_cover_percent": 60,
+        "shallow_water_tiles": 0,
+        "deep_water_tiles": 0,
+        "shelter": true,
+        "enrichment": true
+      },
       "purchase_cost_cents": 65000,
       "appeal": 160,
       "minimum_social_group": 2,
@@ -210,6 +278,14 @@
     {
       "key": "elephant",
       "label": "Elephant",
+      "habitat": {
+        "ground_cover": "sand",
+        "ground_cover_percent": 30,
+        "shallow_water_tiles": 2,
+        "deep_water_tiles": 2,
+        "shelter": true,
+        "enrichment": true
+      },
       "purchase_cost_cents": 90000,
       "appeal": 190,
       "minimum_social_group": 2,
@@ -255,6 +331,14 @@
     {
       "key": "penguin",
       "label": "Penguin",
+      "habitat": {
+        "ground_cover": "sand",
+        "ground_cover_percent": 40,
+        "shallow_water_tiles": 1,
+        "deep_water_tiles": 4,
+        "shelter": true,
+        "enrichment": true
+      },
       "purchase_cost_cents": 30000,
       "appeal": 110,
       "minimum_social_group": 4,

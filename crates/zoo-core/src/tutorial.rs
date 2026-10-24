@@ -246,7 +246,8 @@ impl GameState {
         };
         Some(format!(
             "Habitat #{} welfare is {} and {trend}; its lowest part is {name} at {score}. Welfare \
-             blends social group and space with food, water, cleanliness and shelter.",
+             blends social group and space with food, water, cleanliness and the habitat layout: \
+             shelter, enrichment, ground cover and pools.",
             habitat.id, habitat.welfare
         ))
     }

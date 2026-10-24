@@ -15,6 +15,7 @@ import type {
   CareTask,
   ConstructionPreview,
   ConstructionStep,
+  EnvironmentPreview,
   GateEvaluation,
   Guest,
   Habitat,
@@ -34,6 +35,7 @@ import type {
   Tutorial,
   WorkZoneEvaluation,
 } from "./game-types"
+import { HabitatDesignPanel, type HabitatBrush } from "./HabitatDesignPanel"
 import {
   AlertList,
   DailySummaryView,
@@ -162,6 +164,8 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
       return "Tap a fence segment of the selected habitat, then confirm the new service gate."
     case "zone":
       return "Drag corner to corner to draw a work zone · tap a zone to select it · zones may not overlap."
+    case "terrain":
+      return "Drag inside the selected habitat to paint ground or water or set a height; tap to place a furnishing · Rust previews cost and welfare · Esc cancels."
     case "select":
       return "Click to inspect · drag to pan · right-drag or two-finger twist to rotate · scroll or pinch to zoom."
   }
@@ -237,6 +241,8 @@ export default function App() {
 
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [tool, setTool] = useState<Tool>("select")
+  // What the terrain tool applies inside the selected habitat (#97).
+  const [brush, setBrush] = useState<HabitatBrush>({ kind: "surface", surface: "sand" })
   const [speed, setSpeed] = useState<Speed>(1)
   // The checklist starts collapsed to one line on phones so the map stays tappable.
   const [tutorialOpen, setTutorialOpen] = useState(
@@ -722,6 +728,52 @@ export default function App() {
     return text === undefined ? null : (JSON.parse(text) as ConstructionPreview)
   }, [callGame, hoveredTile, snapshot, stroke, tool])
 
+  // Habitat design (#97): the stroke (or hovered tile) previewed through the same Rust plan
+  // the terrain, elevation or furnishing command runs on release.
+  const environmentPreview = useMemo(() => {
+    const game = gameRef.current
+    if (!game || !snapshot || tool !== "terrain" || selectedHabitatId === null) {
+      return null
+    }
+    const tiles = stroke.length > 0 || !hoveredTile ? stroke : [hoveredTile]
+    const last = tiles.at(-1)
+    if (!last) {
+      return null
+    }
+    const points = Uint32Array.from(tiles.flatMap((tile) => [tile.x, tile.y]))
+    let text: string | undefined
+    if (brush.kind === "surface") {
+      text = callGame(() => game.evaluate_habitat_terrain(selectedHabitatId, points, brush.surface))
+    } else if (brush.kind === "height") {
+      text = callGame(() =>
+        game.evaluate_habitat_elevation(selectedHabitatId, points, brush.height),
+      )
+    } else {
+      text = callGame(() =>
+        game.evaluate_habitat_object(selectedHabitatId, brush.key, last.x, last.y),
+      )
+    }
+    return text === undefined ? null : (JSON.parse(text) as EnvironmentPreview)
+  }, [brush, callGame, hoveredTile, selectedHabitatId, snapshot, stroke, tool])
+
+  // The scene and tooltip show an environment plan like any other construction plan.
+  const scenePreview = useMemo<ConstructionPreview | null>(() => {
+    if (constructionPreview || !environmentPreview) {
+      return constructionPreview
+    }
+    return {
+      ok: environmentPreview.ok,
+      changes: environmentPreview.changed_tiles.length > 0,
+      message: environmentPreview.message,
+      action: "fence",
+      cost_cents: environmentPreview.cost_cents,
+      tiles: environmentPreview.changed_tiles,
+      blocked_tiles: environmentPreview.blocking_tiles,
+      affected: [],
+      undoable: false,
+    }
+  }, [constructionPreview, environmentPreview])
+
   // Moving a gate: hovering previews the segment Rust resolves for that tile (desktop); a tap
   // pins the candidate until it is confirmed or cancelled (desktop and touch).
   const gateHover = useMemo(() => {
@@ -742,7 +794,9 @@ export default function App() {
   }, [tool])
 
   useEffect(() => {
-    setTool((current) => (current === "gate" || current === "reshape" ? "select" : current))
+    setTool((current) =>
+      current === "gate" || current === "reshape" || current === "terrain" ? "select" : current,
+    )
   }, [selectedHabitatId])
 
   const gatePreview = gateCandidate ?? (gateHover?.segment ? gateHover : null)
@@ -763,7 +817,7 @@ export default function App() {
       ghostTiles,
       outline,
       placement,
-      construction: constructionPreview,
+      construction: scenePreview,
       selectedHabitatId,
       selectedGuestId,
       selectedAnimalId,
@@ -775,7 +829,7 @@ export default function App() {
       management: overlayView,
     }),
     [
-      constructionPreview,
+      scenePreview,
       gatePreview,
       ghostTiles,
       hoveredTile,
@@ -843,7 +897,7 @@ export default function App() {
   const onTileDown = (tile: Point) => {
     if (outlineMode) {
       extendOutline(tile)
-    } else if (tool === "path") {
+    } else if (tool === "path" || tool === "terrain") {
       strokeRef.current = []
       extendStroke(tile)
     } else if (tool === "habitat" || tool === "zone") {
@@ -858,6 +912,12 @@ export default function App() {
     if (outlineMode) {
       extendOutline(tile)
     } else if (tool === "path") {
+      extendStroke(tile)
+    } else if (tool === "terrain") {
+      // A furnishing goes on one tile: the stroke keeps only the latest.
+      if (brush.kind === "object") {
+        strokeRef.current = []
+      }
       extendStroke(tile)
     } else if ((tool === "habitat" || tool === "zone") && fenceStartRef.current) {
       fenceEndRef.current = tile
@@ -954,6 +1014,24 @@ export default function App() {
         perform(() => game.build_path_stroke(points))
       } else if (!commit) {
         inform("Path stroke cancelled · nothing was built.")
+      }
+      return
+    }
+    if (tool === "terrain") {
+      const tiles = strokeRef.current
+      clearStroke()
+      const last = tiles.at(-1)
+      if (!commit) {
+        inform("Habitat edit cancelled · nothing changed.")
+      } else if (game && last && selectedHabitatId !== null) {
+        const points = Uint32Array.from(tiles.flatMap((tile) => [tile.x, tile.y]))
+        if (brush.kind === "surface") {
+          perform(() => game.paint_habitat_terrain(selectedHabitatId, points, brush.surface))
+        } else if (brush.kind === "height") {
+          perform(() => game.set_habitat_elevation(selectedHabitatId, points, brush.height))
+        } else {
+          perform(() => game.place_habitat_object(selectedHabitatId, brush.key, last.x, last.y))
+        }
       }
       return
     }
@@ -1840,10 +1918,10 @@ export default function App() {
     ) : undefined
 
   const constructionTooltip =
-    constructionPreview && hoveredTile ? (
-      <div className={constructionPreview.ok ? "valid" : "invalid"}>
-        <b>{constructionHeadline(constructionPreview)}</b>
-        <small>{constructionDetails(constructionPreview)}</small>
+    scenePreview && hoveredTile ? (
+      <div className={scenePreview.ok ? "valid" : "invalid"}>
+        <b>{constructionHeadline(scenePreview)}</b>
+        <small>{constructionDetails(scenePreview)}</small>
       </div>
     ) : undefined
 
@@ -1994,7 +2072,11 @@ export default function App() {
             overlay={overlay}
             paused={speed === 0}
             dragTool={
-              tool === "path" || tool === "habitat" || tool === "zone" || tool === "reshape"
+              tool === "path" ||
+              tool === "habitat" ||
+              tool === "zone" ||
+              tool === "reshape" ||
+              tool === "terrain"
             }
             cornerTool={outlineMode}
             camera={camera}
@@ -2759,12 +2841,26 @@ export default function App() {
                 <NeedBar label="Food" value={selectedHabitat.food} />
                 <NeedBar label="Water" value={selectedHabitat.water} />
                 <NeedBar label="Cleanliness" value={selectedHabitat.cleanliness} />
-                <dl>
-                  <div>
-                    <dt>Shelter</dt>
-                    <dd>{selectedHabitat.has_shelter ? "Installed" : "Missing"}</dd>
-                  </div>
-                </dl>
+                <HabitatDesignPanel
+                  habitat={selectedHabitat}
+                  catalog={snapshot.habitat_environment}
+                  brush={brush}
+                  designing={tool === "terrain"}
+                  preview={environmentPreview}
+                  onBrush={(next) => {
+                    setBrush(next)
+                    setTool("terrain")
+                  }}
+                  onToggleDesign={() =>
+                    setTool((current) => (current === "terrain" ? "select" : "terrain"))
+                  }
+                  onRemoveObject={(objectId) => {
+                    const game = gameRef.current
+                    if (game) {
+                      perform(() => game.remove_habitat_object(selectedHabitat.id, objectId))
+                    }
+                  }}
+                />
                 <button className="shop-row" onClick={() => careForHabitat("water")}>
                   <span>
                     <b>Refill water</b>
@@ -3435,7 +3531,11 @@ function AnimalInspector({
             <dl>
               <div>
                 <dt>Shelter</dt>
-                <dd>{habitat.has_shelter ? "Yes" : "None"}</dd>
+                <dd>
+                  {habitat.environment.assessment.shelter_capacity > 0
+                    ? `For ${habitat.environment.assessment.shelter_capacity}`
+                    : "None reachable"}
+                </dd>
               </div>
               <div>
                 <dt>Group welfare</dt>

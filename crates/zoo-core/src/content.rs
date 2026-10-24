@@ -19,6 +19,8 @@ pub(crate) struct Catalog {
     pub ruleset_id: String,
     pub balance: Balance,
     pub fences: Vec<FenceType>,
+    /// Shelters and enrichment a habitat can be furnished with (#97).
+    pub habitat_objects: Vec<HabitatObjectType>,
     pub species: Vec<Species>,
     pub facilities: Vec<Facility>,
     pub unlocks: Vec<Unlock>,
@@ -40,7 +42,91 @@ pub(crate) struct Species {
     pub asset_ref: String,
     pub unlock_ref: String,
     pub care: CareProfile,
+    /// What a habitat must offer these animals (#97): authored game simplifications.
+    pub habitat: HabitatRequirements,
 }
+
+/// The ground a habitat tile is made of (#97). Land is walkable; shallow water is walkable
+/// wading water; deep water is never walked on and is used from an adjacent tile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Surface {
+    #[default]
+    Grass,
+    Sand,
+    ShallowWater,
+    DeepWater,
+}
+
+impl Surface {
+    pub const ALL: [Self; 4] = [Self::Grass, Self::Sand, Self::ShallowWater, Self::DeepWater];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|surface| surface.key() == value)
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Grass => "grass",
+            Self::Sand => "sand",
+            Self::ShallowWater => "shallow_water",
+            Self::DeepWater => "deep_water",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Grass => "grass",
+            Self::Sand => "sand",
+            Self::ShallowWater => "shallow water",
+            Self::DeepWater => "deep water",
+        }
+    }
+
+    pub fn is_water(self) -> bool {
+        matches!(self, Self::ShallowWater | Self::DeepWater)
+    }
+}
+
+/// A species' habitat needs. Every amount must be reachable from the service gate to count.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HabitatRequirements {
+    /// The land surface the animals want underfoot.
+    pub ground_cover: Surface,
+    /// The share of usable land, in percent, that should be `ground_cover`.
+    pub ground_cover_percent: u32,
+    pub shallow_water_tiles: u32,
+    pub deep_water_tiles: u32,
+    /// Whether every animal needs a place in a reachable shelter.
+    pub shelter: bool,
+    /// Whether every animal needs a share of reachable enrichment.
+    pub enrichment: bool,
+}
+
+/// What a habitat object does for the animals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ObjectRole {
+    Shelter,
+    Enrichment,
+}
+
+/// A one-tile shelter or enrichment item a habitat can be furnished with (#97).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HabitatObjectType {
+    pub key: String,
+    pub label: String,
+    pub role: ObjectRole,
+    pub build_cents: i64,
+    /// How many animals one object serves.
+    pub capacity: u32,
+}
+
+/// Habitat water requirements are bounded by the largest habitat.
+pub(crate) const MAX_REQUIRED_WATER_TILES: u32 = 50;
+pub(crate) const MAX_OBJECT_CAPACITY: u32 = 12;
 
 /// A fence a habitat can be enclosed with (#95). The first entry is the default every new
 /// habitat is built with; habitats switch type through a fence upgrade.
@@ -162,6 +248,7 @@ pub(crate) struct Balance {
     pub admission_price_cents: i64,
     pub construction: ConstructionCosts,
     pub habitat_care: HabitatCareCosts,
+    pub habitat_environment: EnvironmentCosts,
     pub feed_batch_cents: i64,
     pub maintenance_repair_cents: i64,
     pub staff: StaffCosts,
@@ -181,7 +268,29 @@ pub(crate) struct ConstructionCosts {
 pub(crate) struct HabitatCareCosts {
     pub water_refill_cents: i64,
     pub cleaning_cents: i64,
-    pub shelter_cents: i64,
+}
+
+/// Prices of habitat terrain edits (#97): per tile painted with a surface, and per height
+/// step raised or lowered.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EnvironmentCosts {
+    pub grass_tile_cents: i64,
+    pub sand_tile_cents: i64,
+    pub shallow_water_tile_cents: i64,
+    pub deep_water_tile_cents: i64,
+    pub elevation_step_cents: i64,
+}
+
+impl EnvironmentCosts {
+    pub fn surface_cents(&self, surface: Surface) -> i64 {
+        match surface {
+            Surface::Grass => self.grass_tile_cents,
+            Surface::Sand => self.sand_tile_cents,
+            Surface::ShallowWater => self.shallow_water_tile_cents,
+            Surface::DeepWater => self.deep_water_tile_cents,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -210,6 +319,7 @@ impl Balance {
     fn validate(&self) -> Result<(), String> {
         let build = &self.construction;
         let care = &self.habitat_care;
+        let environment = &self.habitat_environment;
         let staff = &self.staff;
         let upkeep = &self.upkeep;
         for (path, value) in [
@@ -219,7 +329,26 @@ impl Balance {
             ("construction/habitat_tile_cents", build.habitat_tile_cents),
             ("habitat_care/water_refill_cents", care.water_refill_cents),
             ("habitat_care/cleaning_cents", care.cleaning_cents),
-            ("habitat_care/shelter_cents", care.shelter_cents),
+            (
+                "habitat_environment/grass_tile_cents",
+                environment.grass_tile_cents,
+            ),
+            (
+                "habitat_environment/sand_tile_cents",
+                environment.sand_tile_cents,
+            ),
+            (
+                "habitat_environment/shallow_water_tile_cents",
+                environment.shallow_water_tile_cents,
+            ),
+            (
+                "habitat_environment/deep_water_tile_cents",
+                environment.deep_water_tile_cents,
+            ),
+            (
+                "habitat_environment/elevation_step_cents",
+                environment.elevation_step_cents,
+            ),
             ("feed_batch_cents", self.feed_batch_cents),
             ("maintenance_repair_cents", self.maintenance_repair_cents),
             ("staff/keeper/hire_cents", staff.keeper.hire_cents),
@@ -301,6 +430,7 @@ impl Catalog {
             ("facilities", self.facilities.len()),
             ("unlocks", self.unlocks.len()),
             ("fences", self.fences.len()),
+            ("habitat_objects", self.habitat_objects.len()),
         ] {
             if count == 0 || count > MAX_ENTRIES {
                 return Err(format!("{group}: expected 1..={MAX_ENTRIES} entries"));
@@ -351,6 +481,44 @@ impl Catalog {
                 &format!("{prefix}/segment_hourly_cents"),
             )?;
         }
+        let mut object_keys = HashSet::new();
+        for (i, object) in self.habitat_objects.iter().enumerate() {
+            let prefix = format!("habitat_objects/{i}");
+            text(&object.key, &format!("{prefix}/key"))?;
+            text(&object.label, &format!("{prefix}/label"))?;
+            if !object
+                .key
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(format!(
+                    "{prefix}/key: expected stable lowercase identifier"
+                ));
+            }
+            if !object_keys.insert(object.key.as_str()) {
+                return Err(format!("{prefix}/key: duplicate habitat object key"));
+            }
+            money(object.build_cents, &format!("{prefix}/build_cents"))?;
+            if !(1..=MAX_OBJECT_CAPACITY).contains(&object.capacity) {
+                return Err(format!(
+                    "{prefix}/capacity: expected 1..={MAX_OBJECT_CAPACITY}"
+                ));
+            }
+        }
+        for (role, name) in [
+            (ObjectRole::Shelter, "shelter"),
+            (ObjectRole::Enrichment, "enrichment"),
+        ] {
+            if !self
+                .habitat_objects
+                .iter()
+                .any(|object| object.role == role)
+            {
+                return Err(format!(
+                    "habitat_objects: expected at least one {name} object"
+                ));
+            }
+        }
         let tallest = self.fences.iter().map(|f| f.height_cm).max().unwrap_or(0);
         let mut keys = HashSet::new();
         for (i, species) in self.species.iter().enumerate() {
@@ -389,6 +557,27 @@ impl Catalog {
                 return Err(format!(
                     "{prefix}/minimum_fence_height_cm: no fence type is that tall"
                 ));
+            }
+            let habitat = &species.habitat;
+            if habitat.ground_cover.is_water() {
+                return Err(format!(
+                    "{prefix}/habitat/ground_cover: expected a land surface"
+                ));
+            }
+            if habitat.ground_cover_percent > 100 {
+                return Err(format!(
+                    "{prefix}/habitat/ground_cover_percent: expected 0..=100"
+                ));
+            }
+            for (field, value) in [
+                ("shallow_water_tiles", habitat.shallow_water_tiles),
+                ("deep_water_tiles", habitat.deep_water_tiles),
+            ] {
+                if value > MAX_REQUIRED_WATER_TILES {
+                    return Err(format!(
+                        "{prefix}/habitat/{field}: expected 0..={MAX_REQUIRED_WATER_TILES}"
+                    ));
+                }
             }
             if !(1..=MAX_REQUIRED_KEEPERS).contains(&species.care.required_keepers) {
                 return Err(format!(

@@ -4,6 +4,7 @@ mod care;
 mod construction;
 mod content;
 mod enclosure;
+mod environment;
 mod gate;
 mod overlay;
 mod save;
@@ -432,7 +433,8 @@ struct Habitat {
     food: u32,
     water: u32,
     cleanliness: u32,
-    has_shelter: bool,
+    /// Terrain, elevation, shelters and enrichment (#97).
+    environment: environment::Environment,
     /// Instantiated from the species defaults on first adoption, then owned by the habitat.
     care_schedule: Option<care::CareSchedule>,
     /// The fence segment keepers walk through; its outside tile must stay unbuilt.
@@ -484,6 +486,11 @@ impl Habitat {
     }
 
     fn space_score(&self) -> u32 {
+        self.space_score_with(&self.assessment())
+    }
+
+    /// Space counts only usable dry land reachable from the gate (#97).
+    fn space_score_with(&self, assessment: &environment::Assessment) -> u32 {
         let Some(species) = &self.species else {
             return 100;
         };
@@ -491,7 +498,7 @@ impl Habitat {
             return 100;
         }
 
-        let available_space = self.area();
+        let available_space = assessment.usable_land;
         let required_space = self
             .animal_count()
             .saturating_mul(species.welfare_profile().space_per_animal);
@@ -522,23 +529,11 @@ impl Habitat {
         }
     }
 
-    fn shelter_score(&self) -> u32 {
-        if !self.stocked() || self.has_shelter {
-            100
-        } else {
-            40
-        }
-    }
-
+    /// The weighted parts of [`Habitat::welfare_parts`]: social group and space count double;
+    /// food, drinking water, cleanliness, shelter, enrichment, ground cover, shallow and deep
+    /// water count once each.
     fn welfare_target(&self) -> u32 {
-        let social = self.social_score();
-        let space = self.space_score();
-        let food = self.food_score();
-        let water = self.water_score();
-        let cleanliness = self.cleanliness_score();
-        let shelter = self.shelter_score();
-        (social.saturating_mul(2) + space.saturating_mul(2) + food + water + cleanliness + shelter)
-            / 8
+        Self::target_of(&self.welfare_parts())
     }
 
     fn welfare_status(&self, staffing: Option<&str>, gate_reachable: bool) -> String {
@@ -577,8 +572,8 @@ impl Habitat {
         if self.cleanliness < 50 {
             return "Habitat needs cleaning".to_owned();
         }
-        if !self.has_shelter {
-            return "Animals need basic shelter".to_owned();
+        if let Some(problem) = self.environment_problem() {
+            return problem;
         }
         "Food, water, shelter, and cleanliness are healthy".to_owned()
     }
@@ -673,6 +668,8 @@ struct GameState {
     next_guest_id: u32,
     /// Animal IDs are park-wide and never reused (#96).
     next_animal_id: u32,
+    /// Shelter and enrichment IDs are park-wide and never reused (#97).
+    next_habitat_object_id: u32,
     spawn_accumulator: u32,
     upkeep_accumulator: u32,
     movement_accumulator: u32,
@@ -767,6 +764,7 @@ impl GameState {
             next_maintenance_id: 1,
             next_guest_id: 1,
             next_animal_id: 1,
+            next_habitat_object_id: 1,
             spawn_accumulator: 0,
             upkeep_accumulator: 0,
             movement_accumulator: 0,
@@ -1086,27 +1084,6 @@ impl GameState {
         }
         self.habitats[index].cleanliness = 100;
         ActionResult::ok(format!("Habitat #{habitat_id} cleaned"))
-    }
-
-    fn add_shelter(&mut self, habitat_id: u32) -> ActionResult {
-        let Some(index) = self
-            .habitats
-            .iter()
-            .position(|habitat| habitat.id == habitat_id)
-        else {
-            return ActionResult::error("Select a habitat first");
-        };
-        if self.habitats[index].has_shelter {
-            return ActionResult::ok("Basic shelter is already installed");
-        }
-        if let Err(message) = self.spend(
-            self.catalog.balance.habitat_care.shelter_cents,
-            ExpenseCategory::HabitatCare,
-        ) {
-            return ActionResult::error(message);
-        }
-        self.habitats[index].has_shelter = true;
-        ActionResult::ok(format!("Basic shelter added to habitat #{habitat_id}"))
     }
 
     fn tick(&mut self, minutes: u32) {
@@ -2641,6 +2618,7 @@ impl GameState {
                     minimum_social_group: profile.minimum_social_group,
                     space_per_animal: profile.space_per_animal,
                     minimum_fence_height_cm: species.minimum_fence_height_cm,
+                    habitat: species.habitat.clone(),
                 }
             })
             .collect()
@@ -3021,7 +2999,12 @@ impl GameState {
                     food: habitat.food,
                     water: habitat.water,
                     cleanliness: habitat.cleanliness,
-                    has_shelter: habitat.has_shelter,
+                    environment: habitat.environment_view(),
+                    welfare_parts: habitat.welfare_parts(),
+                    requirements: habitat
+                        .species
+                        .as_ref()
+                        .map(|species| species.habitat.clone()),
                     work_zone_id,
                     zone_keeper_count: work_zone_id
                         .map_or(0, |zone_id| self.zone_keeper_count(zone_id) as u32),
@@ -3164,6 +3147,7 @@ impl GameState {
             },
             species_catalog: self.species_catalog(),
             fence_catalog: self.catalog.fences.clone(),
+            habitat_environment: environment::EnvironmentCatalogView::new(&self.catalog),
             complaints: self.complaint_summary(),
             construction: self.construction_view(),
             finance: FinanceView::new(
@@ -3338,7 +3322,12 @@ struct HabitatView {
     food: u32,
     water: u32,
     cleanliness: u32,
-    has_shelter: bool,
+    /// Terrain cells, objects and what the layout offers (#97).
+    environment: environment::EnvironmentView,
+    /// Every weighted part of the welfare target, explained.
+    welfare_parts: Vec<environment::Contribution>,
+    /// The housed species' layout requirements.
+    requirements: Option<content::HabitatRequirements>,
     /// The work zone containing the service gate; `None` means no keeper can serve it.
     work_zone_id: Option<u32>,
     /// Keepers working in that zone; habitat jobs go only to them.
@@ -3416,6 +3405,8 @@ struct SpeciesOfferView {
     minimum_social_group: u32,
     space_per_animal: u32,
     minimum_fence_height_cm: u32,
+    /// What a habitat must offer this species (#97).
+    habitat: content::HabitatRequirements,
 }
 
 #[derive(Serialize)]
@@ -3509,6 +3500,8 @@ struct Snapshot {
     species_catalog: Vec<SpeciesOfferView>,
     /// The fence types a habitat can be rebuilt with (#95).
     fence_catalog: Vec<content::FenceType>,
+    /// Terrain prices, height limits and furnishings for habitat design (#97).
+    habitat_environment: environment::EnvironmentCatalogView,
     complaints: ComplaintSummary,
     construction: construction::HistoryView,
     finance: FinanceView,
@@ -3699,6 +3692,21 @@ impl ZooGame {
             "refill_water" => self.refill_water(number("habitat_id")?),
             "clean_habitat" => self.clean_habitat(number("habitat_id")?),
             "add_shelter" => self.add_shelter(number("habitat_id")?),
+            "paint_habitat_terrain" => {
+                self.paint_habitat_terrain(number("habitat_id")?, points()?, text("surface")?)
+            }
+            "set_habitat_elevation" => {
+                self.set_habitat_elevation(number("habitat_id")?, points()?, number("height")?)
+            }
+            "place_habitat_object" => self.place_habitat_object(
+                number("habitat_id")?,
+                text("object")?,
+                number("x")?,
+                number("y")?,
+            ),
+            "remove_habitat_object" => {
+                self.remove_habitat_object(number("habitat_id")?, number("object_id")?)
+            }
             "set_care_task" => self.set_care_task(
                 number("habitat_id")?,
                 text("category")?,
@@ -4126,6 +4134,99 @@ impl ZooGame {
         self.command("add_shelter", args, |state| state.add_shelter(habitat_id))
     }
 
+    /// Previews painting habitat tiles (flat `x, y` pairs) with a surface (#97).
+    pub fn evaluate_habitat_terrain(
+        &self,
+        habitat_id: u32,
+        points: Vec<u32>,
+        surface: String,
+    ) -> String {
+        serde_json::to_string(
+            &self
+                .state
+                .evaluate_habitat_terrain(habitat_id, &points, &surface),
+        )
+        .expect("environment preview serialization is infallible")
+    }
+
+    pub fn paint_habitat_terrain(
+        &mut self,
+        habitat_id: u32,
+        points: Vec<u32>,
+        surface: String,
+    ) -> String {
+        let args =
+            serde_json::json!({ "habitat_id": habitat_id, "points": points, "surface": surface });
+        self.command("paint_habitat_terrain", args, |state| {
+            state.paint_habitat_terrain(habitat_id, &points, &surface)
+        })
+    }
+
+    /// Previews setting habitat tiles to one elevation step.
+    pub fn evaluate_habitat_elevation(
+        &self,
+        habitat_id: u32,
+        points: Vec<u32>,
+        height: u32,
+    ) -> String {
+        serde_json::to_string(
+            &self
+                .state
+                .evaluate_habitat_elevation(habitat_id, &points, height),
+        )
+        .expect("environment preview serialization is infallible")
+    }
+
+    pub fn set_habitat_elevation(
+        &mut self,
+        habitat_id: u32,
+        points: Vec<u32>,
+        height: u32,
+    ) -> String {
+        let args =
+            serde_json::json!({ "habitat_id": habitat_id, "points": points, "height": height });
+        self.command("set_habitat_elevation", args, |state| {
+            state.set_habitat_elevation(habitat_id, &points, height)
+        })
+    }
+
+    /// Previews placing a shelter or enrichment item on one habitat tile.
+    pub fn evaluate_habitat_object(
+        &self,
+        habitat_id: u32,
+        object: String,
+        x: u32,
+        y: u32,
+    ) -> String {
+        serde_json::to_string(
+            &self
+                .state
+                .evaluate_habitat_object(habitat_id, &object, x, y),
+        )
+        .expect("environment preview serialization is infallible")
+    }
+
+    pub fn place_habitat_object(
+        &mut self,
+        habitat_id: u32,
+        object: String,
+        x: u32,
+        y: u32,
+    ) -> String {
+        let args =
+            serde_json::json!({ "habitat_id": habitat_id, "object": object, "x": x, "y": y });
+        self.command("place_habitat_object", args, |state| {
+            state.place_habitat_object(habitat_id, &object, x, y)
+        })
+    }
+
+    pub fn remove_habitat_object(&mut self, habitat_id: u32, object_id: u32) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "object_id": object_id });
+        self.command("remove_habitat_object", args, |state| {
+            state.remove_habitat_object(habitat_id, object_id)
+        })
+    }
+
     /// Overrides one recurring care task of one habitat (times, cadence and priority).
     pub fn set_care_task(
         &mut self,
@@ -4278,7 +4379,7 @@ mod tests {
             food: 100,
             water: 100,
             cleanliness: 100,
-            has_shelter: true,
+            environment: environment::Environment::default(),
             care_schedule: None,
             service_gate: FenceSegment {
                 x,
