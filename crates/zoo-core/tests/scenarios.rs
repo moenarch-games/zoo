@@ -1,6 +1,6 @@
 //! #91: scenarios start distinct, reproducible parks that play, save and load like any other.
 use serde_json::Value;
-use zoo_core::{scenario_catalog_json, ZooGame};
+use zoo_core::{ZooGame, scenario_catalog_json};
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
@@ -60,9 +60,11 @@ fn the_picker_offers_the_agreed_starting_conditions_in_order() {
         "keeper training lives in the empty starter"
     );
     for entry in catalog.as_array().unwrap() {
-        assert!(entry["title"]
-            .as_str()
-            .is_some_and(|title| !title.is_empty()));
+        assert!(
+            entry["title"]
+                .as_str()
+                .is_some_and(|title| !title.is_empty())
+        );
         assert!(entry["width"].as_u64().unwrap() >= 8);
     }
 }
@@ -217,8 +219,10 @@ fn locked_content_is_not_offered_or_adoptable() {
     assert_eq!(offered, ["capybara", "flamingo"]);
     let result = json(&game.adopt(1, "zebra".to_owned()));
     assert_eq!(result["ok"], false);
-    assert!(result["message"]
-        .as_str()
-        .unwrap()
-        .contains("not available"));
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap()
+            .contains("not available")
+    );
 }
