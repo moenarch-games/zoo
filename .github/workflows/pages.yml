@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: moritzbrantner/asset-tooling
-          ref: a9184128839b9c411103e958703c2d1c03dfc9a8
+          ref: 84c051dc93d78a17d9a88647e8fb0a9e36576c64 # = assets/scenery/zoo-scenery.pin.json assetToolingCommit
           path: .consumer-tools/asset-tooling
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

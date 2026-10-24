@@ -428,6 +428,24 @@ dd {
   letter-spacing: 0.06em;
 }
 
+.scenery-credits {
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.scenery-credits summary {
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.scenery-credits code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .need-row {
   margin: 9px 0;
 }

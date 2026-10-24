@@ -20,6 +20,7 @@ import {
 } from "./park-scene"
 import { batchNodes } from "./scene-batching"
 import initScene, { ParkCameraBridge } from "./scene-wasm/zoo_scene"
+import { loadSceneryKit, type SceneryKit } from "./scenery-kit"
 
 // Browser adapter for the Zoo park view. It owns pointer/touch/keyboard gesture interpretation
 // and the render loop. Camera policy and picking come from zoo-scene (over 3d-lab camera and
@@ -172,6 +173,7 @@ export default function ParkView(props: Props) {
     let gpu: GpuRenderer | null = null
     let work: RendererWorkObservations | null = null
     let bridge: ParkCameraBridge | null = null
+    let kit: SceneryKit | null = null
     let camera: CameraFrame | null = null
     let frameHandle = 0
     let viewport = { width: 1, height: 1 }
@@ -304,7 +306,7 @@ export default function ParkView(props: Props) {
 
     const renderFrame = (now: number) => {
       frameHandle = window.requestAnimationFrame(renderFrame)
-      if (!renderer || !bridge) {
+      if (!renderer || !bridge || !kit) {
         return
       }
       const dt = Math.min((now - lastTime) / 1000, 0.1)
@@ -336,7 +338,7 @@ export default function ParkView(props: Props) {
             if (scenery?.key !== key) {
               scenery = {
                 key,
-                batches: batchNodes("scenery", buildSceneryNodes(current.snapshot), key),
+                batches: batchNodes("scenery", buildSceneryNodes(current.snapshot, kit), key),
               }
             }
           }
@@ -808,11 +810,20 @@ export default function ParkView(props: Props) {
       failClosed(new Error("WebGL context lost"))
     }
 
-    void initScene()
-      .then(() => {
+    // The scenery pieces are required content: a missing or mismatched asset fails the view closed.
+    void Promise.all([
+      initScene(),
+      loadSceneryKit().catch((error: unknown) => {
+        throw new Error(
+          `Zoo scenery assets failed to load (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }),
+    ])
+      .then(([, loaded]) => {
         if (disposed) {
           return
         }
+        kit = loaded
         bridge = new ParkCameraBridge(parkWidth, parkHeight)
         bridgeRef.current = bridge
         renderer = createThreeSceneRenderer(canvas, { background: BACKGROUND, antialias: true })
