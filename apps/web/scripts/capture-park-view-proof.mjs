@@ -1,6 +1,7 @@
 import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
+import {runConstructionAcceptance} from "./construction-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
@@ -316,6 +317,9 @@ try {
   assert(await clickButton("Ⅱ"), "Pause control missing")
   await frame()
   const stats = () => evaluate(`[...document.querySelectorAll('.stat strong')].map((node) => node.textContent).join('|')`)
+  // Leave the canvas so the typed-size hover footprint (#92) is not counted as the baseline.
+  await mouse("mouseMoved", {x: 4, y: 4})
+  await frame()
   const statsBeforeRejected = await stats()
   const nodesBeforeRejected = await evaluate(`window.__zooParkView.nodeCount()`)
   const rejectedFrom = await tile(3, 5)
@@ -492,6 +496,9 @@ try {
   console.log(
     "Park view dogfood passed: shared-renderer 3D park, full orbit at both tilt bounds (desktop + phone), wheel/drag/keyboard/touch camera control, canvas-picked path/habitat/stand/depot/habitat commands, and visual proofs.",
   )
+
+  // #92 transactional construction on a fresh park: preview, build, cancel, undo and redo.
+  await runConstructionAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
 
   // #87 session recorder and failure recovery (docs/acceptance/session-recorder.md). Runs after
   // the existing journey so that journey's evidence stays independent of the new contract.

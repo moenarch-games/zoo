@@ -169,7 +169,7 @@ impl Unlocks {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum SetupStep {
-    /// A straight horizontal or vertical run of path tiles, both ends included.
+    /// A path stroke from `from` to `to`, built by the same stroke rules as the Path tool.
     Path {
         from: Position,
         to: Position,
@@ -563,6 +563,8 @@ impl Scenario {
         }
         state.cash_cents = self.starting_cash_cents;
         state.finance_today = super::FinanceLedger::default();
+        // Authored objects are the starting park, not player construction: nothing to undo.
+        state.construction.clear();
         state.unlocks = self.unlocks.clone();
         if state.depot_staff_spawn().is_none() {
             return Err(
@@ -602,24 +604,6 @@ pub(crate) fn catalog_json() -> String {
     serde_json::to_string(&summaries).expect("scenario summaries serialize")
 }
 
-fn line(from: Position, to: Position) -> Option<Vec<Position>> {
-    if from.x == to.x {
-        Some(
-            (from.y.min(to.y)..=from.y.max(to.y))
-                .map(|y| Position { x: from.x, y })
-                .collect(),
-        )
-    } else if from.y == to.y {
-        Some(
-            (from.x.min(to.x)..=from.x.max(to.x))
-                .map(|x| Position { x, y: from.y })
-                .collect(),
-        )
-    } else {
-        None
-    }
-}
-
 fn rating(value: Option<u32>) -> Result<Option<u32>, ActionResult> {
     match value {
         Some(value) if value > 100 => Err(ActionResult::error("ratings are 0..=100")),
@@ -630,24 +614,7 @@ fn rating(value: Option<u32>) -> Result<Option<u32>, ActionResult> {
 impl GameState {
     fn apply_setup_step(&mut self, step: &SetupStep) -> ActionResult {
         match step {
-            SetupStep::Path { from, to } => {
-                let Some(tiles) = line(*from, *to) else {
-                    return ActionResult::error("a path run must be horizontal or vertical");
-                };
-                for tile in tiles {
-                    if self.tile(tile.x, tile.y) == Some(TileKind::Entrance) {
-                        continue;
-                    }
-                    let result = self.place_path(tile.x, tile.y);
-                    if !result.ok {
-                        return ActionResult::error(format!(
-                            "{},{}: {}",
-                            tile.x, tile.y, result.message
-                        ));
-                    }
-                }
-                ActionResult::ok("Paths built")
-            }
+            SetupStep::Path { from, to } => self.build_path_stroke(&[from.x, from.y, to.x, to.y]),
             SetupStep::Habitat { from, to } => self.place_habitat_rect(from.x, from.y, to.x, to.y),
             SetupStep::ServiceGate {
                 habitat,

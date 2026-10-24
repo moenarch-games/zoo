@@ -221,7 +221,7 @@ fn accepted_and_rejected_commands_are_recorded_in_order_with_results() {
     assert_eq!(u(&bundle["commands_total"]), log.len() as u64);
     assert_eq!(bundle["commands_dropped"], 0);
     let expected = [
-        ("place_path", json!({"x": 5, "y": 7}), true),
+        ("build_path_stroke", json!({"points": [5, 7]}), true),
         (
             "adopt",
             json!({"habitat_id": 1, "species": "unicorn"}),

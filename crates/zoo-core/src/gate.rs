@@ -78,7 +78,7 @@ impl GameState {
     }
 
     /// A gate can open onto a path or open grass inside the park, never onto a building.
-    fn gate_segment_usable(&self, segment: FenceSegment) -> bool {
+    pub(crate) fn gate_segment_usable(&self, segment: FenceSegment) -> bool {
         self.gate_access_tile(segment).is_some_and(|access| {
             matches!(
                 self.tile(access.x, access.y),

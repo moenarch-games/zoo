@@ -124,12 +124,12 @@ export async function runScenarioAcceptance(context) {
       await evaluate(`document.elementFromPoint(${point.x}, ${point.y})?.outerHTML.slice(0, 200) ?? null`),
     )
     await tapOrClick(point, phone)
-    await waitFor(`${label} path placement`, `document.querySelector('.message')?.textContent === 'Path built'`, 30)
+    await waitFor(`${label} path placement`, `document.querySelector('.message')?.textContent.startsWith('Path built') ?? false`, 30)
     const session = await exported()
     assert(session.start.scenario === id, `${label}: session does not record the scenario`, session.start)
     const last = session.commands.at(-1)
     assert(
-      last.kind === "place_path" && last.args.x === target.x && last.args.y === target.y && last.result.ok,
+      last.kind === "build_path_stroke" && last.args.points.at(-2) === target.x && last.args.points.at(-1) === target.y && last.result.ok,
       `${label}: canvas picking built the wrong tile`,
       { last, target, message: await message() },
     )

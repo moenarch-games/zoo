@@ -11,6 +11,8 @@ import type {
   ActionResult,
   CareCategory,
   CareTask,
+  ConstructionPreview,
+  ConstructionStep,
   GateEvaluation,
   Guest,
   Keeper,
@@ -134,11 +136,11 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
   }
   switch (tool) {
     case "path":
-      return "Drag across tiles to paint paths · $10 per new tile."
+      return "Drag across tiles to paint one path stroke; release to build it all or nothing · Esc cancels · Ctrl+Z undoes."
     case "habitat":
-      return "Press on one corner, drag to the opposite corner, and release to close the fence."
+      return "Drag corner to corner to close a fence, or tap a corner to place the size set below · Esc cancels · Ctrl+Z undoes."
     case "bulldoze":
-      return "Click a path or any tile inside a habitat to remove it."
+      return "Hover to see what demolition removes and whether it can be undone · click to demolish."
     case "gate":
       return "Tap a fence segment of the selected habitat, then confirm the new service gate."
     case "zone":
@@ -146,6 +148,26 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
     case "select":
       return "Click to inspect · drag to pan · right-drag or two-finger twist to rotate · scroll or pinch to zoom."
   }
+}
+
+function constructionHeadline(preview: ConstructionPreview) {
+  const demolish = preview.action === "demolish"
+  if (!preview.ok) {
+    return demolish ? "! Cannot demolish" : "! Cannot build"
+  }
+  if (!preview.changes) {
+    return "No change"
+  }
+  const price = preview.cost_cents > 0 ? ` · ${money(preview.cost_cents)}` : ""
+  return `${demolish ? "✓ Demolish" : "✓ Build"}${price}`
+}
+
+function constructionDetails(preview: ConstructionPreview) {
+  const effects = preview.affected.map((entry) => ` · ${entry.effect}`).join("")
+  if (!preview.changes) {
+    return `${preview.message}${effects}`
+  }
+  return `${preview.message}${effects} · ${preview.undoable ? "undoable" : "cannot be undone"}`
 }
 
 function previewTiles(start: Point | null, end: Point | null, snapshot: Snapshot) {
@@ -184,7 +206,10 @@ export default function App() {
   const ticksSinceRetainRef = useRef(0)
   const [recovery, setRecovery] = useState<RecoveryState | null>(null)
   const [manualExport, setManualExport] = useState<string | null>(null)
-  const paintedTilesRef = useRef(new Set<string>())
+  // The path stroke of the active gesture, in pointer order; Rust joins and plans it.
+  const strokeRef = useRef<Point[]>([])
+  const [stroke, setStroke] = useState<Point[]>([])
+  const [habitatSize, setHabitatSize] = useState({ width: 4, height: 3 })
   const fenceStartRef = useRef<Point | null>(null)
   const fenceEndRef = useRef<Point | null>(null)
 
@@ -466,13 +491,18 @@ export default function App() {
     return () => window.clearInterval(handle)
   }, [autosaveIfDue, callGame, checkFrozen, markChanged, refresh, screen, snapshot !== null, speed])
 
+  const clearStroke = useCallback(() => {
+    strokeRef.current = []
+    setStroke([])
+  }, [])
+
   useEffect(() => {
-    paintedTilesRef.current.clear()
+    clearStroke()
     clearFenceGesture()
     if (tool !== "zone") {
       setZoneEdit(null)
     }
-  }, [clearFenceGesture, tool])
+  }, [clearFenceGesture, clearStroke, tool])
 
   useEffect(() => {
     setZoneEdit(null)
@@ -523,16 +553,57 @@ export default function App() {
     return text === undefined ? null : (JSON.parse(text) as WorkZoneEvaluation)
   }, [callGame, fenceEnd, fenceStart, hoveredTile, selectedZone, snapshot, tool, zoneEdit])
 
-  const placement = useMemo(() => {
-    const game = gameRef.current
-    if (!game || !snapshot || tool !== "habitat" || !fenceStart || !fenceEnd) {
+  // A drawn fence, or (without a gesture) the typed habitat size anchored at the hovered tile.
+  const fenceCorners = useMemo((): [Point, Point] | null => {
+    if (tool !== "habitat") {
       return null
     }
-    const text = callGame(() =>
-      game.evaluate_habitat_rect(fenceStart.x, fenceStart.y, fenceEnd.x, fenceEnd.y),
-    )
+    if (fenceStart && fenceEnd) {
+      return [fenceStart, fenceEnd]
+    }
+    if (hoveredTile) {
+      return [
+        hoveredTile,
+        {
+          x: hoveredTile.x + habitatSize.width - 1,
+          y: hoveredTile.y + habitatSize.height - 1,
+        },
+      ]
+    }
+    return null
+  }, [fenceEnd, fenceStart, habitatSize, hoveredTile, tool])
+
+  const placement = useMemo(() => {
+    const game = gameRef.current
+    if (!game || !snapshot || !fenceCorners) {
+      return null
+    }
+    const [a, b] = fenceCorners
+    const text = callGame(() => game.evaluate_habitat_rect(a.x, a.y, b.x, b.y))
     return text === undefined ? null : (JSON.parse(text) as PlacementEvaluation)
-  }, [callGame, fenceEnd, fenceStart, snapshot, tool])
+  }, [callGame, fenceCorners, snapshot])
+
+  // Path strokes, facilities and demolition preview through the same Rust plan the commit runs.
+  const constructionPreview = useMemo(() => {
+    const game = gameRef.current
+    if (!game || !snapshot) {
+      return null
+    }
+    let text: string | undefined
+    if (tool === "path") {
+      const tiles = stroke.length > 0 || !hoveredTile ? stroke : [hoveredTile]
+      if (tiles.length === 0) {
+        return null
+      }
+      const points = Uint32Array.from(tiles.flatMap((tile) => [tile.x, tile.y]))
+      text = callGame(() => game.evaluate_path_stroke(points))
+    } else if (tool.startsWith("facility:") && hoveredTile) {
+      text = callGame(() => game.evaluate_concession(hoveredTile.x, hoveredTile.y, tool.slice(9)))
+    } else if (tool === "bulldoze" && hoveredTile) {
+      text = callGame(() => game.evaluate_demolition(hoveredTile.x, hoveredTile.y))
+    }
+    return text === undefined ? null : (JSON.parse(text) as ConstructionPreview)
+  }, [callGame, hoveredTile, snapshot, stroke, tool])
 
   // Moving a gate: hovering previews the segment Rust resolves for that tile (desktop); a tap
   // pins the candidate until it is confirmed or cancelled (desktop and touch).
@@ -560,8 +631,9 @@ export default function App() {
   const gatePreview = gateCandidate ?? (gateHover?.segment ? gateHover : null)
 
   const ghostTiles = useMemo(
-    () => (snapshot && tool === "habitat" ? previewTiles(fenceStart, fenceEnd, snapshot) : []),
-    [fenceEnd, fenceStart, snapshot?.width, snapshot?.height, tool],
+    () =>
+      snapshot && fenceCorners ? previewTiles(fenceCorners[0], fenceCorners[1], snapshot) : [],
+    [fenceCorners, snapshot?.width, snapshot?.height],
   )
 
   const zonesVisible = tool === "zone" || selectedZoneId !== null
@@ -572,6 +644,7 @@ export default function App() {
       hoveredTile,
       ghostTiles,
       placement,
+      construction: constructionPreview,
       selectedHabitatId,
       selectedGuestId,
       selectedDepot,
@@ -581,6 +654,7 @@ export default function App() {
       zonePreview,
     }),
     [
+      constructionPreview,
       gatePreview,
       ghostTiles,
       hoveredTile,
@@ -595,26 +669,19 @@ export default function App() {
     ],
   )
 
-  const paintPath = useCallback(
-    (tile: Point) => {
-      const game = gameRef.current
-      if (!game) {
-        return
-      }
-      const key = `${tile.x}:${tile.y}`
-      if (paintedTilesRef.current.has(key)) {
-        return
-      }
-      paintedTilesRef.current.add(key)
-      perform(() => game.place_path(tile.x, tile.y))
-    },
-    [perform],
-  )
+  const extendStroke = (tile: Point) => {
+    const last = strokeRef.current.at(-1)
+    if (last && last.x === tile.x && last.y === tile.y) {
+      return
+    }
+    strokeRef.current = [...strokeRef.current, tile]
+    setStroke(strokeRef.current)
+  }
 
   const onTileDown = (tile: Point) => {
     if (tool === "path") {
-      paintedTilesRef.current.clear()
-      paintPath(tile)
+      strokeRef.current = []
+      extendStroke(tile)
     } else if (tool === "habitat" || tool === "zone") {
       fenceStartRef.current = tile
       fenceEndRef.current = tile
@@ -625,7 +692,7 @@ export default function App() {
 
   const onTileDrag = (tile: Point) => {
     if (tool === "path") {
-      paintPath(tile)
+      extendStroke(tile)
     } else if ((tool === "habitat" || tool === "zone") && fenceStartRef.current) {
       fenceEndRef.current = tile
       setFenceEnd(tile)
@@ -696,23 +763,86 @@ export default function App() {
     }
   }
 
+  // One gesture commits at most one construction transaction; a cancelled gesture commits none.
   const onToolGestureEnd = (commit: boolean) => {
-    paintedTilesRef.current.clear()
+    const game = gameRef.current
     if (tool === "zone") {
       finishZoneGesture(commit)
+      return
+    }
+    if (tool === "path") {
+      const points = Uint32Array.from(strokeRef.current.flatMap((tile) => [tile.x, tile.y]))
+      clearStroke()
+      if (commit && game && points.length > 0) {
+        perform(() => game.build_path_stroke(points))
+      } else if (!commit) {
+        inform("Path stroke cancelled · nothing was built.")
+      }
       return
     }
     if (tool !== "habitat") {
       return
     }
-    const game = gameRef.current
     const start = fenceStartRef.current
     const end = fenceEndRef.current
-    if (commit && game && start && end) {
-      perform(() => game.place_habitat_rect(start.x, start.y, end.x, end.y))
-    }
     clearFenceGesture()
+    if (!commit) {
+      if (start) {
+        inform("Fence cancelled · nothing was built.")
+      }
+      return
+    }
+    if (game && start && end) {
+      // A tap places the typed size with its north-west corner on the tapped tile.
+      const tap = start.x === end.x && start.y === end.y
+      const far = tap
+        ? { x: start.x + habitatSize.width - 1, y: start.y + habitatSize.height - 1 }
+        : end
+      perform(() => game.place_habitat_rect(start.x, start.y, far.x, far.y))
+    }
   }
+
+  const undoConstruction = () => {
+    const game = gameRef.current
+    if (game) {
+      perform(() => game.undo_construction())
+    }
+  }
+
+  const redoConstruction = () => {
+    const game = gameRef.current
+    if (game) {
+      perform(() => game.redo_construction())
+    }
+  }
+
+  const undoRef = useRef(undoConstruction)
+  const redoRef = useRef(redoConstruction)
+  undoRef.current = undoConstruction
+  redoRef.current = redoConstruction
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return
+      }
+      const key = event.key.toLowerCase()
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault()
+        undoRef.current()
+      } else if ((key === "z" && event.shiftKey) || key === "y") {
+        event.preventDefault()
+        redoRef.current()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   const inform = (text: string) => {
     setMessage(text)
@@ -1112,7 +1242,7 @@ export default function App() {
   }
 
   const resetView = () => {
-    paintedTilesRef.current.clear()
+    clearStroke()
     clearFenceGesture()
     setTool("select")
     setSelectedHabitatId(null)
@@ -1322,8 +1452,17 @@ export default function App() {
       </div>
     ) : undefined
 
+  const constructionTooltip =
+    constructionPreview && hoveredTile ? (
+      <div className={constructionPreview.ok ? "valid" : "invalid"}>
+        <b>{constructionHeadline(constructionPreview)}</b>
+        <small>{constructionDetails(constructionPreview)}</small>
+      </div>
+    ) : undefined
+
   const tooltip =
     zoneTooltip ??
+    constructionTooltip ??
     (placement && hoveredTile ? (
       <div className={placement.ok ? "valid" : "invalid"}>
         <b>
@@ -2306,6 +2445,36 @@ export default function App() {
         <div className="message-stack">
           <div className={`message bevel ${messageKind === "error" ? "error" : ""}`}>{message}</div>
           <div className="tool-hint">{toolHint(tool, snapshot)}</div>
+          {tool === "habitat" && (
+            <div className="habitat-size" aria-label="Habitat size">
+              {(["width", "height"] as const).map((side) => (
+                <label key={side}>
+                  {side === "width" ? "W" : "H"}
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={habitatSize[side]}
+                    aria-label={`Habitat ${side}`}
+                    onChange={(event) => {
+                      const value = Math.round(Number(event.target.value))
+                      if (Number.isFinite(value) && value >= 1 && value <= 20) {
+                        setHabitatSize((size) => ({ ...size, [side]: value }))
+                      }
+                    }}
+                  />
+                </label>
+              ))}
+              <button
+                onClick={() =>
+                  setHabitatSize((size) => ({ width: size.height, height: size.width }))
+                }
+                aria-label="Rotate habitat"
+              >
+                ⟳ Rotate
+              </button>
+            </div>
+          )}
         </div>
         <nav className="toolbar bevel" aria-label="Build tools">
           <ToolButton
@@ -2317,7 +2486,7 @@ export default function App() {
           <ToolButton
             active={tool === "path"}
             icon="▦"
-            label="Path · $10"
+            label="Path"
             onClick={() => setTool("path")}
           />
           <ToolButton
@@ -2348,6 +2517,20 @@ export default function App() {
             icon="⌫"
             label="Demolish"
             onClick={() => setTool("bulldoze")}
+          />
+          <HistoryButton
+            icon="↶"
+            label="Undo"
+            shortcut="Ctrl+Z"
+            step={snapshot.construction.undo}
+            onClick={undoConstruction}
+          />
+          <HistoryButton
+            icon="↷"
+            label="Redo"
+            shortcut="Ctrl+Shift+Z"
+            step={snapshot.construction.redo}
+            onClick={redoConstruction}
           />
         </nav>
       </footer>
@@ -2494,6 +2677,39 @@ function ToolButton({
 }) {
   return (
     <button className={`tool ${active ? "active" : ""}`} onClick={onClick}>
+      <span>{icon}</span>
+      <small>{label}</small>
+    </button>
+  )
+}
+
+/** Undo or redo of the latest construction step; Rust says whether it can run and why not. */
+function HistoryButton({
+  icon,
+  label,
+  shortcut,
+  step,
+  onClick,
+}: {
+  icon: string
+  label: string
+  shortcut: string
+  step: ConstructionStep | null
+  onClick: () => void
+}) {
+  const title = step
+    ? `${label} ${step.label}${step.cost_cents > 0 ? ` (${money(step.cost_cents)})` : ""} · ${shortcut}${
+        step.ok ? "" : ` · ${step.message}`
+      }`
+    : `Nothing to ${label.toLowerCase()} · ${shortcut}`
+  return (
+    <button
+      className={`tool history ${step && !step.ok ? "blocked" : ""}`}
+      onClick={onClick}
+      disabled={!step}
+      title={title}
+      aria-label={label}
+    >
       <span>{icon}</span>
       <small>{label}</small>
     </button>
