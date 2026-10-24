@@ -2,16 +2,18 @@ mod alerts;
 mod care;
 mod construction;
 mod content;
+mod enclosure;
 mod gate;
 mod overlay;
 mod save;
 mod scenario;
 mod session;
+mod shape;
 mod tutorial;
 mod zone;
 
 use content::{Catalog, Facility, Species};
-use gate::gate_access_message;
+use enclosure::PlacementEvaluation;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
@@ -327,14 +329,6 @@ impl HabitatOrientation {
             Self::Vertical => (LEGACY_HABITAT_HEIGHT, LEGACY_HABITAT_WIDTH),
         }
     }
-
-    fn for_dimensions(width: u32, height: u32) -> Self {
-        if height > width {
-            Self::Vertical
-        } else {
-            Self::Horizontal
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -426,11 +420,8 @@ impl Species {
 #[serde(deny_unknown_fields)]
 struct Habitat {
     id: u32,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    orientation: HabitatOrientation,
+    /// The enclosed tiles, row-major: one connected enclosure without holes (#95).
+    tiles: Vec<Position>,
     species: Option<Species>,
     animals: u32,
     welfare: u32,
@@ -446,7 +437,11 @@ struct Habitat {
 
 impl Habitat {
     fn area(&self) -> u32 {
-        self.width.saturating_mul(self.height)
+        u32::try_from(self.tiles.len()).unwrap_or(u32::MAX)
+    }
+
+    fn contains(&self, tile: Position) -> bool {
+        shape::contains(&self.tiles, tile)
     }
 
     fn capacity(&self) -> u32 {
@@ -454,11 +449,12 @@ impl Habitat {
     }
 
     fn fence_length(&self) -> u32 {
-        self.width.saturating_add(self.height).saturating_mul(2)
+        u32::try_from(self.fence_segments().len()).unwrap_or(u32::MAX)
     }
 
+    /// The fence clockwise from the north side of the first row-major tile.
     fn fence_segments(&self) -> Vec<FenceSegment> {
-        fence_segments(self.x, self.y, self.width, self.height)
+        shape::clockwise_fence(&self.tiles).unwrap_or_default()
     }
 
     fn appeal(&self) -> u32 {
@@ -628,120 +624,12 @@ impl Guest {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct PlacementEvaluation {
-    ok: bool,
-    message: String,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    orientation: HabitatOrientation,
-    cost_cents: i64,
-    occupied_tiles: Vec<Position>,
-    fence_segments: Vec<FenceSegment>,
-}
-
-impl PlacementEvaluation {
-    fn valid(
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        occupied_tiles: Vec<Position>,
-        fence_segments: Vec<FenceSegment>,
-    ) -> Self {
-        Self {
-            ok: true,
-            message: "Fence loop can be built here".to_owned(),
-            x,
-            y,
-            width,
-            height,
-            orientation: HabitatOrientation::for_dimensions(width, height),
-            cost_cents: 0,
-            occupied_tiles,
-            fence_segments,
-        }
-    }
-
-    /// A rejection before the candidate is known to be a bounded rectangle inside the park, so
-    /// no geometry is materialized for it.
-    fn invalid(message: impl Into<String>, x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self {
-            ok: false,
-            message: message.into(),
-            x,
-            y,
-            width,
-            height,
-            orientation: HabitatOrientation::for_dimensions(width, height),
-            cost_cents: 0,
-            occupied_tiles: Vec::new(),
-            fence_segments: Vec::new(),
-        }
-    }
-
-    /// A rejection of an in-park, area-bounded candidate. It keeps the candidate footprint and
-    /// fence so the preview can show where the rejected loop would have gone.
-    fn rejected(
-        message: impl Into<String>,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        occupied_tiles: Vec<Position>,
-    ) -> Self {
-        Self {
-            ok: false,
-            message: message.into(),
-            fence_segments: fence_segments(x, y, width, height),
-            occupied_tiles,
-            ..Self::invalid("", x, y, width, height)
-        }
-    }
-}
-
 fn normalized_rect(ax: u32, ay: u32, bx: u32, by: u32) -> (u32, u32, u32, u32) {
     let x = ax.min(bx);
     let y = ay.min(by);
     let width = ax.abs_diff(bx).saturating_add(1);
     let height = ay.abs_diff(by).saturating_add(1);
     (x, y, width, height)
-}
-
-fn fence_segments(x: u32, y: u32, width: u32, height: u32) -> Vec<FenceSegment> {
-    let mut segments = Vec::with_capacity(
-        usize::try_from(width.saturating_add(height).saturating_mul(2)).unwrap_or(0),
-    );
-    let right = x + width - 1;
-    let bottom = y + height - 1;
-
-    for tile_x in x..=right {
-        segments.push(FenceSegment {
-            x: tile_x,
-            y,
-            side: FenceSide::North,
-        });
-        segments.push(FenceSegment {
-            x: tile_x,
-            y: bottom,
-            side: FenceSide::South,
-        });
-    }
-    for tile_y in y..=bottom {
-        segments.push(FenceSegment {
-            x,
-            y: tile_y,
-            side: FenceSide::West,
-        });
-        segments.push(FenceSegment {
-            x: right,
-            y: tile_y,
-            side: FenceSide::East,
-        });
-    }
-    segments
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -943,167 +831,6 @@ impl GameState {
         self.cash_cents = cash;
         self.finance_today = ledger;
         true
-    }
-
-    fn habitat_cost(&self, width: u32, height: u32) -> i64 {
-        let costs = &self.catalog.balance.construction;
-        let area = i64::from(width).saturating_mul(i64::from(height));
-        let perimeter = i64::from(width.saturating_add(height).saturating_mul(2));
-        costs
-            .habitat_base_cents
-            .saturating_add(area.saturating_mul(costs.habitat_tile_cents))
-            .saturating_add(perimeter.saturating_mul(costs.fence_segment_cents))
-    }
-
-    /// Every evaluation, accepted or not, previews the catalog price of its fence loop.
-    fn evaluate_habitat_rect(&self, ax: u32, ay: u32, bx: u32, by: u32) -> PlacementEvaluation {
-        let mut evaluation = self.habitat_rect_placement(ax, ay, bx, by);
-        evaluation.cost_cents = self.habitat_cost(evaluation.width, evaluation.height);
-        evaluation
-    }
-
-    fn habitat_rect_placement(&self, ax: u32, ay: u32, bx: u32, by: u32) -> PlacementEvaluation {
-        let (x, y, width, height) = normalized_rect(ax, ay, bx, by);
-        if width < MIN_HABITAT_DIMENSION || height < MIN_HABITAT_DIMENSION {
-            return PlacementEvaluation::invalid(
-                format!(
-                    "Draw at least a {MIN_HABITAT_DIMENSION}×{MIN_HABITAT_DIMENSION} fence loop"
-                ),
-                x,
-                y,
-                width,
-                height,
-            );
-        }
-
-        let area = u64::from(width).saturating_mul(u64::from(height));
-        if area > MAX_HABITAT_AREA {
-            return PlacementEvaluation::invalid(
-                format!(
-                    "This fence encloses {area} tiles; the current limit is {MAX_HABITAT_AREA}"
-                ),
-                x,
-                y,
-                width,
-                height,
-            );
-        }
-
-        let in_bounds = x
-            .checked_add(width)
-            .is_some_and(|right| right <= self.width)
-            && y.checked_add(height)
-                .is_some_and(|bottom| bottom <= self.height);
-        if !in_bounds {
-            return PlacementEvaluation::invalid(
-                "The fence would extend outside the park",
-                x,
-                y,
-                width,
-                height,
-            );
-        }
-
-        let mut occupied_tiles = Vec::with_capacity((width * height) as usize);
-        for tile_y in y..y + height {
-            for tile_x in x..x + width {
-                occupied_tiles.push(Position {
-                    x: tile_x,
-                    y: tile_y,
-                });
-            }
-        }
-
-        if occupied_tiles
-            .iter()
-            .any(|tile| self.tile(tile.x, tile.y) != Some(TileKind::Grass))
-        {
-            return PlacementEvaluation::rejected(
-                "The enclosed area must be clear grass",
-                x,
-                y,
-                width,
-                height,
-                occupied_tiles,
-            );
-        }
-        if let Some(habitat_id) = occupied_tiles
-            .iter()
-            .find_map(|tile| self.service_gate_owner(*tile))
-        {
-            return PlacementEvaluation::rejected(
-                gate_access_message(habitat_id),
-                x,
-                y,
-                width,
-                height,
-                occupied_tiles,
-            );
-        }
-
-        let touches_path = occupied_tiles.iter().any(|tile| {
-            self.neighbors(*tile).into_iter().any(|neighbor| {
-                matches!(
-                    self.tile(neighbor.x, neighbor.y),
-                    Some(TileKind::Path | TileKind::Entrance)
-                )
-            })
-        });
-        if !touches_path {
-            return PlacementEvaluation::rejected(
-                "The fence needs at least one path along its outside edge",
-                x,
-                y,
-                width,
-                height,
-                occupied_tiles,
-            );
-        }
-
-        if self.cash_cents < self.habitat_cost(width, height) {
-            return PlacementEvaluation::rejected(
-                "Not enough cash",
-                x,
-                y,
-                width,
-                height,
-                occupied_tiles,
-            );
-        }
-
-        PlacementEvaluation::valid(
-            x,
-            y,
-            width,
-            height,
-            occupied_tiles,
-            fence_segments(x, y, width, height),
-        )
-    }
-
-    fn evaluate_habitat(
-        &self,
-        x: u32,
-        y: u32,
-        orientation: HabitatOrientation,
-    ) -> PlacementEvaluation {
-        let (width, height) = orientation.dimensions();
-        self.evaluate_habitat_rect(
-            x,
-            y,
-            x.saturating_add(width - 1),
-            y.saturating_add(height - 1),
-        )
-    }
-
-    fn place_habitat(&mut self, x: u32, y: u32, orientation: HabitatOrientation) -> ActionResult {
-        let (width, height) = orientation.dimensions();
-        self.place_habitat_rect(
-            x,
-            y,
-            x.saturating_add(width - 1),
-            y.saturating_add(height - 1),
-        )
     }
 
     fn adopt(&mut self, habitat_id: u32, species_name: &str) -> ActionResult {
@@ -2494,6 +2221,9 @@ impl GameState {
         )
     }
 
+    /// Whether a guest at `viewpoint`, looking over the fence on its `side`, sees `target`:
+    /// enclosed tiles up to [`VIEWING_DEPTH_TILES`] past that fence and within
+    /// [`VIEWING_HALF_WIDTH_TILES`] to either side (#81), for any enclosure shape.
     fn viewing_tile_visible(
         &self,
         habitat: &Habitat,
@@ -2501,27 +2231,38 @@ impl GameState {
         side: FenceSide,
         target: Position,
     ) -> bool {
-        let right = habitat.x.saturating_add(habitat.width.saturating_sub(1));
-        let bottom = habitat.y.saturating_add(habitat.height.saturating_sub(1));
-        if target.x < habitat.x || target.x > right || target.y < habitat.y || target.y > bottom {
+        if !habitat.contains(target) {
             return false;
         }
-
+        let depth = |fence: u32, toward: u32, inward_positive: bool| {
+            if inward_positive {
+                toward.checked_sub(fence)
+            } else {
+                fence.checked_sub(toward)
+            }
+            .is_some_and(|depth| depth < VIEWING_DEPTH_TILES)
+        };
         match side {
             FenceSide::North => {
-                target.y.saturating_sub(habitat.y) < VIEWING_DEPTH_TILES
+                depth(viewpoint.y + 1, target.y, true)
                     && target.x.abs_diff(viewpoint.x) <= VIEWING_HALF_WIDTH_TILES
             }
             FenceSide::South => {
-                bottom.saturating_sub(target.y) < VIEWING_DEPTH_TILES
+                viewpoint
+                    .y
+                    .checked_sub(1)
+                    .is_some_and(|fence| depth(fence, target.y, false))
                     && target.x.abs_diff(viewpoint.x) <= VIEWING_HALF_WIDTH_TILES
             }
             FenceSide::West => {
-                target.x.saturating_sub(habitat.x) < VIEWING_DEPTH_TILES
+                depth(viewpoint.x + 1, target.x, true)
                     && target.y.abs_diff(viewpoint.y) <= VIEWING_HALF_WIDTH_TILES
             }
             FenceSide::East => {
-                right.saturating_sub(target.x) < VIEWING_DEPTH_TILES
+                viewpoint
+                    .x
+                    .checked_sub(1)
+                    .is_some_and(|fence| depth(fence, target.x, false))
                     && target.y.abs_diff(viewpoint.y) <= VIEWING_HALF_WIDTH_TILES
             }
         }
@@ -2534,33 +2275,31 @@ impl GameState {
         viewpoint: Position,
         side: FenceSide,
     ) -> Vec<Position> {
-        let mut positions = Vec::new();
-        for y in habitat.y..habitat.y.saturating_add(habitat.height) {
-            for x in habitat.x..habitat.x.saturating_add(habitat.width) {
-                let position = Position { x, y };
-                if self.viewing_tile_visible(habitat, viewpoint, side, position) {
-                    positions.push(position);
-                }
-            }
-        }
-        positions
+        habitat
+            .tiles
+            .iter()
+            .copied()
+            .filter(|tile| self.viewing_tile_visible(habitat, viewpoint, side, *tile))
+            .collect()
     }
 
+    /// Animals roam the tiles clear of the fence, or the whole enclosure when it is too narrow.
     fn animal_position(&self, habitat: &Habitat, slot: u32) -> Position {
-        let inner_width = habitat.width.saturating_sub(2).max(1);
-        let inner_height = habitat.height.saturating_sub(2).max(1);
-        let inner_area = inner_width.saturating_mul(inner_height).max(1);
+        let inner = shape::inner_tiles(&habitat.tiles);
+        let roam = if inner.is_empty() {
+            &habitat.tiles
+        } else {
+            &inner
+        };
+        let Some(count) = u32::try_from(roam.len()).ok().filter(|count| *count > 0) else {
+            return Position { x: 0, y: 0 };
+        };
         let time_step = self.minute_of_day / 2;
         let index = time_step
             .saturating_add(slot.saturating_mul(3))
             .saturating_add(habitat.id.saturating_mul(5))
-            % inner_area;
-        let local_x = index % inner_width;
-        let local_y = index / inner_width;
-        Position {
-            x: habitat.x.saturating_add(1).saturating_add(local_x),
-            y: habitat.y.saturating_add(1).saturating_add(local_y),
-        }
+            % count;
+        roam[index as usize]
     }
 
     fn visible_animals_from(&self, habitat: &Habitat, viewpoint: Position, side: FenceSide) -> u32 {
@@ -2578,37 +2317,41 @@ impl GameState {
             .unwrap_or(u32::MAX)
     }
 
+    /// The outside tiles along the fence with the side each looks over, north side first, then
+    /// east, south and west. A tile facing two fence segments in a notch views over the first.
+    fn fence_outside_tiles(&self, habitat: &Habitat) -> Vec<(Position, FenceSide)> {
+        let mut candidates: Vec<(Position, FenceSide)> = habitat
+            .fence_segments()
+            .into_iter()
+            .filter_map(|segment| {
+                let outside = self.gate_access_tile(segment)?;
+                Some((outside, segment.side))
+            })
+            .collect();
+        let rank = |side: FenceSide| match side {
+            FenceSide::North => 0,
+            FenceSide::East => 1,
+            FenceSide::South => 2,
+            FenceSide::West => 3,
+        };
+        candidates.sort_by_key(|(position, side)| match side {
+            FenceSide::North | FenceSide::South => (rank(*side), position.y, position.x),
+            FenceSide::East | FenceSide::West => (rank(*side), position.x, position.y),
+        });
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|(position, _)| seen.insert((position.x, position.y)));
+        candidates
+    }
+
     fn viewing_side_for_position(
         &self,
         habitat: &Habitat,
         position: Position,
     ) -> Option<FenceSide> {
-        let right = habitat.x.saturating_add(habitat.width.saturating_sub(1));
-        let bottom = habitat.y.saturating_add(habitat.height.saturating_sub(1));
-
-        if habitat.y > 0 && position.y == habitat.y - 1 && (habitat.x..=right).contains(&position.x)
-        {
-            return Some(FenceSide::North);
-        }
-        if right.saturating_add(1) < self.width
-            && position.x == right + 1
-            && (habitat.y..=bottom).contains(&position.y)
-        {
-            return Some(FenceSide::East);
-        }
-        if bottom.saturating_add(1) < self.height
-            && position.y == bottom + 1
-            && (habitat.x..=right).contains(&position.x)
-        {
-            return Some(FenceSide::South);
-        }
-        if habitat.x > 0
-            && position.x == habitat.x - 1
-            && (habitat.y..=bottom).contains(&position.y)
-        {
-            return Some(FenceSide::West);
-        }
-        None
+        self.fence_outside_tiles(habitat)
+            .into_iter()
+            .find(|(outside, _)| *outside == position)
+            .map(|(_, side)| side)
     }
 
     fn viewing_spot(
@@ -2648,44 +2391,7 @@ impl GameState {
         habitat: &Habitat,
         viewing_occupancy: &ViewingOccupancy,
     ) -> Vec<ViewingSpot> {
-        let mut candidates = Vec::new();
-        let right = habitat.x.saturating_add(habitat.width.saturating_sub(1));
-        let bottom = habitat.y.saturating_add(habitat.height.saturating_sub(1));
-
-        if habitat.y > 0 {
-            for x in habitat.x..=right {
-                candidates.push((
-                    Position {
-                        x,
-                        y: habitat.y - 1,
-                    },
-                    FenceSide::North,
-                ));
-            }
-        }
-        if right.saturating_add(1) < self.width {
-            for y in habitat.y..=bottom {
-                candidates.push((Position { x: right + 1, y }, FenceSide::East));
-            }
-        }
-        if bottom.saturating_add(1) < self.height {
-            for x in habitat.x..=right {
-                candidates.push((Position { x, y: bottom + 1 }, FenceSide::South));
-            }
-        }
-        if habitat.x > 0 {
-            for y in habitat.y..=bottom {
-                candidates.push((
-                    Position {
-                        x: habitat.x - 1,
-                        y,
-                    },
-                    FenceSide::West,
-                ));
-            }
-        }
-
-        candidates
+        self.fence_outside_tiles(habitat)
             .into_iter()
             .filter(|(position, _)| self.is_walkable(*position))
             .map(|(position, side)| {
@@ -3260,13 +2966,14 @@ impl GameState {
                 let gate_reachable = self.service_gate_reachable(habitat);
                 let staffing = self.staffing_problem(habitat);
                 let work_zone_id = self.habitat_zone(habitat);
+                let bounds = shape::bounds(&habitat.tiles);
                 HabitatView {
                     id: habitat.id,
-                    x: habitat.x,
-                    y: habitat.y,
-                    width: habitat.width,
-                    height: habitat.height,
-                    orientation: habitat.orientation,
+                    x: bounds.0,
+                    y: bounds.1,
+                    width: bounds.2,
+                    height: bounds.3,
+                    tiles: habitat.tiles.clone(),
                     footprint_area: habitat.area(),
                     fence_length: habitat.fence_length(),
                     fence_segments: habitat.fence_segments(),
@@ -3600,7 +3307,8 @@ struct HabitatView {
     y: u32,
     width: u32,
     height: u32,
-    orientation: HabitatOrientation,
+    /// The enclosed tiles, row-major; x, y, width and height are their bounding box.
+    tiles: Vec<Position>,
     footprint_area: u32,
     fence_length: u32,
     fence_segments: Vec<FenceSegment>,
@@ -3931,17 +3639,19 @@ impl ZooGame {
                 .map(str::to_owned)
                 .ok_or_else(|| format!("{kind}: missing text argument {name}"))
         };
+        let points = || -> Result<Vec<u32>, String> {
+            args["points"]
+                .as_array()
+                .ok_or_else(|| format!("{kind}: missing points"))?
+                .iter()
+                .map(|value| value.as_u64().and_then(|value| u32::try_from(value).ok()))
+                .collect::<Option<Vec<u32>>>()
+                .ok_or_else(|| format!("{kind}: points must be grid coordinates"))
+        };
         Ok(match kind {
-            "build_path_stroke" => {
-                let points = args["points"]
-                    .as_array()
-                    .ok_or("build_path_stroke: missing points")?
-                    .iter()
-                    .map(|value| value.as_u64().and_then(|value| u32::try_from(value).ok()))
-                    .collect::<Option<Vec<u32>>>()
-                    .ok_or("build_path_stroke: points must be tile coordinates")?;
-                self.build_path_stroke(points)
-            }
+            "build_path_stroke" => self.build_path_stroke(points()?),
+            "place_habitat_outline" => self.place_habitat_outline(points()?),
+            "reshape_habitat" => self.reshape_habitat(number("habitat_id")?, points()?),
             "undo_construction" => self.undo_construction(),
             "redo_construction" => self.redo_construction(),
             "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
@@ -4253,6 +3963,35 @@ impl ZooGame {
         })
     }
 
+    /// Previews a habitat inside the closed fence outline through `points` (flat `x, y` grid
+    /// corner pairs; corner `(x, y)` is the north-west corner of tile `(x, y)`).
+    pub fn evaluate_habitat_outline(&self, points: Vec<u32>) -> String {
+        serde_json::to_string(&self.state.evaluate_habitat_outline(&points))
+            .expect("placement evaluation serialization is infallible")
+    }
+
+    /// Builds a habitat inside a closed fence outline as one transaction.
+    pub fn place_habitat_outline(&mut self, points: Vec<u32>) -> String {
+        let args = serde_json::json!({ "points": points });
+        self.command("place_habitat_outline", args, |state| {
+            state.place_habitat_outline(&points)
+        })
+    }
+
+    /// Previews moving a habitat's fence onto a closed outline.
+    pub fn evaluate_habitat_reshape(&self, habitat_id: u32, points: Vec<u32>) -> String {
+        serde_json::to_string(&self.state.evaluate_habitat_reshape(habitat_id, &points))
+            .expect("placement evaluation serialization is infallible")
+    }
+
+    /// Moves a habitat's fence onto a closed outline, keeping its animals, care and staff.
+    pub fn reshape_habitat(&mut self, habitat_id: u32, points: Vec<u32>) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "points": points });
+        self.command("reshape_habitat", args, |state| {
+            state.reshape_habitat(habitat_id, &points)
+        })
+    }
+
     pub fn evaluate_habitat(&self, x: u32, y: u32, orientation: u8) -> String {
         serde_json::to_string(&self.state.evaluate_habitat(
             x,
@@ -4470,11 +4209,7 @@ mod tests {
     fn test_habitat(x: u32, y: u32, width: u32, height: u32) -> Habitat {
         Habitat {
             id: 1,
-            x,
-            y,
-            width,
-            height,
-            orientation: HabitatOrientation::for_dimensions(width, height),
+            tiles: shape::rect_tiles(x, y, width, height),
             species: Some(Species::parse("capybara").expect("default catalog capybara")),
             animals: 1,
             welfare: 100,
@@ -4578,7 +4313,13 @@ mod tests {
             );
             assert_eq!(
                 evaluation.fence_segments,
-                fence_segments(evaluation.x, evaluation.y, width, height),
+                crate::shape::clockwise_fence(&crate::shape::rect_tiles(
+                    evaluation.x,
+                    evaluation.y,
+                    width,
+                    height
+                ))
+                .unwrap(),
                 "{message}"
             );
         }
@@ -4675,8 +4416,9 @@ mod tests {
         assert_ne!(before, after);
         for animal in first.animal_views() {
             let habitat = &first.habitats[0];
-            assert!((habitat.x + 1..habitat.x + habitat.width - 1).contains(&animal.x));
-            assert!((habitat.y + 1..habitat.y + habitat.height - 1).contains(&animal.y));
+            let (x, y, width, height) = shape::bounds(&habitat.tiles);
+            assert!((x + 1..x + width - 1).contains(&animal.x));
+            assert!((y + 1..y + height - 1).contains(&animal.y));
         }
     }
 
@@ -4760,8 +4502,6 @@ mod tests {
                 test_habitat(3, 8, 5, 3),
                 Habitat {
                     id: 2,
-                    x: 3,
-                    y: 4,
                     ..test_habitat(3, 4, 5, 3)
                 },
             ],

@@ -29,33 +29,6 @@ impl GateEvaluation {
     }
 }
 
-/// The habitat's fence segments in clockwise order starting at its north-west corner.
-fn clockwise_segments(x: u32, y: u32, width: u32, height: u32) -> Vec<FenceSegment> {
-    let right = x + width - 1;
-    let bottom = y + height - 1;
-    let north = (x..=right).map(|tile_x| FenceSegment {
-        x: tile_x,
-        y,
-        side: FenceSide::North,
-    });
-    let east = (y..=bottom).map(|tile_y| FenceSegment {
-        x: right,
-        y: tile_y,
-        side: FenceSide::East,
-    });
-    let south = (x..=right).rev().map(|tile_x| FenceSegment {
-        x: tile_x,
-        y: bottom,
-        side: FenceSide::South,
-    });
-    let west = (y..=bottom).rev().map(|tile_y| FenceSegment {
-        x,
-        y: tile_y,
-        side: FenceSide::West,
-    });
-    north.chain(east).chain(south).chain(west).collect()
-}
-
 impl GameState {
     pub(crate) fn depot_position(&self) -> Position {
         self.depot
@@ -113,14 +86,9 @@ impl GameState {
             })
     }
 
-    pub(crate) fn default_service_gate(
-        &self,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-    ) -> FenceSegment {
-        let segments = clockwise_segments(x, y, width, height);
+    /// The gate for a new fence (`segments` clockwise): the usable segment nearest the depot
+    /// by path, else the first usable one, else the first.
+    pub(crate) fn default_service_gate(&self, segments: &[FenceSegment]) -> FenceSegment {
         let depot_access = self.depot_access_tiles();
         let nearest = segments
             .iter()
@@ -157,18 +125,18 @@ impl GameState {
         let tapped = Position { x, y };
         // A tapped border tile or the tile just outside it selects that segment; usable and
         // path-facing segments win at corners, then clockwise order.
-        let candidates: Vec<(usize, FenceSegment)> =
-            clockwise_segments(habitat.x, habitat.y, habitat.width, habitat.height)
-                .into_iter()
-                .enumerate()
-                .filter(|(_, segment)| {
-                    Position {
-                        x: segment.x,
-                        y: segment.y,
-                    } == tapped
-                        || self.gate_access_tile(*segment) == Some(tapped)
-                })
-                .collect();
+        let candidates: Vec<(usize, FenceSegment)> = habitat
+            .fence_segments()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, segment)| {
+                Position {
+                    x: segment.x,
+                    y: segment.y,
+                } == tapped
+                    || self.gate_access_tile(*segment) == Some(tapped)
+            })
+            .collect();
         let Some((_, segment)) = candidates.into_iter().min_by_key(|(order, segment)| {
             let walkable = self
                 .gate_access_tile(*segment)
@@ -255,7 +223,8 @@ mod tests {
 
     #[test]
     fn clockwise_order_starts_north_west_and_walks_the_perimeter() {
-        let order: Vec<_> = clockwise_segments(1, 1, 2, 2)
+        let order: Vec<_> = crate::shape::clockwise_fence(&crate::shape::rect_tiles(1, 1, 2, 2))
+            .unwrap()
             .into_iter()
             .map(|segment| (segment.x, segment.y, segment.side))
             .collect();
