@@ -2,7 +2,7 @@
 
 Authority: issue #75, the existing validator `tools/build_assets.py` (`validate_outputs()`), the protected #73 contract (`docs/acceptance/asset-attachments.md`, `tools/tests/attachment_pose_blender.py`), `assets/3d/README.md`, `AGENTS.md` and `docs/architecture.md`. Baseline is default `f6214541cfee896490b8133ca89c10ec1ebd927f`. This contract was authored in an independent acceptance context before any workflow, Makefile or validator change. Shared conventions resolved without diagnostics at sourceRevision `5ad0db36974c8b0e5f9812c90ee34a4f227852c3`; all 25 resolved files and local AGENTS/CLAUDE were read.
 
-This is verification integration only. It does not decide #74's editable-source authority, does not approve art, and does not move reusable processing or provenance into Zoo.
+This is verification integration only. It does not approve art, and does not move reusable processing or provenance into Zoo.
 
 ## Required check
 
@@ -118,7 +118,7 @@ The reusable-workflow wiring also rejects missing path classification, a disconn
 | No Blender or new environment overhead on unrelated PRs | Static invariant: `verify.yml`, unscoped triggers and the `make verify` closure stay Blender-free. Hosted proof is a review item |
 | A broken model/buffer or over-budget output fails | Negative harness: 14 detection cases plus the positive control; `catalog_budget_exceeded` is RED. Fail-closed exit status is covered by the static invariant (`--python-exit-code 1`) and the observed `make assets-validate` rc 0 |
 | Document actual coverage; SVG replay is not 3D verification | This file's coverage statement below. The implementer updates `assets/3d/README.md` and the `AGENTS.md` verification list. Review item |
-| Semantic tests for #73 and #74 run in the check | #73: both all-ten attachment runs are required commands (static invariant). #74: **evidence gap**, see below |
+| Semantic tests for #73 and #74 run in the check | #73: both all-ten attachment runs are required commands (static invariant). #74: superseded, see below |
 | Reusable processing stays in asset-tooling; Zoo checks stay in Zoo | Review item. Every test here is a Zoo content check over Zoo's own catalog, and nothing here adds a processor, ledger or provenance format |
 
 ## Coverage statement (what a green check means)
@@ -138,7 +138,7 @@ The #73 contract adds attachment, pivot and rest-cycle semantics for the ten ani
 The following are **not** covered:
 
 - visual or art quality;
-- geometry, material or animation equivalence between source and production (#74);
+- geometry, material or animation equivalence between source and production (superseded for the placeholders; #112);
 - browser or renderer integration;
 - asset-tooling provenance receipts.
 
@@ -155,7 +155,7 @@ The existing `Verify` "Generate and replay-verify Zoo asset" step covers only th
 
 ## Evidence gaps
 
-- **#74 semantics.** #74 (development-source edits must reach production) is `needs-decision`: the owner has not chosen the authoring authority. This contract defines no #74 oracle. Once that decision is recorded, its regression joins this check under the same path scope. The check must not claim #74 coverage before then.
+- **#74 semantics.** Superseded by Atlas decisions 5.1.1 and 5.1.3. The generator is the only authority for these deprecated placeholders, and both stages are disposable outputs, so no development-source-edit oracle applies. The source-edit-reaches-runtime regression belongs to the asset-tooling consumer path in #112.
 - **`catalog_budget_exceeded`** is RED at baseline. The implementer must make the catalog's declared `triangleBudget` enforced: for example, reject any catalog entry whose `triangleBudget` differs from the authoritative budget, or whose observed triangles exceed it. The case must not be removed or its expectation weakened.
 - The byte-length defect is currently caught only by Blender's importer. A future importer that tolerates short buffers would turn `dev_truncated_buffer` RED. That RED would be correct and must not be waived.
 - Hosted path-filter behaviour, hosted RED, and the CI Blender download are review items 1–3; none are executed here.
