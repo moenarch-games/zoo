@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import type {
@@ -20,6 +20,12 @@ import type {
 } from "./game-types"
 import type { SceneOverlay } from "./park-scene"
 import type { ParkPick } from "./ParkView"
+import {
+  loadSceneryManifest,
+  SCENERY_PIECES,
+  type SceneryManifest,
+  type SceneryPiece,
+} from "./scenery-manifest"
 import init, { ZooGame } from "./wasm/zoo_core"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
@@ -2026,6 +2032,7 @@ export default function App() {
                 <button className="secondary" onClick={reset}>
                   Start new park
                 </button>
+                <SceneryCredits />
               </div>
             </>
           )}
@@ -2082,6 +2089,76 @@ export default function App() {
         </nav>
       </footer>
     </main>
+  )
+}
+
+const SCENERY_LABELS: Record<SceneryPiece, string> = {
+  "tree-round": "Round tree",
+  "tree-pine": "Pine tree",
+  "bush-round": "Berry bush",
+  "rock-round": "Boulder",
+}
+
+/** Lineage of the asset-tooling scenery around the park, as pinned and verified at build time. */
+function SceneryCredits() {
+  const [manifest, setManifest] = useState<SceneryManifest | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    // A failed load is reported by the park view, which cannot render without the scenery.
+    loadSceneryManifest().then(
+      (loaded) => !cancelled && setManifest(loaded),
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  if (!manifest) {
+    return null
+  }
+  const commit = manifest.assetToolingCommit
+  return (
+    <details className="scenery-credits" aria-label="Scenery credits">
+      <summary>Scenery credits</summary>
+      <p>
+        Trees, bushes and rocks outside the fence come from the asset-tooling{" "}
+        <a
+          href={`https://github.com/moritzbrantner/asset-tooling/releases/tag/${manifest.release}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {manifest.release}
+        </a>{" "}
+        release, built by{" "}
+        <a
+          href={`https://github.com/moritzbrantner/asset-tooling/blob/${commit}/${manifest.recipe.script}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {manifest.recipe.script}
+        </a>{" "}
+        in Blender {manifest.recipe.blenderVersion} at asset-tooling{" "}
+        <code>{commit.slice(0, 7)}</code>.
+      </p>
+      <p>Provenance: {manifest.provenance}.</p>
+      <div className="finance-grid">
+        <span>Release tar</span>
+        <code title={manifest.tarSha256}>{manifest.tarSha256.slice(0, 12)}</code>
+        <span>Recipe</span>
+        <code title={manifest.recipe.sha256}>{manifest.recipe.sha256.slice(0, 12)}</code>
+        {SCENERY_PIECES.map((piece) => (
+          <Fragment key={piece}>
+            <span>
+              {SCENERY_LABELS[piece]} · {manifest.pieces[piece].key}/
+              {manifest.pieces[piece].variant}
+            </span>
+            <code title={manifest.pieces[piece].sha256}>
+              {manifest.pieces[piece].sha256.slice(0, 12)}
+            </code>
+          </Fragment>
+        ))}
+      </div>
+    </details>
   )
 }
 

@@ -1,0 +1,43 @@
+{
+    "recipe": {
+        "script": "adapters/blender/zoo_scenery.py",
+        "sha256": "87e5c81357488f1230d853649609169c310d31f2e41aff9e082f1a17fa88058e",
+        "blenderVersion": "5.2.2"
+    },
+    "provenance": "procedural: original scripted geometry, no imported meshes, no third-party assets, no textures",
+    "release": "zoo-scenery",
+    "parts": {
+        "tree-round": {
+            "schemaVersion": 1,
+            "kind": "mesh",
+            "mediaType": "model/gltf-binary",
+            "sha256": "5468965e1ee37e7613f6844afe20285fbc682627b29f17dc7b6f467f8a6d875d",
+            "byteLength": 9912,
+            "metadata": {}
+        },
+        "tree-pine": {
+            "schemaVersion": 1,
+            "kind": "mesh",
+            "mediaType": "model/gltf-binary",
+            "sha256": "29cf204e03b43113800771d7d2268902094c833b472146241984ff6d7feb53ea",
+            "byteLength": 12680,
+            "metadata": {}
+        },
+        "bush-round": {
+            "schemaVersion": 1,
+            "kind": "mesh",
+            "mediaType": "model/gltf-binary",
+            "sha256": "0113e924f61720a388392ee6991ec19a5c52e80a267c98dd1ba2be2d30f7da4d",
+            "byteLength": 13600,
+            "metadata": {}
+        },
+        "rock-round": {
+            "schemaVersion": 1,
+            "kind": "mesh",
+            "mediaType": "model/gltf-binary",
+            "sha256": "53e0cf3208fc032e14f199a92eb870213e84d7e83f648105aa58fd5a0e0c7a88",
+            "byteLength": 5364,
+            "metadata": {}
+        }
+    }
+}

@@ -5,6 +5,7 @@
 /apps/web/src/wasm
 /apps/web/public/generated-assets/zoo-park-texture.svg
 /apps/web/public/generated-assets/.asset-tooling/
+/apps/web/public/zoo-scenery/
 .DS_Store
 
 # Disposable dependencies, builds, and browser evidence.

@@ -25,8 +25,9 @@ export default defineConfig({
   build: {
     target: "es2022",
     // three.js' WebGL core is ~540 kB minified on its own and cannot be split further; it is
-    // isolated in a vendor chunk (below) and loaded lazily with the park view.
-    chunkSizeWarningLimit: 600,
+    // isolated in a vendor chunk (below) and loaded lazily with the park view. Its GLTFLoader,
+    // which 3d-lab's static-GLB adapter uses for the scenery pieces, adds about 70 kB.
+    chunkSizeWarningLimit: 650,
     rolldownOptions: {
       output: {
         codeSplitting: {

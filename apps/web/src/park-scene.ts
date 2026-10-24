@@ -1,4 +1,5 @@
 import type { RendererSceneNode } from "@moritzbrantner/three-d-renderer"
+import { staticGlbSceneNodes } from "@moritzbrantner/three-d-renderer/static-glb"
 
 import type {
   Animal,
@@ -16,6 +17,8 @@ import type {
   WorkZoneEvaluation,
   ZoneBounds,
 } from "./game-types"
+import type { SceneryKit } from "./scenery-kit"
+import type { SceneryPiece } from "./scenery-manifest"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
 // Zoo scene composition: maps authoritative zoo-core state onto shared 3d-lab renderer nodes.
@@ -187,22 +190,7 @@ const GABLE_ROOF = facetedMesh("zoo:gable-roof:v1", [
   ],
 ])
 
-function coneTriangles(segments: number): Triangle[] {
-  const triangles: Triangle[] = []
-  for (let i = 0; i < segments; i += 1) {
-    const a = (i / segments) * Math.PI * 2
-    const b = ((i + 1) / segments) * Math.PI * 2
-    const pa: Vec3 = [Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5]
-    const pb: Vec3 = [Math.cos(b) * 0.5, 0, Math.sin(b) * 0.5]
-    triangles.push([pa, pb, [0, 1, 0]], [pa, [0, 0, 0], pb])
-  }
-  return triangles
-}
-
-/** Unit cone: base diameter 1 at y = 0, apex at y = 1. */
-const CONE = facetedMesh("zoo:cone7:v1", coneTriangles(7))
-
-/** Low-poly rock/bush blob: an irregular octahedron-ish hull, unit radius. */
+/** Low-poly rock blob: an irregular octahedron-ish hull, unit radius. */
 const BLOB = facetedMesh(
   "zoo:blob:v1",
   (() => {
@@ -405,9 +393,47 @@ function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Scenery outside the park: deterministic trees, bushes and rocks.
+// Scenery outside the park: deterministic placements of asset-tooling's `zoo-scenery` trees,
+// bushes and rocks (#59 S2). Each piece stands on its 1 m footprint centre, so a placement is
+// just the tile point, a yaw and a uniform scale; Zoo adds a blob shadow under each one.
 
-function sceneryNodes(snapshot: Snapshot): RendererSceneNode[] {
+/** Blob-shadow radius per unit scale; rocks and bushes sit flat enough to need none. */
+const SCENERY_SHADOW: Record<SceneryPiece, number> = {
+  "tree-round": 0.45,
+  "tree-pine": 0.38,
+  "bush-round": 0,
+  "rock-round": 0,
+}
+
+/** Cumulative share of each piece in the near ring; the remainder are rocks. */
+const NEAR_SCENERY_MIX: ReadonlyArray<readonly [number, SceneryPiece]> = [
+  [0.45, "tree-round"],
+  [0.8, "tree-pine"],
+  [0.93, "bush-round"],
+]
+
+function sceneryPiece(
+  kit: SceneryKit,
+  piece: SceneryPiece,
+  id: string,
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+): RendererSceneNode[] {
+  const nodes = staticGlbSceneNodes(kit.pieces[piece], {
+    id,
+    transform: {
+      translation: [x, 0, z],
+      rotationQuaternion: yawQuaternion(yaw),
+      scale: [scale, scale, scale],
+    },
+  })
+  const shadow = SCENERY_SHADOW[piece]
+  return shadow > 0 ? [blobShadow(`${id}:shadow`, x, z, shadow * scale), ...nodes] : nodes
+}
+
+function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] {
   const nodes: RendererSceneNode[] = []
   const side = entranceSide(snapshot)
   const outward = sideNormal(side)
@@ -435,16 +461,9 @@ function sceneryNodes(snapshot: Snapshot): RendererSceneNode[] {
       }
       const variant = hash(gx, gz, 4)
       const scale = 0.75 + hash(gx, gz, 5) * 0.6
-      const id = `scenery:${gx}:${gz}`
-      if (variant < 0.45) {
-        nodes.push(...roundTree(id, x, z, scale, hash(gx, gz, 6)))
-      } else if (variant < 0.8) {
-        nodes.push(...pineTree(id, x, z, scale))
-      } else if (variant < 0.93) {
-        nodes.push(...bush(id, x, z, scale))
-      } else {
-        nodes.push(rock(id, x, z, scale, hash(gx, gz, 7)))
-      }
+      const piece = NEAR_SCENERY_MIX.find(([limit]) => variant < limit)?.[1] ?? "rock-round"
+      const yaw = hash(gx, gz, 6) * Math.PI * 2
+      nodes.push(...sceneryPiece(kit, piece, `scenery:${gx}:${gz}`, x, z, scale, yaw))
     }
   }
   // Sparse outer woodland (trees only) so framings that fit a narrow viewport by width, such as
@@ -465,69 +484,15 @@ function sceneryNodes(snapshot: Snapshot): RendererSceneNode[] {
         continue
       }
       const scale = 1 + hash(gx, gz, 14) * 0.6
-      const id = `scenery:far:${gx}:${gz}`
-      if (hash(gx, gz, 15) < 0.5) {
-        nodes.push(...roundTree(id, x, z, scale, hash(gx, gz, 16)))
-      } else {
-        nodes.push(...pineTree(id, x, z, scale))
-      }
+      const piece: SceneryPiece = hash(gx, gz, 15) < 0.5 ? "tree-round" : "tree-pine"
+      const yaw = hash(gx, gz, 16) * Math.PI * 2
+      nodes.push(...sceneryPiece(kit, piece, `scenery:far:${gx}:${gz}`, x, z, scale, yaw))
     }
   }
   return nodes
 }
 
-function roundTree(id: string, x: number, z: number, scale: number, tint: number) {
-  const leaf = shade("#4f9444", (tint - 0.5) * 0.25)
-  const m = model(id, { x, z })
-  return [
-    blobShadow(`${id}:shadow`, x, z, 0.45 * scale),
-    m.cylinder("trunk", [0, 0.35 * scale, 0], 0.07 * scale, 0.7 * scale, "#7a5536"),
-    m.sphere("crown", [0, 0.95 * scale, 0], 0.42 * scale, leaf),
-    m.sphere(
-      "crown-top",
-      [0.12 * scale, 1.25 * scale, -0.05 * scale],
-      0.26 * scale,
-      shade(leaf, 0.08),
-    ),
-  ]
-}
-
-function pineTree(id: string, x: number, z: number, scale: number) {
-  const m = model(id, { x, z })
-  return [
-    blobShadow(`${id}:shadow`, x, z, 0.38 * scale),
-    m.cylinder("trunk", [0, 0.18 * scale, 0], 0.06 * scale, 0.36 * scale, "#6b4a30"),
-    m.mesh("lower", CONE, [0, 0.3 * scale, 0], [0.8 * scale, 0.9 * scale, 0.8 * scale], "#2f7449"),
-    m.mesh(
-      "upper",
-      CONE,
-      [0, 0.8 * scale, 0],
-      [0.58 * scale, 0.75 * scale, 0.58 * scale],
-      "#37825a",
-    ),
-  ]
-}
-
-function bush(id: string, x: number, z: number, scale: number) {
-  const m = model(id, { x, z }, hash(x, z) * 6)
-  return [
-    m.mesh(
-      "body",
-      BLOB,
-      [0, 0.12 * scale, 0],
-      [0.32 * scale, 0.32 * scale, 0.32 * scale],
-      "#5a9c48",
-    ),
-    m.mesh(
-      "side",
-      BLOB,
-      [0.22 * scale, 0.08 * scale, 0.1 * scale],
-      [0.2 * scale, 0.22 * scale, 0.2 * scale],
-      "#66a852",
-    ),
-  ]
-}
-
+/** The small code-built rocks inside habitats (habitat dressing stays Zoo-authored for now). */
 function rock(id: string, x: number, z: number, scale: number, turn: number) {
   return model(id, { x, z }, turn * 6).mesh(
     "stone",
@@ -1531,8 +1496,8 @@ export function sceneryKey(snapshot: Snapshot): string {
 }
 
 /** Trees, bushes, and rocks around the park; they change only when `sceneryKey` changes. */
-export function buildSceneryNodes(snapshot: Snapshot): RendererSceneNode[] {
-  return sceneryNodes(snapshot)
+export function buildSceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] {
+  return sceneryNodes(snapshot, kit)
 }
 
 /**
