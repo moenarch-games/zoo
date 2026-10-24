@@ -11,6 +11,56 @@ const FIXTURE_V5: &str = "tests/fixtures/save-v5.json";
 const FIXTURE_V6: &str = "tests/fixtures/save-v6.json";
 const FIXTURE_V7: &str = "tests/fixtures/save-v7.json";
 const FIXTURE_V8: &str = "tests/fixtures/save-v8.json";
+const FIXTURE_V9: &str = "tests/fixtures/save-v9.json";
+
+/// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
+/// becomes the flat shelter price again and environment content disappears.
+fn content_without_environment(content: &mut Value) {
+    let shelter = content["habitat_objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|object| object["key"] == "basic_shelter")
+        .unwrap()["build_cents"]
+        .clone();
+    let object = content.as_object_mut().unwrap();
+    object.remove("habitat_objects").unwrap();
+    let balance = object["balance"].as_object_mut().unwrap();
+    balance.remove("habitat_environment").unwrap();
+    balance["habitat_care"]
+        .as_object_mut()
+        .unwrap()
+        .insert("shelter_cents".to_owned(), shelter);
+    for species in object["species"].as_array_mut().unwrap() {
+        species.as_object_mut().unwrap().remove("habitat").unwrap();
+    }
+}
+
+/// Undoes the schema 8 → 9 migration (#97) on a saved document made without terrain edits:
+/// a habitat with a shelter object has a shelter again and environments disappear.
+fn environments_as_shelters(value: &mut Value) {
+    for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
+        if habitat["species"].is_object() {
+            habitat["species"]
+                .as_object_mut()
+                .unwrap()
+                .remove("habitat")
+                .unwrap();
+        }
+        let habitat = habitat.as_object_mut().unwrap();
+        let environment = habitat.remove("environment").unwrap();
+        assert_eq!(environment["terrain"], serde_json::json!([]));
+        let sheltered = !environment["objects"].as_array().unwrap().is_empty();
+        habitat.insert("has_shelter".to_owned(), sheltered.into());
+    }
+    value["park"]
+        .as_object_mut()
+        .unwrap()
+        .remove("next_habitat_object_id")
+        .unwrap();
+    content_without_environment(&mut value["content"]);
+    value["schema_version"] = 8.into();
+}
 
 /// Undoes the schema 6 → 7 migration (#96) on a saved document: every habitat's animal records
 /// become their count again and the park forgets its next animal ID.
@@ -48,7 +98,8 @@ fn rectangles_as_tiles(value: &mut Value) {
 /// fences move into the content, every species gains its minimum fence height and every
 /// habitat is fenced with the wooden rail at the old price and upkeep.
 fn fences_from_content(value: &mut Value) {
-    let built_in = json(&ZooGame::new().content_json());
+    let mut built_in = json(&ZooGame::new().content_json());
+    content_without_environment(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -93,6 +144,7 @@ fn the_schema_v5_fixture_moves_its_fence_into_content() {
 /// The current save of `game` with its animals counted, as schema 6 and older stored them.
 fn counted(game: &ZooGame) -> Value {
     let mut value = json(&game.save_json());
+    environments_as_shelters(&mut value);
     animals_as_counts(&mut value);
     value
 }
@@ -127,6 +179,10 @@ fn park() -> ZooGame {
     ok(game.set_keeper_schedule(2, "cleaning,inspection".to_owned(), 360, 1080));
     ok(game.adopt(1, "zebra".to_owned()));
     ok(game.adopt(2, "capybara".to_owned()));
+    // Habitat design (#97): a shelter, a log pile and a wading pool survive the reload.
+    ok(game.add_shelter(1));
+    ok(game.place_habitat_object(2, "log_pile".to_owned(), 7, 10));
+    ok(game.paint_habitat_terrain(2, vec![9, 9, 9, 10], "shallow_water".to_owned()));
     game
 }
 
@@ -229,7 +285,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 9.into()),
+            mutate(&|v| v["schema_version"] = 10.into()),
         ),
         (
             "invalid_save",
@@ -334,11 +390,41 @@ fn the_schema_v7_fixture_migrates_by_dropping_the_content_version() {
         .remove("schema_version")
         .unwrap();
     original["schema_version"] = 8.into();
-    assert_eq!(
-        json(&game.save_json()),
-        original,
-        "migration changes nothing else"
-    );
+    let mut saved = json(&game.save_json());
+    environments_as_shelters(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    game.tick(60);
+}
+
+/// Schema 8 shelters become basic shelter objects (#97) on each habitat's default tile, the
+/// content gains environment prices and requirements, and nothing else changes.
+#[test]
+fn the_schema_v8_fixture_migrates_shelters_to_habitat_objects() {
+    let mut original = json(&std::fs::read_to_string(FIXTURE_V8).unwrap());
+    // The recorded fixture predates shelters in its run; give its first habitat one.
+    original["park"]["habitats"][0]["has_shelter"] = true.into();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&original.to_string()));
+    let mut saved = json(&game.save_json());
+    let mut next_id = 1;
+    for (habitat, before) in saved["park"]["habitats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(original["park"]["habitats"].as_array().unwrap())
+    {
+        let objects = habitat["environment"]["objects"].as_array().unwrap();
+        assert_eq!(objects.len(), usize::from(before["has_shelter"] == true));
+        for object in objects {
+            assert_eq!(object["id"], next_id);
+            assert_eq!(object["definition"]["key"], "basic_shelter");
+            next_id += 1;
+        }
+    }
+    assert!(next_id > 1, "the fixture has a sheltered habitat");
+    assert_eq!(saved["park"]["next_habitat_object_id"], next_id);
+    environments_as_shelters(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
     game.tick(60);
 }
 
@@ -347,12 +433,12 @@ fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V8,
+            FIXTURE_V9,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V8).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V9).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));

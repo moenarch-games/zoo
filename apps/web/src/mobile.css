@@ -75,6 +75,47 @@
     display: none;
   }
 
+  /* Designing a habitat (#97) keeps only the brushes, the preview and the stop button, so the
+     habitat stays tappable above the sheet; the breakdown returns when designing stops. */
+  .side-panel.design-mode .habitat-card > :not(.habitat-design),
+  .side-panel.design-mode .habitat-design > :not(.design-brushes, .shop-row),
+  .side-panel.design-mode .design-brushes small,
+  .side-panel.design-mode .tutorial-card {
+    display: none;
+  }
+
+  .side-panel.design-mode .habitat-design .shop-row {
+    margin: 0 0 6px;
+    padding: 6px 9px;
+  }
+
+  /* One sideways-scrolling row of brushes keeps the sheet a few lines tall. */
+  .side-panel.design-mode .design-brushes {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .side-panel.design-mode .design-brushes [role="group"] {
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+
+  .side-panel.design-mode .design-brushes button {
+    white-space: nowrap;
+  }
+
+  .side-panel.design-mode .design-height {
+    flex-direction: row;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  .side-panel.design-mode .design-brushes > .guest-thought {
+    display: none;
+  }
+
   /* Moving a gate keeps only the prompt and the two actions, side by side, so most of the
      map stays tappable above the sheet. */
   .side-panel.gate-mode .gate-controls > :is(h3, dl),

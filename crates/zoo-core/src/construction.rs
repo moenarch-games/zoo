@@ -666,7 +666,7 @@ impl GameState {
             food: 100,
             water: 100,
             cleanliness: 100,
-            has_shelter: false,
+            environment: super::environment::Environment::default(),
             care_schedule: None,
             service_gate,
         });
@@ -737,8 +737,10 @@ impl GameState {
         let habitat = &mut self.habitats[index];
         habitat.tiles = tiles;
         habitat.service_gate = gate;
+        habitat.environment.keep_within(&habitat.tiles);
+        let area = habitat.roam_area();
         for animal in &mut habitat.animals {
-            animal.settle_into(&habitat.tiles);
+            animal.settle_into(&area);
         }
         self.refresh_guest_routes();
     }
@@ -1152,8 +1154,8 @@ impl GameState {
                 if habitat.species.is_some() || habitat.stocked() {
                     return used(format!("habitat #{id} has animals"));
                 }
-                if habitat.has_shelter {
-                    return used(format!("habitat #{id} has a shelter"));
+                if !habitat.environment.is_default() {
+                    return used(format!("habitat #{id} has terrain, shelters or enrichment"));
                 }
                 if habitat.care_schedule.is_some()
                     || self.care_jobs.iter().any(|job| job.habitat_id == *id)

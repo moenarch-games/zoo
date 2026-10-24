@@ -825,7 +825,10 @@ impl GameState {
                 *at_least,
             ),
             Goal::ShelteredHabitats { at_least } => count(
-                self.habitats.iter().filter(|h| h.has_shelter).count(),
+                self.habitats
+                    .iter()
+                    .filter(|h| h.has_reachable_shelter())
+                    .count(),
                 *at_least,
             ),
             Goal::SuitableGroups { at_least } => count(

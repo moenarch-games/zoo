@@ -185,12 +185,17 @@ fn expanding_a_populated_habitat_keeps_its_animals_care_and_identity() {
         "welfare",
         "food",
         "water",
-        "has_shelter",
         "care_schedule",
         "service_gate",
         "work_zone_id",
     ] {
         assert_eq!(after[key], before[key], "{key} survives the reshape");
+    }
+    for key in ["terrain", "objects"] {
+        assert_eq!(
+            after["environment"][key], before["environment"][key],
+            "environment {key} survives the reshape"
+        );
     }
     let inside = tiles(&after);
     for animal in snapshot(&game)["animals"].as_array().unwrap() {

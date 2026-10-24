@@ -10,11 +10,13 @@ import type {
   GateEvaluation,
   Guest,
   Habitat,
+  HabitatObject,
   OverlayView,
   PlacementEvaluation,
   Point,
   Snapshot,
   SpeciesKey,
+  Surface,
   Tile,
   Tool,
   WorkZoneEvaluation,
@@ -294,8 +296,8 @@ function model(prefix: string, origin: { x: number; z: number }, yaw = 0, lift =
   }
 }
 
-function blobShadow(id: string, x: number, z: number, radius: number, opacity = 0.22) {
-  return node(id, [x, 0.012, z], cylinderGeometry(radius, 0.01), "#1f3b24", { opacity })
+function blobShadow(id: string, x: number, z: number, radius: number, opacity = 0.22, lift = 0) {
+  return node(id, [x, 0.012 + lift, z], cylinderGeometry(radius, 0.01), "#1f3b24", { opacity })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -318,6 +320,85 @@ const HABITAT_GROUND: Record<SpeciesKey, Hex> = {
   giraffe: "#d3b06f",
   elephant: "#c9a46e",
   penguin: "#dfeaf0",
+}
+
+// ---------------------------------------------------------------------------------------------
+// Habitat environment (#97): zoo-core's terrain cells and furnishings, drawn as they are. The
+// renderer never invents water, shelter or height; it only colours and lifts what Rust holds.
+
+/** Visual lift of one elevation step, in world units (tiles are 1 wide). */
+const ELEVATION_STEP = 0.2
+
+const SURFACE_COLOR: Record<Surface, Hex> = {
+  grass: "#7aa75a",
+  sand: "#dcc48c",
+  shallow_water: "#79c0d8",
+  deep_water: "#3c7fae",
+}
+
+type Cell = { surface: Surface; height: number }
+
+const cellKey = (x: number, y: number) => `${x},${y}`
+
+/** Every non-default habitat cell in the park, keyed by tile. */
+function environmentCells(snapshot: Snapshot): Map<string, Cell> {
+  const cells = new Map<string, Cell>()
+  for (const habitat of snapshot.habitats) {
+    for (const cell of habitat.environment.terrain) {
+      cells.set(cellKey(cell.x, cell.y), { surface: cell.surface, height: cell.height })
+    }
+  }
+  return cells
+}
+
+function surfaceColor(surface: Surface, x: number, y: number): Hex {
+  const base = SURFACE_COLOR[surface]
+  return hash(x, y, 13) > 0.5 ? base : shade(base, -0.04)
+}
+
+/** How high an actor or object stands on a tile: raised land lifts it, water lowers it. */
+function standingLift(cells: Map<string, Cell>, x: number, y: number): number {
+  const cell = cells.get(cellKey(Math.floor(x), Math.floor(y)))
+  if (!cell) {
+    return 0
+  }
+  if (cell.surface === "shallow_water") {
+    return -0.02
+  }
+  return cell.height * ELEVATION_STEP
+}
+
+function habitatObjectNodes(
+  prefix: string,
+  object: HabitatObject,
+  lift: number,
+): RendererSceneNode[] {
+  const m = model(
+    `${prefix}:object:${object.id}`,
+    { x: object.x + 0.5, z: object.y + 0.5 },
+    Math.PI,
+    lift,
+  )
+  if (object.role === "shelter") {
+    const s = object.key === "large_shelter" ? 1.25 : 1
+    return [
+      m.box("back", [0, 0.3 * s, 0.18 * s], [0.72 * s, 0.6 * s, 0.08], "#8d6a45"),
+      m.box("left", [-0.32 * s, 0.3 * s, 0], [0.08, 0.6 * s, 0.44 * s], "#8d6a45"),
+      m.box("right", [0.32 * s, 0.3 * s, 0], [0.08, 0.6 * s, 0.44 * s], "#8d6a45"),
+      m.mesh("roof", GABLE_ROOF, [0, 0.6 * s, 0], [0.86 * s, 0.26 * s, 0.6 * s], "#6c7a4a"),
+    ]
+  }
+  if (object.key === "log_pile") {
+    return [
+      m.box("log-a", [0, 0.06, -0.1], [0.62, 0.12, 0.12], "#7a5536"),
+      m.box("log-b", [0, 0.06, 0.06], [0.58, 0.12, 0.12], "#86603d"),
+      m.box("log-c", [0, 0.17, -0.02], [0.54, 0.11, 0.11], "#6f4d30"),
+    ]
+  }
+  return [
+    m.sphere("boulder", [0, 0.2, 0], 0.26, "#9a958a", { scale: [1.2, 0.8, 1] }),
+    m.sphere("pebble", [0.24, 0.07, 0.16], 0.09, "#86817a"),
+  ]
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -365,6 +446,7 @@ function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
     ),
   )
 
+  const cells = environmentCells(snapshot)
   for (const tile of snapshot.tiles) {
     const raised = tile.kind === "path" || tile.kind === "entrance" || tile.kind === "concession"
     // Water sits a little lower than grass, paths and stands a little higher.
@@ -375,12 +457,25 @@ function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
     } else if (sunken) {
       height = 0.045
     }
+    let color = tileColor(tile, habitatSpecies)
+    // Habitat terrain (#97) is exactly zoo-core's cells: surface colour and height steps.
+    const cell = tile.kind === "habitat" ? cells.get(cellKey(tile.x, tile.y)) : undefined
+    if (cell) {
+      color = cell.surface === "grass" ? color : surfaceColor(cell.surface, tile.x, tile.y)
+      if (cell.surface === "shallow_water") {
+        height = 0.04
+      } else if (cell.surface === "deep_water") {
+        height = 0.02
+      } else {
+        height = 0.06 + cell.height * ELEVATION_STEP
+      }
+    }
     nodes.push(
       node(
         `tile:${tile.x}:${tile.y}`,
         [tile.x + 0.5, -0.06 + height / 2 + (raised ? 0.01 : 0), tile.y + 0.5],
         boxGeometry([1, height, 1]),
-        tileColor(tile, habitatSpecies),
+        color,
       ),
     )
   }
@@ -560,32 +655,31 @@ function habitatCentre(habitat: Habitat): { x: number; z: number } {
   return { x: tile.x + 0.5, z: tile.y + 0.5 }
 }
 
-/** The decorative pond of a water-loving species' habitat, if it has one. */
-function habitatPond(habitat: Habitat): { x: number; z: number; radius: number } | null {
-  if (
-    habitat.species !== "flamingo" &&
-    habitat.species !== "capybara" &&
-    habitat.species !== "penguin"
-  ) {
-    return null
-  }
-  if (!isRectangular(habitat)) {
-    const tile = middleTile(habitat)
-    return { x: tile.x + 0.5, z: tile.y + 0.5, radius: 0.36 }
-  }
-  return {
-    x: habitat.x + habitat.width * 0.62,
-    z: habitat.y + habitat.height * 0.6,
-    radius: Math.min(habitat.width, habitat.height) * 0.28,
-  }
+/** The habitat's real wading water (#97): one splash zone per shallow water tile. */
+function habitatPonds(habitat: Habitat): { id: string; x: number; z: number; radius: number }[] {
+  return habitat.environment.terrain
+    .filter((cell) => cell.surface === "shallow_water")
+    .map((cell) => ({
+      id: `habitat:${habitat.id}:pond:${cell.x}:${cell.y}`,
+      x: cell.x + 0.5,
+      z: cell.y + 0.5,
+      radius: 0.5,
+    }))
 }
 
-/** Decorative pieces inside a habitat, seeded by the habitat id and capped per habitat. */
+/**
+ * Decorative pieces inside a habitat, seeded by the habitat id and capped per habitat. They
+ * keep off water and furnishings and never stand in for either.
+ */
 function habitatPlacements(habitat: Habitat): SceneryPlacement[] {
-  const pond = habitatPond(habitat)
+  const blocked = new Set([
+    ...habitat.environment.terrain
+      .filter((cell) => cell.surface !== "grass" || cell.height > 0)
+      .map((cell) => cellKey(cell.x, cell.y)),
+    ...habitat.environment.objects.map((object) => cellKey(object.x, object.y)),
+  ])
   return habitatPieces(habitat).filter(
-    (placement) =>
-      !pond || Math.hypot(placement.x - pond.x, placement.z - pond.z) > pond.radius + 0.2,
+    (placement) => !blocked.has(cellKey(Math.floor(placement.x), Math.floor(placement.z))),
   )
 }
 
@@ -1211,38 +1305,17 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
     ),
   )
 
-  const water = habitatPond(habitat)
-  if (water) {
-    const pond = model(`${id}:pond`, { x: water.x, z: water.z })
-    const radius = water.radius
-    nodes.push(
-      pond.cylinder("rim", [0, 0.012, 0], radius + 0.08, 0.02, "#b9a987"),
-      pond.cylinder(
-        "water",
-        [0, 0.02, 0],
-        radius,
-        0.02,
-        habitat.species === "penguin" ? "#6fb6d6" : "#5aa7c4",
-      ),
-    )
-  }
-
   // zoo-scenery rocks, a boulder, grass tufts and (savanna species) an acacia.
   for (const placement of habitatPlacements(habitat)) {
     nodes.push(...placementNodes(kit, placement))
   }
 
-  if (habitat.has_shelter) {
-    // Against the north fence at the east end of the first row.
-    const firstRow = habitat.tiles.filter((tile) => tile.y === habitat.y)
-    const east = (firstRow.at(-1)?.x ?? habitat.x) + 1
-    const shelter = model(`${id}:shelter`, { x: east - 0.55, z: habitat.y + 0.55 }, Math.PI)
-    nodes.push(
-      shelter.box("back", [0, 0.3, 0.18], [0.72, 0.6, 0.08], "#8d6a45"),
-      shelter.box("left", [-0.32, 0.3, 0], [0.08, 0.6, 0.44], "#8d6a45"),
-      shelter.box("right", [0.32, 0.3, 0], [0.08, 0.6, 0.44], "#8d6a45"),
-      shelter.mesh("roof", GABLE_ROOF, [0, 0.6, 0], [0.86, 0.26, 0.6], "#6c7a4a"),
-    )
+  // Shelters and enrichment stand exactly on their zoo-core tiles.
+  const cells = new Map(
+    habitat.environment.terrain.map((cell) => [cellKey(cell.x, cell.y), cell] as const),
+  )
+  for (const object of habitat.environment.objects) {
+    nodes.push(...habitatObjectNodes(id, object, standingLift(cells, object.x, object.y)))
   }
 
   if (habitat.animals === 0) {
@@ -1388,6 +1461,7 @@ function animalFigure(m: Figure, species: SpeciesKey, stride: number): RendererS
 function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presence[]) {
   const nodes: RendererSceneNode[] = []
   const anchors: PickAnchor[] = []
+  const cells = environmentCells(input.snapshot)
   for (const animal of animals) {
     // A stable cosmetic offset keeps animals sharing a tile apart.
     const spot = animal.cosmetic_seed % 6
@@ -1403,17 +1477,18 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
     const walking = animal.activity === "walking"
     const stride = input.animate && walking ? Math.sin(input.timeSeconds * 4 + phase) : 0
     const yaw = phase + wander
-    const m = model(`animal:${animal.id}`, { x, z }, yaw)
+    const lift = standingLift(cells, x, z)
+    const m = model(`animal:${animal.id}`, { x, z }, yaw, lift)
     const size = ANIMAL_SHADOW_SIZE[animal.species] ?? 0.22
     nodes.push(
-      blobShadow(`animal:${animal.id}:shadow`, x, z, size),
+      blobShadow(`animal:${animal.id}:shadow`, x, z, size, 0.22, lift),
       ...animalFigure(m, animal.species, stride),
     )
     if (animal.id === input.overlay.selectedAnimalId) {
       nodes.push(
         node(
           `animal:${animal.id}:ring`,
-          [x, 0.02, z],
+          [x, 0.02 + lift, z],
           cylinderGeometry(size + 0.08, 0.015),
           "#f6d36f",
           {
@@ -1428,7 +1503,7 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
       kind: "animal",
       id: animal.id,
       habitatId: animal.habitat_id,
-      point: [x, height, z],
+      point: [x, height + lift, z],
       radius: size + 0.1,
     })
   }
@@ -1650,6 +1725,7 @@ function toolColor(tool: Tool): Hex {
     case "habitat":
     case "gate":
     case "reshape":
+    case "terrain":
       return "#f6d36f"
     case "zone":
       return "#9fd0f6"
@@ -1855,10 +1931,7 @@ export function effectSources(snapshot: Snapshot): EffectSources {
       z,
       height: (piece === "bush-round" ? 0.35 : 1.05) * scale,
     }))
-  const ponds = snapshot.habitats.flatMap((habitat) => {
-    const pond = habitatPond(habitat)
-    return pond ? [{ id: `habitat:${habitat.id}:pond`, ...pond }] : []
-  })
+  const ponds = snapshot.habitats.flatMap(habitatPonds)
   return { foliage, ponds }
 }
 

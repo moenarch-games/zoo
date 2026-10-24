@@ -363,6 +363,19 @@ impl GameState {
                 keeper.id
             ));
         }
+        // The habitat's layout must survive the new fence: objects inside, fence-side tiles
+        // level, the gate on dry land (#97). Animals left outside move to reachable ground.
+        let mut after = habitat.clone();
+        after.tiles.clone_from(&plan.occupied_tiles);
+        after.service_gate = gate;
+        after.environment.keep_within(&after.tiles);
+        let roam = after.roam_area();
+        for animal in &mut after.animals {
+            animal.settle_into(&roam);
+        }
+        if let Some((message, _)) = self.environment_violation(&after) {
+            return plan.reject(message);
+        }
         if gate != habitat.service_gate {
             plan.warnings.push(format!(
                 "The service gate moves to tile {},{} ({:?} side)",

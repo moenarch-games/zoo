@@ -8,6 +8,7 @@ export type Tool =
   | "gate"
   | "reshape"
   | "zone"
+  | "terrain"
   | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
 export type SpeciesKey = string
@@ -127,7 +128,11 @@ export type Habitat = Point & {
   food: number
   water: number
   cleanliness: number
-  has_shelter: boolean
+  /** Terrain, elevation, shelters and enrichment, and what the layout offers (#97). */
+  environment: HabitatEnvironment
+  /** Every weighted part of the welfare target, explained by zoo-core. */
+  welfare_parts: WelfarePart[]
+  requirements: HabitatRequirements | null
   /** The work zone containing the service gate; null means "No zone". */
   work_zone_id: number | null
   /** Keepers in that zone; only they take this habitat's jobs. */
@@ -274,6 +279,8 @@ export type SpeciesOffer = {
   space_per_animal: number
   /** The lowest habitat fence, in centimetres, this species can be adopted behind. */
   minimum_fence_height_cm: number
+  /** What a habitat must offer this species (#97). */
+  habitat: HabitatRequirements
 }
 
 export type FinanceBreakdown = {
@@ -395,6 +402,8 @@ export type Snapshot = {
   species_catalog: SpeciesOffer[]
   /** Fence types a habitat can be rebuilt with; the first is what new habitats get. */
   fence_catalog: FenceType[]
+  /** Habitat design prices, limits and furnishings (#97). */
+  habitat_environment: EnvironmentCatalog
   complaints: {
     hungry: number
     thirsty: number
@@ -566,4 +575,92 @@ export type FenceType = {
   height_cm: number
   segment_cents: number
   segment_hourly_cents: number
+}
+
+/** The ground a habitat tile is made of (#97). */
+export type Surface = "grass" | "sand" | "shallow_water" | "deep_water"
+
+export type TerrainCell = Point & { surface: Surface; height: number }
+
+export type HabitatObjectRole = "shelter" | "enrichment"
+
+export type HabitatObject = Point & {
+  id: number
+  key: string
+  label: string
+  role: HabitatObjectRole
+  capacity: number
+  /** An unreachable object provides nothing. */
+  reachable: boolean
+}
+
+/** What a habitat's layout offers, counted from the service gate by zoo-core. */
+export type HabitatAssessment = {
+  reachable_tiles: number
+  unreachable_tiles: number
+  usable_land: number
+  cover_tiles: number
+  cover_percent: number
+  shallow_water: number
+  deep_water: number
+  shelter_capacity: number
+  enrichment_capacity: number
+  unreachable_objects: number[]
+}
+
+export type HabitatEnvironment = {
+  /** Tiles that are not level grass. */
+  terrain: TerrainCell[]
+  objects: HabitatObject[]
+  assessment: HabitatAssessment
+  /** Walkable tiles reachable from the gate. */
+  reachable: Point[]
+}
+
+export type WelfarePart = {
+  key: string
+  label: string
+  weight: number
+  score: number
+  met: boolean
+  detail: string
+}
+
+export type HabitatRequirements = {
+  ground_cover: Surface
+  ground_cover_percent: number
+  shallow_water_tiles: number
+  deep_water_tiles: number
+  shelter: boolean
+  enrichment: boolean
+}
+
+export type HabitatObjectType = {
+  key: string
+  label: string
+  role: HabitatObjectRole
+  build_cents: number
+  capacity: number
+}
+
+export type EnvironmentCatalog = {
+  surfaces: { key: Surface; label: string; tile_cents: number; water: boolean }[]
+  elevation_step_cents: number
+  max_height: number
+  max_walk_step: number
+  max_slope_step: number
+  max_objects: number
+  objects: HabitatObjectType[]
+}
+
+/** Rust's plan for one habitat environment edit; the command plans again. */
+export type EnvironmentPreview = {
+  ok: boolean
+  message: string
+  habitat_id: number
+  cost_cents: number
+  changed_tiles: Point[]
+  blocking_tiles: Point[]
+  assessment: HabitatAssessment | null
+  welfare_target: number | null
 }

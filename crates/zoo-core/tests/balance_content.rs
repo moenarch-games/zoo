@@ -36,8 +36,8 @@ fn edited_balance_drives_construction_staff_and_care_costs() {
     });
     balance["staff"]["keeper"]["hire_cents"] = json!(4321);
     balance["staff"]["janitor"]["hire_cents"] = json!(321);
-    balance["habitat_care"]["shelter_cents"] = json!(77);
     balance["feed_batch_cents"] = json!(55);
+    definition["habitat_objects"][0]["build_cents"] = json!(77);
     // The default (first) fence type prices every new fence segment.
     definition["fences"][0]["segment_cents"] = json!(1);
     let mut game = load(&definition);

@@ -33,7 +33,7 @@ use super::{
     GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind, animal,
     care::CareJobState,
     content::{self, Catalog},
-    scenario, shape,
+    environment, scenario, shape,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -51,6 +51,7 @@ const MIGRATIONS: &[Migration] = &[
     v5_to_v6,
     v6_to_v7,
     drop_content_schema_version,
+    v8_add_habitat_environments,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -434,7 +435,12 @@ fn v6_to_v7(mut value: Value) -> Result<Value, SaveError> {
                     life_stage: animal::LifeStage::Adult,
                     arrived_day: 1,
                     cosmetic_seed: seed,
-                    position: animal::arrival_tile(&tiles, id, slot, minute_of_day),
+                    position: animal::arrival_tile(
+                        &animal::roam_tiles(&tiles),
+                        id,
+                        slot,
+                        minute_of_day,
+                    ),
                     activity: animal::Activity::Resting { until_minute: now },
                     energy: 100,
                     decisions: 0,
@@ -451,6 +457,143 @@ fn v6_to_v7(mut value: Value) -> Result<Value, SaveError> {
     Ok(value)
 }
 
+/// Schema 9 (#97) gives habitats an environment and its catalog the matching content. The flat shelter price
+/// becomes the `basic_shelter` object's price beside the built-in furnishings and terrain
+/// prices; every species gains its built-in habitat requirements (species the built-in catalog
+/// does not know need only shelter, as before); a habitat that had a shelter gets one basic
+/// shelter object on its default tile, with object IDs allocated in habitat order. Terrain
+/// starts as level grass everywhere.
+fn v8_add_habitat_environments(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let content = value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content: missing or not an object"))?;
+    let balance = content
+        .get_mut("balance")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content/balance: missing"))?;
+    let shelter_cents = balance
+        .get_mut("habitat_care")
+        .and_then(Value::as_object_mut)
+        .and_then(|care| care.remove("shelter_cents"))
+        .ok_or_else(|| invalid("content/balance/habitat_care/shelter_cents: missing"))?;
+    balance.insert(
+        "habitat_environment".to_owned(),
+        serde_json::to_value(&built_in.balance.habitat_environment)
+            .expect("environment cost serialization"),
+    );
+    let mut objects =
+        serde_json::to_value(&built_in.habitat_objects).expect("habitat object serialization");
+    for object in objects
+        .as_array_mut()
+        .expect("objects serialize as an array")
+    {
+        if object["key"] == "basic_shelter" {
+            object["build_cents"] = shelter_cents.clone();
+        }
+    }
+    content.insert("habitat_objects".to_owned(), objects.clone());
+    let requirements = |key: Option<&str>| {
+        built_in
+            .species
+            .iter()
+            .find(|species| Some(species.key.as_str()) == key)
+            .map_or_else(
+                || {
+                    json!({
+                        "ground_cover": "grass",
+                        "ground_cover_percent": 0,
+                        "shallow_water_tiles": 0,
+                        "deep_water_tiles": 0,
+                        "shelter": true,
+                        "enrichment": false,
+                    })
+                },
+                |species| {
+                    serde_json::to_value(&species.habitat).expect("requirement serialization")
+                },
+            )
+    };
+    let add_requirements = |species: &mut Value| -> Result<(), SaveError> {
+        let needs = requirements(species.get("key").and_then(Value::as_str));
+        species
+            .as_object_mut()
+            .ok_or_else(|| invalid("species: entry is not an object"))?
+            .insert("habitat".to_owned(), needs);
+        Ok(())
+    };
+    for species in content
+        .get_mut("species")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/species: missing or not an array"))?
+    {
+        add_requirements(species)?;
+    }
+    let shelter = objects
+        .as_array()
+        .and_then(|objects| {
+            objects
+                .iter()
+                .find(|object| object["key"] == "basic_shelter")
+        })
+        .cloned()
+        .expect("the built-in catalog has a basic shelter");
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let mut next_id: u32 = 1;
+    for habitat in park
+        .get_mut("habitats")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?
+    {
+        if let Some(species) = habitat.get_mut("species").filter(|s| s.is_object()) {
+            add_requirements(species)?;
+        }
+        let habitat = habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?;
+        let sheltered = habitat
+            .remove("has_shelter")
+            .and_then(|value| value.as_bool())
+            .ok_or_else(|| invalid("park/habitats/has_shelter: missing"))?;
+        let mut objects = Vec::new();
+        if sheltered {
+            let tiles: Vec<Position> = habitat
+                .get("tiles")
+                .cloned()
+                .and_then(|tiles| serde_json::from_value(tiles).ok())
+                .ok_or_else(|| invalid("park/habitats/tiles: missing"))?;
+            let gate: Position = habitat
+                .get("service_gate")
+                .and_then(|gate| {
+                    Some(Position {
+                        x: u32::try_from(gate.get("x")?.as_u64()?).ok()?,
+                        y: u32::try_from(gate.get("y")?.as_u64()?).ok()?,
+                    })
+                })
+                .ok_or_else(|| invalid("park/habitats/service_gate: missing"))?;
+            let position = environment::default_object_tile(
+                &tiles,
+                &environment::Environment::default(),
+                gate,
+            )
+            .ok_or_else(|| invalid("park/habitats: no tile for the migrated shelter"))?;
+            objects.push(json!({ "id": next_id, "definition": shelter, "position": position }));
+            next_id = next_id.saturating_add(1);
+        }
+        habitat.insert(
+            "environment".to_owned(),
+            json!({ "terrain": [], "objects": objects }),
+        );
+    }
+    park.insert("next_habitat_object_id".to_owned(), json!(next_id));
+    Ok(value)
+}
+
 impl GameState {
     /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
     /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
@@ -460,6 +603,9 @@ impl GameState {
 
     fn save_violation_result(&self) -> Result<(), String> {
         self.scenario_violation()?;
+        if let Some(violation) = self.environment_save_violation() {
+            return Err(violation);
+        }
         if let Some(violation) = self.invariant_violation() {
             return Err(violation);
         }

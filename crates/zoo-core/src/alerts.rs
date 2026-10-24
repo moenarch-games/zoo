@@ -147,17 +147,21 @@ impl GameState {
 
     /// The weakest welfare part of a habitat, by name and score.
     pub(crate) fn lowest_welfare_part(habitat: &Habitat) -> (&'static str, u32) {
-        [
-            ("social group", habitat.social_score()),
-            ("space", habitat.space_score()),
-            ("food", habitat.food_score()),
-            ("water", habitat.water_score()),
-            ("cleanliness", habitat.cleanliness_score()),
-            ("shelter", habitat.shelter_score()),
-        ]
-        .into_iter()
-        .min_by_key(|(_, score)| *score)
-        .expect("welfare parts are not empty")
+        habitat
+            .welfare_parts()
+            .into_iter()
+            .map(|part| {
+                let name = match part.key {
+                    "social" => "social group",
+                    "ground_cover" => "ground cover",
+                    "shallow_water" => "shallow water",
+                    "deep_water" => "deep water",
+                    key => key,
+                };
+                (name, part.score)
+            })
+            .min_by_key(|(_, score)| *score)
+            .expect("welfare parts are not empty")
     }
 
     /// A stocked habitat whose group is too small for its species or too big for its fence.

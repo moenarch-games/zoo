@@ -1542,3 +1542,68 @@ dd {
   padding: 8px;
   font-weight: 800;
 }
+
+/* Habitat design (#97): zoo-core's welfare breakdown and the terrain brush. */
+.welfare-parts,
+.habitat-objects {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welfare-parts li {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+  border-bottom: 1px dotted #b8b08a;
+}
+
+.welfare-parts li.unmet b {
+  color: #9a3b22;
+}
+
+.welfare-parts small,
+.design-brushes small {
+  color: #667064;
+  font-size: 10px;
+}
+
+.design-brushes [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.design-brushes button {
+  padding: 5px 7px;
+  border: 1px solid #79775d;
+  border-radius: 4px;
+  background: #eee8c7;
+  color: #25352d;
+  cursor: pointer;
+}
+
+.design-brushes button.active,
+.habitat-design .shop-row.active {
+  background: #f6d36f;
+}
+
+.design-height {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.design-height input {
+  width: 64px;
+}
+
+.habitat-objects li {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
