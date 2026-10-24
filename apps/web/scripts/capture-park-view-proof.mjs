@@ -43,7 +43,11 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 async function waitForPageTarget() {
   let lastError = null
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  // Cold CI runners can take well over 15 s to open the DevTools port; allow a minute.
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    if (chrome.exitCode !== null) {
+      throw new Error(`Chrome exited with code ${chrome.exitCode} before exposing a page target`)
+    }
     try {
       const response = await fetch(`http://127.0.0.1:${debuggingPort}/json`)
       if (response.ok) {
