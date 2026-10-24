@@ -358,7 +358,8 @@ try {
   assert(await clickButton("Inspect"), "Inspect tool missing after zones")
   await click(await tile(8, 3))
   await waitFor("the habitat inspector", `document.querySelector('.window-title span')?.textContent === 'Habitat #1'`)
-  assert(await clickButton("Schedule available keeper"), "Keeper scheduling missing")
+  // #134: zone matching replaces per-habitat scheduling; the inspector shows the zone's keepers.
+  assert(await evaluate(`document.body.textContent.includes('1 in zone #1')`), "Habitat zone staffing missing")
   assert(await clickButton("Add basic shelter"), "Shelter action missing")
   for (let index = 0; index < 3; index += 1) assert(await clickButton(contentAcceptance ? "Acceptance catalog animal" : "Zebra"), "Catalog adoption unavailable")
   assert((await message()).includes(contentAcceptance ? "Acceptance catalog animal adopted" : "Zebra adopted"), "Catalog species were not adopted through Rust", await message())
