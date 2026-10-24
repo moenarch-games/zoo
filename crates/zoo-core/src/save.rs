@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -147,6 +147,7 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
         2 => migrate(v2_to_v3(value)?, 3),
         3 => migrate(v3_to_v4(value)?, 4),
         4 => migrate(v4_to_v5(value)?, 5),
+        5 => migrate(v5_to_v6(value)?, 6),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -270,6 +271,89 @@ fn v4_to_v5(mut value: Value) -> Result<Value, SaveError> {
     Ok(value)
 }
 
+/// Schema 6 (#95) moves fences into content (catalog schema 3): the one implicit fence becomes
+/// a `wooden_rail` type with exactly the old segment price and upkeep, the built-in `steel_mesh`
+/// type joins it, every species gains its built-in minimum fence height (0 for species the
+/// built-in catalog does not know), and every habitat is fenced with the wooden rail. Prices,
+/// upkeep and every habitat's outcomes stay as they were.
+fn v5_to_v6(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let content = value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content: missing or not an object"))?;
+    let mut take = |section: &str, field: &str| {
+        content
+            .get_mut("balance")
+            .and_then(|balance| balance.get_mut(section))
+            .and_then(Value::as_object_mut)
+            .and_then(|section| section.remove(field))
+            .ok_or_else(|| invalid(&format!("content/balance/{section}/{field}: missing")))
+    };
+    let segment_cents = take("construction", "fence_segment_cents")?;
+    let segment_hourly_cents = take("upkeep", "fence_segment_hourly_cents")?;
+    let wooden = json!({
+        "key": "wooden_rail",
+        "label": "Wooden rail",
+        "material": "wood",
+        "height_cm": built_in.fences[0].height_cm,
+        "segment_cents": segment_cents,
+        "segment_hourly_cents": segment_hourly_cents,
+    });
+    let steel = built_in
+        .fences
+        .iter()
+        .find(|fence| fence.key == "steel_mesh")
+        .expect("the built-in catalog has steel mesh");
+    let minimum = |key: Option<&str>| {
+        built_in
+            .species
+            .iter()
+            .find(|species| Some(species.key.as_str()) == key)
+            .map_or(0, |species| species.minimum_fence_height_cm)
+    };
+    let add_minimum = |species: &mut Value| -> Result<(), SaveError> {
+        let height = minimum(species.get("key").and_then(Value::as_str));
+        species
+            .as_object_mut()
+            .ok_or_else(|| invalid("species: entry is not an object"))?
+            .insert("minimum_fence_height_cm".to_owned(), json!(height));
+        Ok(())
+    };
+    for species in content
+        .get_mut("species")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/species: missing or not an array"))?
+    {
+        add_minimum(species)?;
+    }
+    content.insert(
+        "fences".to_owned(),
+        json!([
+            wooden,
+            serde_json::to_value(steel).expect("fence serialization")
+        ]),
+    );
+    content.insert("schema_version".to_owned(), json!(content::SCHEMA_VERSION));
+    let habitats = value
+        .get_mut("park")
+        .and_then(|park| park.get_mut("habitats"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?;
+    for habitat in habitats {
+        if let Some(species) = habitat.get_mut("species").filter(|s| s.is_object()) {
+            add_minimum(species)?;
+        }
+        habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?
+            .insert("fence".to_owned(), wooden.clone());
+    }
+    value["schema_version"] = json!(6);
+    Ok(value)
+}
+
 impl GameState {
     /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
     /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
@@ -372,6 +456,12 @@ impl GameState {
                 .count();
             if !owned || tiles != habitat.area() as usize {
                 return Err(format!("habitat {id} tiles do not match its footprint"));
+            }
+            if !self.catalog.fences.contains(&habitat.fence) {
+                return Err(format!(
+                    "habitat {id} fence {} does not match the content",
+                    habitat.fence.key
+                ));
             }
             match &habitat.species {
                 Some(species) if !self.catalog.species.contains(species) => {

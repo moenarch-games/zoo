@@ -34,6 +34,9 @@ fn populate(game: &mut ZooGame, rect: (u32, u32, u32, u32), species: &str) -> u3
         .unwrap() as u32;
     accepted(game.hire_keeper());
     zone_newest_keeper(game);
+    if matches!(species, "elephant" | "giraffe") {
+        accepted(game.upgrade_fence(habitat_id, "steel_mesh".to_owned()));
+    }
     accepted(game.adopt(habitat_id, species.to_owned()));
     habitat_id
 }

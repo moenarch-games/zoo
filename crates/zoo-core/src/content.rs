@@ -11,7 +11,7 @@ pub(crate) const MAX_CENTS: i64 = 9_007_199_254_740_991;
 // A park has at most MAX_MAP_TILES tiles and habitat capacity is twelve. Bound even
 // a conservative whole-park appeal sum before any arithmetic is performed.
 const MAX_RULE_VALUE: u32 = u32::MAX / (super::scenario::MAX_MAP_TILES * 12);
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -20,6 +20,7 @@ pub(crate) struct Catalog {
     pub schema_version: u32,
     pub ruleset_id: String,
     pub balance: Balance,
+    pub fences: Vec<FenceType>,
     pub species: Vec<Species>,
     pub facilities: Vec<Facility>,
     pub unlocks: Vec<Unlock>,
@@ -34,12 +35,40 @@ pub(crate) struct Species {
     pub appeal: u32,
     pub minimum_social_group: u32,
     pub space_per_animal: u32,
+    /// The lowest fence, in centimetres, a habitat needs before it can adopt this species.
+    pub minimum_fence_height_cm: u32,
     /// Operating cost charged every in-game hour for each animal of this species.
     pub hourly_upkeep_cents: i64,
     pub asset_ref: String,
     pub unlock_ref: String,
     pub care: CareProfile,
 }
+
+/// A fence a habitat can be enclosed with (#95). The first entry is the default every new
+/// habitat is built with; habitats switch type through a fence upgrade.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FenceType {
+    pub key: String,
+    pub label: String,
+    pub material: FenceMaterial,
+    pub height_cm: u32,
+    /// Price of each fence segment built with this type.
+    pub segment_cents: i64,
+    /// Operating cost of each fence segment every in-game hour.
+    pub segment_hourly_cents: i64,
+}
+
+/// The fence looks the renderer supports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FenceMaterial {
+    Wood,
+    Steel,
+}
+
+/// Fences are bounded well above any real enclosure height.
+pub(crate) const MAX_FENCE_HEIGHT_CM: u32 = 1_000;
 
 /// Recurring keeper work categories a habitat schedule can generate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
@@ -147,7 +176,6 @@ pub(crate) struct ConstructionCosts {
     pub path_tile_cents: i64,
     pub habitat_base_cents: i64,
     pub habitat_tile_cents: i64,
-    pub fence_segment_cents: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -178,7 +206,6 @@ pub(crate) struct StaffRole {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ParkUpkeep {
     pub habitat_hourly_cents: i64,
-    pub fence_segment_hourly_cents: i64,
 }
 
 impl Balance {
@@ -192,10 +219,6 @@ impl Balance {
             ("construction/path_tile_cents", build.path_tile_cents),
             ("construction/habitat_base_cents", build.habitat_base_cents),
             ("construction/habitat_tile_cents", build.habitat_tile_cents),
-            (
-                "construction/fence_segment_cents",
-                build.fence_segment_cents,
-            ),
             ("habitat_care/water_refill_cents", care.water_refill_cents),
             ("habitat_care/cleaning_cents", care.cleaning_cents),
             ("habitat_care/shelter_cents", care.shelter_cents),
@@ -217,10 +240,6 @@ impl Balance {
                 staff.mechanic.hourly_wage_cents,
             ),
             ("upkeep/habitat_hourly_cents", upkeep.habitat_hourly_cents),
-            (
-                "upkeep/fence_segment_hourly_cents",
-                upkeep.fence_segment_hourly_cents,
-            ),
         ] {
             money(value, &format!("balance/{path}"))?;
         }
@@ -296,6 +315,7 @@ impl Catalog {
             ("species", self.species.len()),
             ("facilities", self.facilities.len()),
             ("unlocks", self.unlocks.len()),
+            ("fences", self.fences.len()),
         ] {
             if count == 0 || count > MAX_ENTRIES {
                 return Err(format!("{group}: expected 1..={MAX_ENTRIES} entries"));
@@ -318,6 +338,35 @@ impl Catalog {
                 ));
             }
         }
+        let mut fence_keys = HashSet::new();
+        for (i, fence) in self.fences.iter().enumerate() {
+            let prefix = format!("fences/{i}");
+            text(&fence.key, &format!("{prefix}/key"))?;
+            text(&fence.label, &format!("{prefix}/label"))?;
+            if !fence
+                .key
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(format!(
+                    "{prefix}/key: expected stable lowercase identifier"
+                ));
+            }
+            if !fence_keys.insert(fence.key.as_str()) {
+                return Err(format!("{prefix}/key: duplicate fence key"));
+            }
+            if !(1..=MAX_FENCE_HEIGHT_CM).contains(&fence.height_cm) {
+                return Err(format!(
+                    "{prefix}/height_cm: expected 1..={MAX_FENCE_HEIGHT_CM}"
+                ));
+            }
+            money(fence.segment_cents, &format!("{prefix}/segment_cents"))?;
+            money(
+                fence.segment_hourly_cents,
+                &format!("{prefix}/segment_hourly_cents"),
+            )?;
+        }
+        let tallest = self.fences.iter().map(|f| f.height_cm).max().unwrap_or(0);
         let mut keys = HashSet::new();
         for (i, species) in self.species.iter().enumerate() {
             let prefix = format!("species/{i}");
@@ -349,6 +398,12 @@ impl Catalog {
                 if value == 0 || value > MAX_RULE_VALUE {
                     return Err(format!("{prefix}/{field}: expected 1..={MAX_RULE_VALUE}"));
                 }
+            }
+            // Every species must be keepable behind at least one of the catalog's fences.
+            if species.minimum_fence_height_cm > tallest {
+                return Err(format!(
+                    "{prefix}/minimum_fence_height_cm: no fence type is that tall"
+                ));
             }
             if !(1..=MAX_REQUIRED_KEEPERS).contains(&species.care.required_keepers) {
                 return Err(format!(

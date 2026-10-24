@@ -12,6 +12,9 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
     accepted(game.create_work_zone(0, 0, 19, 13));
     accepted(game.assign_keeper_zone(1, 1));
     accepted(game.buy_animal_feed());
+    if matches!(species, "elephant" | "giraffe") {
+        accepted(game.upgrade_fence(1, "steel_mesh".to_owned()));
+    }
     accepted(game.adopt(1, species.to_owned()));
     accepted(game.place_concession(1, 6, "food".to_owned()));
     accepted(game.place_concession(3, 6, "drink".to_owned()));

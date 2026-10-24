@@ -546,6 +546,22 @@ export default function App() {
     [selectedHabitatId, snapshot],
   )
 
+  // Rust's plan for rebuilding the selected habitat's fence as each other fence type.
+  const fenceOptions = useMemo(() => {
+    const game = gameRef.current
+    if (!game || !snapshot || !selectedHabitat) {
+      return []
+    }
+    return snapshot.fence_catalog
+      .filter((fence) => fence.key !== selectedHabitat.fence.key)
+      .flatMap((fence) => {
+        const text = callGame(() => game.evaluate_fence_upgrade(selectedHabitat.id, fence.key))
+        return text === undefined
+          ? []
+          : [{ fence, preview: JSON.parse(text) as ConstructionPreview }]
+      })
+  }, [callGame, selectedHabitat, snapshot])
+
   const selectedGuest = useMemo(
     () => snapshot?.guests.find((guest) => guest.id === selectedGuestId) ?? null,
     [selectedGuestId, snapshot],
@@ -1349,6 +1365,14 @@ export default function App() {
       return
     }
     perform(() => game.adopt(selectedHabitatId, species))
+  }
+
+  const upgradeFence = (fence: string) => {
+    const game = gameRef.current
+    if (!game || selectedHabitatId === null) {
+      return
+    }
+    perform(() => game.upgrade_fence(selectedHabitatId, fence))
   }
 
   const careForHabitat = (action: "water" | "clean" | "shelter") => {
@@ -2525,6 +2549,37 @@ export default function App() {
                   )}
                 </div>
 
+                <h3>Fence</h3>
+                <dl>
+                  <div>
+                    <dt>Type</dt>
+                    <dd>
+                      {selectedHabitat.fence.label} · {selectedHabitat.fence.height_cm} cm
+                    </dd>
+                  </div>
+                </dl>
+                {fenceOptions.map(({ fence, preview }) => (
+                  <button
+                    className="shop-row"
+                    key={fence.key}
+                    disabled={!preview.ok}
+                    aria-label={`Rebuild fence as ${fence.label}`}
+                    onClick={() => upgradeFence(fence.key)}
+                  >
+                    <span>
+                      <b>
+                        Rebuild as {fence.label} · {fence.height_cm} cm
+                      </b>
+                      <small>
+                        {preview.ok
+                          ? "Every segment at full price; nothing refunded · undoable"
+                          : preview.message}
+                      </small>
+                    </span>
+                    {preview.ok && <strong>{money(preview.cost_cents)}</strong>}
+                  </button>
+                ))}
+
                 <h3>Care</h3>
                 <div className="guest-thought">{selectedHabitat.care_status}</div>
                 <dl>
@@ -2668,7 +2723,7 @@ export default function App() {
                           <b>{offer.label}</b>
                           <small>
                             Group {offer.minimum_social_group}+ · {offer.space_per_animal} space
-                            each
+                            each · fence {offer.minimum_fence_height_cm} cm+
                           </small>
                         </span>
                       </span>

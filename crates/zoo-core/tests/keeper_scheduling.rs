@@ -113,6 +113,7 @@ fn dangerous_crews_replay_mid_assignment_with_both_reservations() {
         ok(game.hire_keeper());
         ok(game.assign_keeper_zone(keeper_id, 1));
     }
+    ok(game.upgrade_fence(1, "steel_mesh".to_owned()));
     ok(game.adopt(1, "elephant".to_owned()));
     game.tick(2);
 

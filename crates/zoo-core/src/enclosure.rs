@@ -11,7 +11,7 @@
 //! picks the default gate for the new shape and says so.
 use super::{
     FenceSegment, GameState, HabitatOrientation, MAX_HABITAT_AREA, MIN_HABITAT_DIMENSION, Position,
-    TileKind, gate::gate_access_message, shape,
+    TileKind, content::FenceType, gate::gate_access_message, shape,
 };
 use serde::Serialize;
 
@@ -86,22 +86,27 @@ pub(crate) fn capacity_for(area: u32) -> u32 {
 }
 
 impl GameState {
+    /// The fence every new habitat is built with: the catalog's first fence type.
+    pub(crate) fn default_fence(&self) -> &FenceType {
+        &self.catalog.fences[0]
+    }
+
     /// The catalog price of a new enclosure.
     pub(crate) fn habitat_cost(&self, area: u32, perimeter: u32) -> i64 {
         let costs = &self.catalog.balance.construction;
         costs
             .habitat_base_cents
             .saturating_add(i64::from(area).saturating_mul(costs.habitat_tile_cents))
-            .saturating_add(i64::from(perimeter).saturating_mul(costs.fence_segment_cents))
+            .saturating_add(i64::from(perimeter).saturating_mul(self.default_fence().segment_cents))
     }
 
     /// The price of reshaping: new tiles and new fence segments only.
-    fn reshape_cost(&self, added_tiles: usize, added_segments: usize) -> i64 {
+    fn reshape_cost(&self, added_tiles: usize, added_segments: usize, segment_cents: i64) -> i64 {
         let costs = &self.catalog.balance.construction;
         let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         count(added_tiles)
             .saturating_mul(costs.habitat_tile_cents)
-            .saturating_add(count(added_segments).saturating_mul(costs.fence_segment_cents))
+            .saturating_add(count(added_segments).saturating_mul(segment_cents))
     }
 
     /// Every rectangle evaluation, accepted or not, previews the price of its fence loop.
@@ -248,7 +253,8 @@ impl GameState {
                     .collect();
                 let old_fence = habitat.fence_segments();
                 let new_segments = fence.iter().filter(|s| !old_fence.contains(s)).count();
-                let cost = self.reshape_cost(added.len(), new_segments);
+                let cost =
+                    self.reshape_cost(added.len(), new_segments, habitat.fence.segment_cents);
                 (added, removed, cost)
             }
             None => (Vec::new(), Vec::new(), self.habitat_cost(area, perimeter)),

@@ -6,6 +6,7 @@ import type {
   ConstructionPreview,
   FenceSegment,
   FenceSide,
+  FenceType,
   GateEvaluation,
   Guest,
   Habitat,
@@ -793,7 +794,14 @@ function zoneNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode
 // ---------------------------------------------------------------------------------------------
 // Fences
 
-type FenceRun = { id: string; start: Vec3; end: Vec3; kind: "boundary" | "habitat" | "preview" }
+type FenceRun = {
+  id: string
+  start: Vec3
+  end: Vec3
+  kind: "boundary" | "habitat" | "preview"
+  /** A habitat fence's content material (#95); previews and the boundary have none. */
+  material?: FenceType["material"]
+}
 
 function tileCorners(x: number, z: number): [Vec3, Vec3, Vec3, Vec3] {
   return [
@@ -880,7 +888,13 @@ function fenceRuns(snapshot: Snapshot, placement: PlacementEvaluation | null): F
         continue
       }
       const [start, end] = fenceEndpoints(segment.x, segment.y, segment.side)
-      push({ id: `habitat:${habitat.id}:${edgeKey(start, end)}`, start, end, kind: "habitat" })
+      push({
+        id: `habitat:${habitat.id}:${edgeKey(start, end)}`,
+        start,
+        end,
+        kind: "habitat",
+        material: habitat.fence.material,
+      })
     }
   }
 
@@ -911,7 +925,7 @@ function fenceRuns(snapshot: Snapshot, placement: PlacementEvaluation | null): F
 function fenceNodes(snapshot: Snapshot, placement: PlacementEvaluation | null) {
   const runs = fenceRuns(snapshot, placement)
   const nodes: RendererSceneNode[] = []
-  const posts = new Map<string, { point: Vec3; kind: FenceRun["kind"] }>()
+  const posts = new Map<string, { point: Vec3; kind: FenceRun["kind"]; steel: boolean }>()
   const previewColor: Hex = placement?.ok ? "#f1d66b" : "#d0584a"
   const rank = { boundary: 3, habitat: 2, preview: 1 }
 
@@ -932,6 +946,18 @@ function fenceNodes(snapshot: Snapshot, placement: PlacementEvaluation | null) {
         node(`fence:${run.id}:wall`, [cx, 0.1, cz], boxGeometry(wall), "#b9ad8f"),
         node(`fence:${run.id}:rail`, [cx, 0.5, cz], boxGeometry(rail), "#2f5a45"),
       )
+    } else if (run.material === "steel") {
+      // Steel mesh: three galvanised rails and a see-through mesh panel, twice as tall.
+      const rail: Vec3 = alongX ? [length, 0.04, 0.04] : [0.04, 0.04, length]
+      const panel: Vec3 = alongX ? [length, 0.9, 0.015] : [0.015, 0.9, length]
+      nodes.push(
+        node(`fence:${run.id}:mesh`, [cx, 0.5, cz], boxGeometry(panel), "#aab4ba", {
+          opacity: 0.35,
+        }),
+        ...[0.1, 0.55, 0.98].map((height, index) =>
+          node(`fence:${run.id}:rail:${index}`, [cx, height, cz], boxGeometry(rail), "#7f8a91"),
+        ),
+      )
     } else {
       const color: Hex = run.kind === "preview" ? previewColor : "#7b5a3a"
       const rail: Vec3 = alongX ? [length, 0.06, 0.05] : [0.05, 0.06, length]
@@ -944,8 +970,13 @@ function fenceNodes(snapshot: Snapshot, placement: PlacementEvaluation | null) {
     for (const point of [run.start, run.end]) {
       const key = pointKey(point)
       const existing = posts.get(key)
-      if (!existing || rank[run.kind] > rank[existing.kind]) {
-        posts.set(key, { point, kind: run.kind })
+      const steel = run.material === "steel"
+      if (
+        !existing ||
+        rank[run.kind] > rank[existing.kind] ||
+        (rank[run.kind] === rank[existing.kind] && steel && !existing.steel)
+      ) {
+        posts.set(key, { point, kind: run.kind, steel })
       }
     }
   }
@@ -957,6 +988,8 @@ function fenceNodes(snapshot: Snapshot, placement: PlacementEvaluation | null) {
         node(`fence:post:${key}`, [x, 0.3, z], boxGeometry([0.14, 0.6, 0.14]), "#a79c80"),
         node(`fence:post-cap:${key}`, [x, 0.62, z], boxGeometry([0.18, 0.05, 0.18]), "#8f846a"),
       )
+    } else if (post.steel) {
+      nodes.push(node(`fence:post:${key}`, [x, 0.52, z], cylinderGeometry(0.035, 1.04), "#6f7a80"))
     } else {
       const color: Hex = post.kind === "preview" ? previewColor : "#6a4c30"
       nodes.push(
