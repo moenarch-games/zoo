@@ -1,0 +1,45 @@
+{
+  "format": "zoo-scenario",
+  "schema_version": 1,
+  "id": "partly-prepared",
+  "title": "Unfinished lakeside",
+  "summary": "A lakeside plot where the previous builder stopped halfway: one fenced habitat waits for a path, staff and animals, and the food stand has no visitors yet.",
+  "seed": 2,
+  "map": {
+    "width": 24,
+    "height": 16,
+    "terrain": [{ "kind": "water", "x": 19, "y": 2, "width": 4, "height": 4 }]
+  },
+  "entrance": { "x": 0, "y": 8 },
+  "depot": { "x": 2, "y": 7 },
+  "starting_cash_cents": 3000000,
+  "setup": [
+    { "kind": "path", "from": { "x": 1, "y": 8 }, "to": { "x": 11, "y": 8 } },
+    { "kind": "path", "from": { "x": 14, "y": 8 }, "to": { "x": 17, "y": 8 } },
+    { "kind": "habitat", "from": { "x": 13, "y": 3 }, "to": { "x": 17, "y": 7 } },
+    { "kind": "service_gate", "habitat": 1, "x": 15, "y": 7, "side": "south" },
+    { "kind": "concession", "x": 5, "y": 9, "facility": "food" }
+  ],
+  "tutorial": "none",
+  "opening_focus": { "x": 12, "y": 8 },
+  "objectives": [
+    {
+      "id": "connect-gate",
+      "title": "Finish the path to the habitat's service gate",
+      "goal": { "kind": "gates_reachable" },
+      "focus": { "x": 12, "y": 8 }
+    },
+    {
+      "id": "stock-habitat",
+      "title": "Staff the habitat and adopt animals",
+      "goal": { "kind": "stocked_habitats", "at_least": 1 },
+      "focus": { "x": 15, "y": 5 }
+    },
+    {
+      "id": "first-crowd",
+      "title": "Have 8 guests in the park at once",
+      "goal": { "kind": "guests", "at_least": 8 },
+      "focus": { "x": 4, "y": 8 }
+    }
+  ]
+}

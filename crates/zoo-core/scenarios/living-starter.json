@@ -1,0 +1,49 @@
+{
+  "format": "zoo-scenario",
+  "schema_version": 1,
+  "id": "living-starter",
+  "title": "Riverside zoo",
+  "summary": "A small working zoo: capybaras and zebras are fed by a keeper, guests stroll past food and drink stands, and there is room to grow along the river.",
+  "seed": 3,
+  "map": {
+    "width": 28,
+    "height": 20,
+    "terrain": [{ "kind": "water", "x": 20, "y": 14, "width": 6, "height": 4 }]
+  },
+  "entrance": { "x": 0, "y": 10 },
+  "depot": { "x": 2, "y": 9 },
+  "starting_cash_cents": 2500000,
+  "setup": [
+    { "kind": "path", "from": { "x": 1, "y": 10 }, "to": { "x": 17, "y": 10 } },
+    { "kind": "habitat", "from": { "x": 4, "y": 5 }, "to": { "x": 8, "y": 9 } },
+    { "kind": "service_gate", "habitat": 1, "x": 6, "y": 9, "side": "south" },
+    { "kind": "habitat", "from": { "x": 10, "y": 11 }, "to": { "x": 14, "y": 15 } },
+    { "kind": "service_gate", "habitat": 2, "x": 12, "y": 11, "side": "north" },
+    { "kind": "work_zone", "from": { "x": 3, "y": 9 }, "to": { "x": 15, "y": 11 } },
+    { "kind": "hire_keeper" },
+    { "kind": "assign_keeper", "keeper": 1, "zone": 1 },
+    { "kind": "adopt", "habitat": 1, "species": "capybara", "count": 4 },
+    { "kind": "adopt", "habitat": 2, "species": "zebra", "count": 3 },
+    { "kind": "concession", "x": 16, "y": 9, "facility": "food" },
+    { "kind": "concession", "x": 16, "y": 11, "facility": "drink" },
+    { "kind": "hire_janitor" },
+    { "kind": "hire_mechanic" },
+    { "kind": "feed_crates", "crates": 20 }
+  ],
+  "tutorial": "none",
+  "opening_focus": { "x": 12, "y": 10 },
+  "objectives": [
+    {
+      "id": "busy-day",
+      "title": "Have 15 guests in the park at once",
+      "goal": { "kind": "guests", "at_least": 15 },
+      "focus": { "x": 12, "y": 10 }
+    },
+    {
+      "id": "third-habitat",
+      "title": "Open a third stocked habitat",
+      "goal": { "kind": "stocked_habitats", "at_least": 3 },
+      "focus": { "x": 20, "y": 6 }
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "format": "zoo-scenario",
+  "schema_version": 1,
+  "id": "recovery",
+  "title": "Neglected corner zoo",
+  "summary": "A tiny zoo in trouble: the capybaras are thirsty in a dirty habitat, the feed store is empty and the food stand is breaking down. Cash is tight.",
+  "seed": 4,
+  "map": { "width": 16, "height": 12 },
+  "entrance": { "x": 0, "y": 6 },
+  "depot": { "x": 2, "y": 5 },
+  "starting_cash_cents": 400000,
+  "unlocks": { "species": ["capybara", "flamingo"], "facilities": ["food", "drink"] },
+  "setup": [
+    { "kind": "path", "from": { "x": 1, "y": 6 }, "to": { "x": 12, "y": 6 } },
+    { "kind": "habitat", "from": { "x": 4, "y": 1 }, "to": { "x": 8, "y": 5 } },
+    { "kind": "service_gate", "habitat": 1, "x": 6, "y": 5, "side": "south" },
+    { "kind": "work_zone", "from": { "x": 3, "y": 5 }, "to": { "x": 9, "y": 7 } },
+    { "kind": "hire_keeper" },
+    { "kind": "assign_keeper", "keeper": 1, "zone": 1 },
+    { "kind": "adopt", "habitat": 1, "species": "capybara", "count": 4 },
+    { "kind": "concession", "x": 10, "y": 7, "facility": "food" },
+    {
+      "kind": "habitat_condition",
+      "habitat": 1,
+      "food": 20,
+      "water": 15,
+      "cleanliness": 25,
+      "welfare": 30
+    },
+    { "kind": "concession_condition", "concession": 1, "condition": 15 },
+    { "kind": "feed_crates", "crates": 0 }
+  ],
+  "tutorial": "none",
+  "opening_focus": { "x": 6, "y": 4 },
+  "objectives": [
+    {
+      "id": "restock-feed",
+      "title": "Restock the depot with feed",
+      "goal": { "kind": "feed_crates", "at_least": 10 },
+      "focus": { "x": 2, "y": 5 }
+    },
+    {
+      "id": "healthy-animals",
+      "title": "Bring the capybaras' welfare back to 60",
+      "goal": { "kind": "welfare", "at_least": 60 },
+      "focus": { "x": 6, "y": 3 }
+    },
+    {
+      "id": "repair-stand",
+      "title": "Get the food stand serviced",
+      "goal": { "kind": "concessions_serviced" },
+      "focus": { "x": 10, "y": 7 }
+    }
+  ]
+}

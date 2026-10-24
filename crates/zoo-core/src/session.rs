@@ -77,9 +77,16 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> String {
     format!("fnv1a64:{hash:016x}")
 }
 
-pub(crate) fn start_identity(content_json: &str, ruleset_id: &str, schema_version: u32) -> Value {
+pub(crate) fn start_identity(
+    scenario: &crate::scenario::ScenarioIdentity,
+    content_json: &str,
+    ruleset_id: &str,
+    schema_version: u32,
+) -> Value {
     json!({
-        "scenario": "default",
+        "scenario": scenario.id,
+        "scenario_digest": scenario.digest,
+        "seed": scenario.seed,
         "ruleset_id": ruleset_id,
         "schema_version": schema_version,
         "content_digest": fnv1a64(content_json.as_bytes()),
@@ -101,8 +108,8 @@ impl Session {
         }
     }
 
-    /// Marks a session that began from a loaded save rather than the default scenario, so a
-    /// command-log replay from the default start fails closed instead of diverging silently.
+    /// Marks a session that began from a loaded save rather than a fresh scenario, so a
+    /// command-log replay from the scenario start fails closed instead of diverging silently.
     pub fn mark_save_start(&mut self, save_document: &str) {
         self.start["scenario"] = json!("save");
         self.start["save_digest"] = json!(fnv1a64(save_document.as_bytes()));

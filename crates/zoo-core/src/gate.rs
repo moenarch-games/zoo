@@ -4,10 +4,7 @@
 //! segment whose outside tile is nearest the animal-care depot by path, falling back to the
 //! first usable segment clockwise from the north-west corner. The tile outside the gate stays
 //! unbuildable; losing the path to it is allowed and only blocks care ("Gate unreachable").
-use super::{
-    ANIMAL_CARE_DEPOT_X, ANIMAL_CARE_DEPOT_Y, ActionResult, FenceSegment, FenceSide, GameState,
-    Habitat, Position, TileKind,
-};
+use super::{ActionResult, FenceSegment, FenceSide, GameState, Habitat, Position, TileKind};
 use serde::Serialize;
 
 pub(crate) fn gate_access_message(habitat_id: u32) -> String {
@@ -61,10 +58,7 @@ fn clockwise_segments(x: u32, y: u32, width: u32, height: u32) -> Vec<FenceSegme
 
 impl GameState {
     pub(crate) fn depot_position(&self) -> Position {
-        Position {
-            x: ANIMAL_CARE_DEPOT_X,
-            y: ANIMAL_CARE_DEPOT_Y,
-        }
+        self.depot
     }
 
     pub(crate) fn depot_access_tiles(&self) -> Vec<Position> {

@@ -2,6 +2,7 @@ mod care;
 mod content;
 mod gate;
 mod save;
+mod scenario;
 mod session;
 mod tutorial;
 mod zone;
@@ -14,9 +15,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
-const WIDTH: u32 = 20;
-const HEIGHT: u32 = 14;
+// The built-in empty starter layout, which most rule tests build on.
+#[cfg(test)]
 const ENTRANCE_X: u32 = 0;
+#[cfg(test)]
 const ENTRANCE_Y: u32 = 7;
 #[cfg(test)]
 const PATH_COST: i64 = 1_000;
@@ -43,7 +45,9 @@ const FOOD_PRICE: i64 = 500;
 const DRINK_PRICE: i64 = 350;
 const FOOD_BUY_THRESHOLD: u32 = 20;
 const DRINK_BUY_THRESHOLD: u32 = 20;
+#[cfg(test)]
 const ANIMAL_CARE_DEPOT_X: u32 = 2;
+#[cfg(test)]
 const ANIMAL_CARE_DEPOT_Y: u32 = ENTRANCE_Y - 1;
 #[cfg(test)]
 const FEED_BATCH_COST: i64 = 6_000;
@@ -93,6 +97,8 @@ enum TileKind {
     Habitat(u32),
     Concession(u32),
     AnimalCareDepot,
+    /// Authored scenario terrain: never buildable, walkable or demolishable.
+    Water,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -744,6 +750,12 @@ struct GameState {
     width: u32,
     height: u32,
     tiles: Vec<TileKind>,
+    entrance: Position,
+    depot: Position,
+    /// The immutable identity of the scenario this park was created from.
+    scenario: scenario::ScenarioIdentity,
+    unlocks: scenario::Unlocks,
+    objectives: Vec<scenario::ObjectiveProgress>,
     habitats: Vec<Habitat>,
     concessions: Vec<Concession>,
     keepers: Vec<Keeper>,
@@ -803,12 +815,35 @@ fn default_catalog() -> Arc<Catalog> {
 }
 
 impl Default for GameState {
+    /// The built-in empty starter park on the built-in content.
     fn default() -> Self {
+        scenario::Scenario::built_in(scenario::DEFAULT_SCENARIO_ID)
+            .expect("the default scenario is built in")
+            .create(default_catalog())
+            .expect("the built-in default scenario is valid")
+    }
+}
+
+impl GameState {
+    /// An unbuilt park of grass with only its entrance and depot; scenarios build on it.
+    fn blank(
+        catalog: Arc<Catalog>,
+        width: u32,
+        height: u32,
+        entrance: Position,
+        depot: Position,
+        scenario: scenario::ScenarioIdentity,
+    ) -> Self {
         let mut state = Self {
-            catalog: default_catalog(),
-            width: WIDTH,
-            height: HEIGHT,
-            tiles: vec![TileKind::Grass; (WIDTH * HEIGHT) as usize],
+            catalog,
+            width,
+            height,
+            tiles: vec![TileKind::Grass; (width * height) as usize],
+            entrance,
+            depot,
+            scenario,
+            unlocks: scenario::Unlocks::default(),
+            objectives: Vec::new(),
             habitats: Vec::new(),
             concessions: Vec::new(),
             keepers: Vec::new(),
@@ -844,20 +879,11 @@ impl Default for GameState {
             work: WorkCounters::default(),
         };
 
-        state.set_tile(ENTRANCE_X, ENTRANCE_Y, TileKind::Entrance);
-        for x in 1..=4 {
-            state.set_tile(x, ENTRANCE_Y, TileKind::Path);
-        }
-        state.set_tile(
-            ANIMAL_CARE_DEPOT_X,
-            ANIMAL_CARE_DEPOT_Y,
-            TileKind::AnimalCareDepot,
-        );
+        state.set_tile(entrance.x, entrance.y, TileKind::Entrance);
+        state.set_tile(depot.x, depot.y, TileKind::AnimalCareDepot);
         state
     }
-}
 
-impl GameState {
     fn index(&self, x: u32, y: u32) -> Option<usize> {
         (x < self.width && y < self.height).then_some((y * self.width + x) as usize)
     }
@@ -912,6 +938,7 @@ impl GameState {
     fn place_path(&mut self, x: u32, y: u32) -> ActionResult {
         match self.tile(x, y) {
             None => ActionResult::error("That tile is outside the park"),
+            Some(TileKind::Water) => ActionResult::error("Water covers that tile"),
             Some(TileKind::Path) => ActionResult::ok("Path already exists"),
             Some(TileKind::Entrance) => ActionResult::ok("The entrance already acts as a path"),
             Some(TileKind::Habitat(_)) => ActionResult::error("A habitat occupies that tile"),
@@ -948,6 +975,12 @@ impl GameState {
         let Some(kind) = ConcessionKind::parse(&definition.service) else {
             return ActionResult::error("Unknown concession type");
         };
+        if !self.unlocks.facility_unlocked(&definition.key) {
+            return ActionResult::error(format!(
+                "{} is not available in this scenario",
+                definition.label
+            ));
+        }
 
         match self.tile(x, y) {
             None => return ActionResult::error("That tile is outside the park"),
@@ -964,6 +997,9 @@ impl GameState {
             }
             Some(TileKind::Path) | Some(TileKind::Entrance) => {
                 return ActionResult::error("Build the stand on grass beside the path");
+            }
+            Some(TileKind::Water) => {
+                return ActionResult::error("Water covers that tile");
             }
             Some(TileKind::Habitat(_)) => {
                 return ActionResult::error("A habitat occupies that tile");
@@ -1227,6 +1263,7 @@ impl GameState {
         match self.tile(x, y) {
             None => ActionResult::error("That tile is outside the park"),
             Some(TileKind::Grass) => ActionResult::ok("Nothing to demolish"),
+            Some(TileKind::Water) => ActionResult::error("Water cannot be demolished"),
             Some(TileKind::Entrance) => {
                 ActionResult::error("The park entrance cannot be demolished")
             }
@@ -1326,6 +1363,12 @@ impl GameState {
         else {
             return ActionResult::error("Unknown species");
         };
+        if !self.unlocks.species_unlocked(&species.key) {
+            return ActionResult::error(format!(
+                "{} is not available in this scenario",
+                species.label()
+            ));
+        }
         let Some(index) = self
             .habitats
             .iter()
@@ -1398,8 +1441,8 @@ impl GameState {
             zone_id: None,
             schedule: care::KeeperSchedule::default(),
             deliveries_completed: 0,
-            x: ANIMAL_CARE_DEPOT_X,
-            y: ANIMAL_CARE_DEPOT_Y,
+            x: self.depot.x,
+            y: self.depot.y,
             activity: care::KeeperActivity::AtDepot,
             exit: None,
         });
@@ -1408,13 +1451,13 @@ impl GameState {
 
     fn depot_staff_spawn(&self) -> Option<Position> {
         let access_tiles = self.neighbors(Position {
-            x: ANIMAL_CARE_DEPOT_X,
-            y: ANIMAL_CARE_DEPOT_Y,
+            x: self.depot.x,
+            y: self.depot.y,
         });
         self.path_to_any(
             Position {
-                x: ENTRANCE_X,
-                y: ENTRANCE_Y,
+                x: self.entrance.x,
+                y: self.entrance.y,
             },
             &access_tiles,
         )
@@ -1738,8 +1781,8 @@ impl GameState {
 
     fn try_spawn_guest(&mut self) {
         let start = Position {
-            x: ENTRANCE_X,
-            y: ENTRANCE_Y,
+            x: self.entrance.x,
+            y: self.entrance.y,
         };
         let viewing_occupancy = self.viewing_occupancy();
         let mut candidates: Vec<(u32, Vec<Position>)> = self
@@ -1901,8 +1944,8 @@ impl GameState {
                 GuestState::WalkingToExit => self.path_between(
                     start,
                     Position {
-                        x: ENTRANCE_X,
-                        y: ENTRANCE_Y,
+                        x: self.entrance.x,
+                        y: self.entrance.y,
                     },
                 ),
                 GuestState::Viewing => unreachable!("viewing guests have no active walking route"),
@@ -2151,8 +2194,8 @@ impl GameState {
             }
 
             let exit = Position {
-                x: ENTRANCE_X,
-                y: ENTRANCE_Y,
+                x: self.entrance.x,
+                y: self.entrance.y,
             };
             if let Some(route) = self.path_between(start, exit) {
                 let guest = &mut self.guests[index];
@@ -3118,6 +3161,7 @@ impl GameState {
         self.catalog
             .species
             .iter()
+            .filter(|species| self.unlocks.species_unlocked(&species.key))
             .map(|species| {
                 let profile = species.welfare_profile();
                 SpeciesOfferView {
@@ -3368,8 +3412,8 @@ impl GameState {
 
     fn animal_care_depot_view(&self) -> AnimalCareDepotView {
         AnimalCareDepotView {
-            x: ANIMAL_CARE_DEPOT_X,
-            y: ANIMAL_CARE_DEPOT_Y,
+            x: self.depot.x,
+            y: self.depot.y,
             feed_crates: self.feed_crates,
             feed_batch_crates: FEED_BATCH_CRATES,
             feed_batch_cost_cents: self.catalog.balance.feed_batch_cents,
@@ -3424,6 +3468,7 @@ impl GameState {
                     TileKind::Habitat(_) => "habitat",
                     TileKind::Concession(_) => "concession",
                     TileKind::AnimalCareDepot => "grass",
+                    TileKind::Water => "water",
                 };
                 let habitat_id = match self.tile(x, y) {
                     Some(TileKind::Habitat(id)) => Some(id),
@@ -3567,7 +3612,17 @@ impl GameState {
 
         Snapshot {
             ruleset_id: self.catalog.ruleset_id.clone(),
-            facility_catalog: self.catalog.facilities.clone(),
+            facility_catalog: self
+                .catalog
+                .facilities
+                .iter()
+                // Landmarks (entrance, depot) are not buildable, so unlocks never hide them.
+                .filter(|facility| {
+                    ConcessionKind::parse(&facility.service).is_none()
+                        || self.unlocks.facility_unlocked(&facility.key)
+                })
+                .cloned()
+                .collect(),
             width: self.width,
             height: self.height,
             day: self.day,
@@ -3576,8 +3631,8 @@ impl GameState {
             rating: self.rating(),
             guest_count: self.guests.len() as u32,
             entrance: EntranceView {
-                x: ENTRANCE_X,
-                y: ENTRANCE_Y,
+                x: self.entrance.x,
+                y: self.entrance.y,
                 arrivals_total: self.next_guest_id.saturating_sub(1),
             },
             tiles,
@@ -3644,6 +3699,7 @@ impl GameState {
                 self.finance_previous,
             ),
             tutorial: self.tutorial_view(),
+            scenario: self.scenario_view(),
         }
     }
 }
@@ -3965,6 +4021,7 @@ struct Snapshot {
     complaints: ComplaintSummary,
     finance: FinanceView,
     tutorial: tutorial::TutorialView,
+    scenario: scenario::ScenarioView,
 }
 
 #[derive(Serialize)]
@@ -3993,6 +4050,13 @@ impl ActionResult {
     }
 }
 
+/// The built-in scenarios offered by the New park picker, in order: id, title, summary, map
+/// size, starting cash, whether keeper training runs, and objective titles.
+#[wasm_bindgen]
+pub fn scenario_catalog_json() -> String {
+    scenario::catalog_json()
+}
+
 #[wasm_bindgen]
 pub struct ZooGame {
     state: GameState,
@@ -4004,6 +4068,7 @@ impl ZooGame {
         let content = serde_json::to_string(state.catalog.as_ref())
             .expect("validated catalog serialization is infallible");
         let start = session::start_identity(
+            &state.scenario,
             &content,
             &state.catalog.ruleset_id,
             state.catalog.schema_version,
@@ -4033,6 +4098,7 @@ impl ZooGame {
         } else {
             let result = run(&mut self.state);
             self.state.update_tutorial();
+            self.state.update_objectives();
             result
         };
         self.session
@@ -4079,6 +4145,7 @@ impl ZooGame {
         }
         self.state.tick(minutes);
         self.state.update_tutorial();
+        self.state.update_objectives();
         self.session.record_advance(tick, u64::from(minutes));
         self.drain_events();
         Some(ActionResult::ok(session::advance_message(u64::from(
@@ -4176,21 +4243,47 @@ impl ZooGame {
             .expect("validated catalog serialization is infallible")
     }
 
+    /// The built-in empty starter park on validated content.
     pub fn from_content_json(document: &str) -> Result<ZooGame, String> {
         let catalog = Arc::new(Catalog::parse(document)?);
-        Ok(Self::with_state(GameState {
-            catalog,
-            ..GameState::default()
-        }))
+        Self::from_scenario(catalog, scenario::DEFAULT_SCENARIO_ID)
+    }
+
+    fn from_scenario(catalog: Arc<Catalog>, scenario_id: &str) -> Result<ZooGame, String> {
+        let scenario = scenario::Scenario::built_in(scenario_id)
+            .ok_or_else(|| format!("unknown scenario {scenario_id}"))?;
+        Ok(Self::with_state(scenario.create(catalog)?))
+    }
+
+    /// Replaces the active park with a fresh park from the built-in scenario `scenario_id`,
+    /// on the active content. Returns `{ok, message}`; a scenario that fails validation
+    /// leaves the current park and session untouched.
+    pub fn start_scenario(&mut self, scenario_id: &str) -> String {
+        match Self::from_scenario(Arc::clone(&self.state.catalog), scenario_id) {
+            Ok(game) => {
+                let title = game.state.scenario.title.clone();
+                *self = game;
+                ActionResult::ok(format!("New park started from “{title}”")).json()
+            }
+            Err(message) => {
+                ActionResult::error(format!("Scenario {scenario_id} could not start: {message}"))
+                    .json()
+            }
+        }
     }
 
     /// Rebuilds a park from validated content and a recorded diagnostics bundle by
-    /// re-executing its ordered command log. Fails closed when the content does not match
-    /// the recorded starting identity, the log is incomplete, or any result diverges.
+    /// re-creating its recorded built-in scenario and re-executing its ordered command log.
+    /// Fails closed when the content or scenario does not match the recorded starting
+    /// identity, the log is incomplete, or any result diverges.
     pub fn replay(content_document: &str, session_json: &str) -> Result<ZooGame, String> {
-        let mut game = ZooGame::from_content_json(content_document)?;
         let bundle: serde_json::Value = serde_json::from_str(session_json)
             .map_err(|error| format!("malformed diagnostics bundle: {error}"))?;
+        let scenario_id = bundle["start"]["scenario"]
+            .as_str()
+            .ok_or("diagnostics bundle records no starting scenario")?;
+        let catalog = Arc::new(Catalog::parse(content_document)?);
+        let mut game = ZooGame::from_scenario(catalog, scenario_id)?;
         if &bundle["start"] != game.session.start() {
             return Err("content does not match the recorded starting-state identity".to_owned());
         }
@@ -4237,13 +4330,6 @@ impl ZooGame {
             })
             .to_string(),
         }
-    }
-
-    pub fn reset(&mut self) {
-        *self = Self::with_state(GameState {
-            catalog: Arc::clone(&self.state.catalog),
-            ..GameState::default()
-        });
     }
 
     pub fn snapshot_json(&self) -> String {

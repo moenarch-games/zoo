@@ -16,6 +16,8 @@ import type {
   Keeper,
   PlacementEvaluation,
   Point,
+  ScenarioState,
+  ScenarioSummary,
   Snapshot,
   SpeciesKey,
   SpeciesOffer,
@@ -33,7 +35,7 @@ import {
   summarizeDocument,
 } from "./park-storage"
 import { ParkLibraryPanel, type PanelPrompt } from "./ParkLibraryPanel"
-import type { ParkPick } from "./ParkView"
+import type { CameraRequest, ParkPick } from "./ParkView"
 import {
   loadSceneryManifest,
   SCENERY_PIECES,
@@ -41,11 +43,22 @@ import {
   type SceneryPiece,
 } from "./scenery-manifest"
 import { type LoadCheck, useParkLibrary } from "./use-park-library"
-import init, { ZooGame } from "./wasm/zoo_core"
+import init, { scenario_catalog_json, ZooGame } from "./wasm/zoo_core"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
 /** How the selected work zone is being edited with the Zones tool. */
 type ZoneEdit = "resize" | "move" | null
+
+const DEFAULT_SCENARIO_ID = "empty-starter"
+
+/** The opening line for a new park: keeper training, or its first objective. */
+function scenarioHint(scenario: ScenarioState) {
+  const first = scenario.objectives.find((objective) => !objective.done)
+  if (first) {
+    return `First objective: ${first.title}.`
+  }
+  return "Extend the entrance path, draw a habitat, then stock and staff it through the care depot."
+}
 
 function idList(ids: number[]) {
   return ids.length === 0 ? "None" : ids.map((id) => `#${id}`).join(", ")
@@ -194,14 +207,21 @@ export default function App() {
   const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null)
   const [zoneEdit, setZoneEdit] = useState<ZoneEdit>(null)
   const [assignKeeperId, setAssignKeeperId] = useState<number | null>(null)
-  const [cameraResetToken, setCameraResetToken] = useState(0)
+  const [camera, setCamera] = useState<CameraRequest>({ token: 0, focus: null })
+  const requestCamera = (focus: Point | null) =>
+    setCamera((current) => ({ token: current.token + 1, focus }))
   const [parkViewMount, setParkViewMount] = useState(0)
   const [startupFailure, setStartupFailure] = useState<string | null>(null)
   // #89: the start screen shows once the simulation is ready; play begins with a new, loaded
   // or imported park. The park menu is the in-game library dialog.
   const [gameReady, setGameReady] = useState(false)
+  const scenarios = useMemo<ScenarioSummary[]>(
+    () => (gameReady ? (JSON.parse(scenario_catalog_json()) as ScenarioSummary[]) : []),
+    [gameReady],
+  )
   const [screen, setScreen] = useState<"start" | "play">("start")
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuView, setMenuView] = useState<"main" | "new">("main")
   const [prompt, setPrompt] = useState<PanelPrompt | null>(null)
 
   const notify = useCallback((text: string, kind: "info" | "error" = "info") => {
@@ -1088,7 +1108,7 @@ export default function App() {
     stoppedRef.current = false
     setRecovery(null)
     setManualExport(null)
-    background(newPark())
+    background(newPark(snapshot?.scenario.id ?? DEFAULT_SCENARIO_ID))
   }
 
   const resetView = () => {
@@ -1100,7 +1120,7 @@ export default function App() {
     setSelectedDepot(false)
     setSelectedZoneId(null)
     setHoveredTile(null)
-    setCameraResetToken((token) => token + 1)
+    requestCamera(null)
   }
 
   const enterPlay = () => {
@@ -1111,16 +1131,29 @@ export default function App() {
   }
 
   /** A fresh park in a new library slot; existing saves are never touched. */
-  const newPark = async () => {
+  const newPark = async (scenarioId: string) => {
+    const text = callGame((game) => game.start_scenario(scenarioId))
+    const result: ActionResult =
+      text === undefined
+        ? { ok: false, message: "The park simulation is stopped." }
+        : (JSON.parse(text) as ActionResult)
+    if (!result.ok) {
+      notify(`${result.message} The current park is unchanged.`, "error")
+      return null
+    }
     resetView()
-    callGame((game) => game.reset())
     diagnostics.retain()
     const next = enterPlay()
+    if (next) {
+      // Open on the scenario's first objective; Reset view still frames the whole park.
+      requestCamera(next.scenario.opening_focus)
+    }
     const slot = await library.createSlot(library.defaultName())
+    const hint = next ? scenarioHint(next.scenario) : ""
     notify(
       slot
-        ? `New park “${slot.name}” started. Extend the entrance path, draw a habitat, then stock and staff it through the care depot.`
-        : "New park started. It cannot be stored in this browser; export it to keep it.",
+        ? `New park “${slot.name}” started. ${hint}`
+        : `New park started. It cannot be stored in this browser; export it to keep it. ${hint}`,
     )
     return next
   }
@@ -1202,7 +1235,8 @@ export default function App() {
     })
   }
 
-  const requestNewPark = () => guardReplace("A new park", () => void newPark())
+  const requestNewPark = (scenarioId: string) =>
+    guardReplace("A new park", () => void newPark(scenarioId))
 
   const requestLoad = (entry: SlotEntry, save: SaveSummary) =>
     guardReplace(`Loading “${entry.slot.name}”`, () => void loadEntry(entry, save))
@@ -1237,6 +1271,8 @@ export default function App() {
       messageKind={messageKind}
       prompt={prompt}
       onContinue={continueLatest}
+      scenarios={scenarios}
+      initialView={mode === "menu" ? menuView : "main"}
       onNew={requestNewPark}
       onLoad={requestLoad}
       onImport={(file) => void importPark(file)}
@@ -1339,7 +1375,10 @@ export default function App() {
         <div className="speed-controls" aria-label="Simulation speed">
           <button
             className="park-menu-button"
-            onClick={() => setMenuOpen(true)}
+            onClick={() => {
+              setMenuView("main")
+              setMenuOpen(true)
+            }}
             title="Park menu: save, load, import, export"
             aria-label="Park menu"
             aria-haspopup="dialog"
@@ -1348,7 +1387,7 @@ export default function App() {
           </button>
           <button
             className="view-reset"
-            onClick={() => setCameraResetToken((token) => token + 1)}
+            onClick={() => requestCamera(null)}
             title="Reset view (Home)"
             aria-label="Reset view"
           >
@@ -1383,7 +1422,7 @@ export default function App() {
             overlay={overlay}
             paused={speed === 0}
             dragTool={tool === "path" || tool === "habitat" || tool === "zone"}
-            resetToken={cameraResetToken}
+            camera={camera}
             tooltip={tooltip}
             onTileDown={onTileDown}
             onTileDrag={onTileDrag}
@@ -1443,6 +1482,9 @@ export default function App() {
               onFocus={() => focus?.run()}
               onSkip={skipTutorial}
             />
+          )}
+          {snapshot.scenario.objectives.length > 0 && (
+            <ObjectiveChecklist scenario={snapshot.scenario} onShow={requestCamera} />
           )}
           {selectedDepot && (
             <>
@@ -2244,7 +2286,13 @@ export default function App() {
                     Restart keeper training
                   </button>
                 )}
-                <button className="secondary" onClick={requestNewPark}>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setMenuView("new")
+                    setMenuOpen(true)
+                  }}
+                >
                   Start new park
                 </button>
                 <SceneryCredits />
@@ -2526,6 +2574,44 @@ function TutorialChecklist({
         {focusLabel !== null && <button onClick={onFocus}>{focusLabel}</button>}
         <button onClick={onSkip}>Skip training</button>
       </div>
+    </details>
+  )
+}
+
+/** The scenario's state-backed goals (#91); each can frame its tile in the 3D view. */
+function ObjectiveChecklist({
+  scenario,
+  onShow,
+}: {
+  scenario: ScenarioState
+  onShow: (focus: Point) => void
+}) {
+  const next = scenario.objectives.find((objective) => !objective.done)
+  const doneCount = scenario.objectives.filter((objective) => objective.done).length
+  return (
+    <details className="tutorial-card bevel" open aria-label="Scenario objectives">
+      <summary>
+        {scenario.title} · {doneCount}/{scenario.objectives.length}
+      </summary>
+      <ol>
+        {scenario.objectives.map((objective) => (
+          <li
+            key={objective.id}
+            data-objective={objective.id}
+            className={[objective.done && "done", objective === next && "next"]
+              .filter(Boolean)
+              .join(" ")}
+            aria-current={objective === next ? "step" : undefined}
+          >
+            <span aria-hidden="true">{objective.done ? "✓" : "○"}</span> {objective.title}
+          </li>
+        ))}
+      </ol>
+      {next && (
+        <div className="tutorial-actions">
+          <button onClick={() => onShow(next.focus)}>Show next goal</button>
+        </div>
+      )}
     </details>
   )
 }

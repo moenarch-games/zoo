@@ -11,17 +11,63 @@ import { writeFileSync } from "node:fs"
 const START = `[aria-label="Zoo start"]`
 const MENU = `[aria-label="Park menu"][role="dialog"]`
 
-/** Waits for the start screen (or a startup failure) and starts a new park from it. */
-export async function enterNewPark({ evaluate, sleep }) {
+/**
+ * Picks `scenario` in the open New park picker (#91) and starts it. Returns false when the
+ * picker or its Start button is missing.
+ */
+export async function startPickedScenario({ evaluate, sleep }, scenario) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const state = await evaluate(`(() => {
+      const card = document.querySelector('.scenario-card[data-scenario=${JSON.stringify(scenario)}]')
+      if (!card) return "waiting"
+      card.click()
+      return "picked"
+    })()`)
+    if (state === "picked") break
+    if (attempt === 49) return false
+    await sleep(100)
+  }
+  await sleep(50)
+  return evaluate(`(() => {
+    const button = [...document.querySelectorAll('.library-panel button')].find((candidate) =>
+      candidate.textContent.startsWith('Start “'))
+    if (!button || button.disabled) return false
+    button.click()
+    return true
+  })()`)
+}
+
+/** Waits for the park view, then frames the whole park as the pre-#91 journeys expect. */
+export async function frameWholePark({ evaluate, sleep }) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (await evaluate(`Boolean(window.__zooParkView?.ready && window.__zooParkView.camera())`)) break
+    await sleep(100)
+  }
+  await evaluate(`[...document.querySelectorAll('button')].find((candidate) =>
+    (candidate.getAttribute('aria-label') ?? candidate.textContent ?? '').includes('Reset view'))?.click()`)
+  await sleep(150)
+}
+
+/**
+ * Waits for the start screen (or a startup failure), opens New park, starts `scenario` and,
+ * unless `wholePark` is false, resets the scenario's opening focus to the whole-park view.
+ */
+export async function enterNewPark(context, { scenario = "empty-starter", wholePark = true } = {}) {
+  const { evaluate, sleep } = context
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const state = await evaluate(`(() => {
       if (document.querySelector('[aria-label="Park recovery"]')?.textContent.includes('Park could not start')) return "failed"
       const button = [...document.querySelectorAll('${START} button')].find((candidate) => candidate.textContent === 'New park')
       if (!button) return "waiting"
       button.click()
-      return "started"
+      return "picking"
     })()`)
-    if (state !== "waiting") return state
+    if (state === "failed") return state
+    if (state === "picking") {
+      if (!(await startPickedScenario(context, scenario))) return "no-picker"
+      if (wholePark) await frameWholePark(context)
+      return "started"
+    }
     await sleep(100)
   }
   throw new Error("Timed out waiting for the Zoo start screen")
@@ -163,6 +209,8 @@ export async function runParkLibraryAcceptance(context) {
   // Canceling New park on unsaved progress keeps the park.
   await openMenu()
   await pressIn(MENU, "New park")
+  assert(await startPickedScenario(context, "empty-starter"), "#91: New park picker missing")
+  await sleep(150)
   assert(
     (await panelText()).includes("not saved yet"),
     "#89: New park did not warn about unsaved progress",
@@ -173,6 +221,7 @@ export async function runParkLibraryAcceptance(context) {
     (await evaluate(`document.querySelector('.brand span').textContent`)) === parkA,
     "#89: canceled New park replaced the park",
   )
+  await pressIn(MENU, "Back")
   await closeMenu()
   const savedA = await save()
   const cashA = await cash()
@@ -180,7 +229,10 @@ export async function runParkLibraryAcceptance(context) {
 
   await openMenu()
   await pressIn(MENU, "New park")
+  assert(await startPickedScenario(context, "empty-starter"), "#91: New park picker missing")
+  await sleep(150)
   await ready()
+  await frameWholePark(context)
   await pause()
   const parkB = await evaluate(`document.querySelector('.brand span').textContent`)
   assert(parkB !== parkA, "#89: second park reused the first slot", { parkA, parkB })

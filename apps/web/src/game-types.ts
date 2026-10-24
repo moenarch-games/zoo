@@ -31,7 +31,7 @@ export type ViewingSpot = Point & {
 }
 
 export type Tile = Point & {
-  kind: "grass" | "path" | "entrance" | "habitat" | "concession"
+  kind: "grass" | "path" | "entrance" | "habitat" | "concession" | "water"
   habitat_id: number | null
   concession_id: number | null
 }
@@ -305,6 +305,34 @@ export type Tutorial = {
   problem: string | null
 }
 
+/** One New park choice from zoo-core's built-in scenario catalog (#91). */
+export type ScenarioSummary = {
+  id: string
+  title: string
+  summary: string
+  width: number
+  height: number
+  starting_cash_cents: number
+  keeper_training: boolean
+  objectives: string[]
+}
+
+export type Objective = {
+  id: string
+  title: string
+  done: boolean
+  focus: Point
+}
+
+/** The active park's scenario source and its state-backed objectives. */
+export type ScenarioState = {
+  id: string
+  title: string
+  seed: number
+  opening_focus: Point
+  objectives: Objective[]
+}
+
 export type Snapshot = {
   ruleset_id: string
   facility_catalog: FacilityOffer[]
@@ -353,6 +381,7 @@ export type Snapshot = {
     profit_trend: "up" | "down" | "flat" | "no_previous_day"
   }
   tutorial: Tutorial
+  scenario: ScenarioState
 }
 
 export type ActionResult = {

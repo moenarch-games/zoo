@@ -105,6 +105,16 @@ impl Default for Tutorial {
     }
 }
 
+impl Tutorial {
+    /// A checklist that does not run until the player restarts it.
+    pub(crate) fn skipped() -> Self {
+        Self {
+            status: TutorialStatus::Skipped,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub(crate) struct TutorialStepView {
     key: TutorialStep,

@@ -8,9 +8,9 @@ const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
 const MAX_ENTRIES: usize = 128;
 const MAX_STRING_BYTES: usize = 256;
 pub(crate) const MAX_CENTS: i64 = 9_007_199_254_740_991;
-// A park has WIDTH*HEIGHT tiles and habitat capacity is twelve. Bound even
+// A park has at most MAX_MAP_TILES tiles and habitat capacity is twelve. Bound even
 // a conservative whole-park appeal sum before any arithmetic is performed.
-const MAX_RULE_VALUE: u32 = u32::MAX / (super::WIDTH * super::HEIGHT * 12);
+const MAX_RULE_VALUE: u32 = u32::MAX / (super::scenario::MAX_MAP_TILES * 12);
 pub(crate) const SCHEMA_VERSION: u32 = 2;
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 

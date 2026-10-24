@@ -4,6 +4,7 @@ use serde_json::Value;
 use zoo_core::ZooGame;
 
 const FIXTURE_V1: &str = "tests/fixtures/save-v1.json";
+const FIXTURE_V2: &str = "tests/fixtures/save-v2.json";
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
@@ -123,7 +124,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 2.into()),
+            mutate(&|v| v["schema_version"] = 3.into()),
         ),
         (
             "invalid_save",
@@ -178,20 +179,40 @@ fn repeated_imports_replace_rather_than_accumulate() {
 }
 
 #[test]
-fn the_schema_v1_fixture_still_loads_unchanged() {
+fn the_schema_v2_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V1,
+            FIXTURE_V2,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V1).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V2).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));
     let diagnostics = json(&game.diagnostics_json());
     assert_eq!(diagnostics["start"]["scenario"], "save");
+    game.tick(60);
+}
+
+/// Schema 1 parks were all the fixed empty starter layout; migration records exactly that.
+#[test]
+fn the_schema_v1_fixture_migrates_to_the_empty_starter_source() {
+    let fixture = std::fs::read_to_string(FIXTURE_V1).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    let park = saved["park"].as_object_mut().unwrap();
+    assert_eq!(park["scenario"]["id"], "empty-starter");
+    assert_eq!(park["scenario"]["digest"], Value::Null);
+    assert_eq!(park["entrance"], serde_json::json!({ "x": 0, "y": 7 }));
+    assert_eq!(park["depot"], serde_json::json!({ "x": 2, "y": 6 }));
+    for key in ["entrance", "depot", "scenario", "unlocks", "objectives"] {
+        park.remove(key);
+    }
+    saved["schema_version"] = 1.into();
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
     game.tick(60);
 }
