@@ -5,6 +5,7 @@ import {runConstructionAcceptance} from "./construction-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
+import {runScenarioAcceptance} from "./scenario-proof.mjs"
 
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
 const contentAcceptance = process.env.ZOO_CONTENT_ACCEPTANCE
@@ -512,6 +513,9 @@ try {
   await runParkLibraryAcceptance({
     cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, drag, screenshot, connectCdp, debuggingPort,
   })
+
+  // #91: New park → pick each scenario → framed, playable, reproducible start.
+  await runScenarioAcceptance({cdp, evaluate, assert, sleep, previewUrl, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

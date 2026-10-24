@@ -212,6 +212,20 @@ impl ParkCameraRig {
         Ok(())
     }
 
+    /// Opens the default view centered on park tile `(x, y)` at `zoom`, framing a scenario's
+    /// first objective. Orbit, tilt, zoom and pan stay free afterwards, and [`Self::reset`]
+    /// still frames the whole park.
+    pub fn focus_tile(&mut self, x: f32, y: f32, zoom: f32) {
+        self.reset();
+        if x.is_finite() && y.is_finite() {
+            self.target.x = (x + 0.5).clamp(0.0, self.park_width);
+            self.target.z = (y + 0.5).clamp(0.0, self.park_depth);
+        }
+        if zoom.is_finite() {
+            self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        }
+    }
+
     fn shift_target(&mut self, delta_x: f32, delta_z: f32) {
         self.target.x = (self.target.x + delta_x).clamp(-PAN_MARGIN, self.park_width + PAN_MARGIN);
         self.target.z = (self.target.z + delta_z).clamp(-PAN_MARGIN, self.park_depth + PAN_MARGIN);
@@ -419,6 +433,10 @@ impl ParkCameraBridge {
         self.rig.reset();
     }
 
+    pub fn focus_tile(&mut self, x: f32, y: f32, zoom: f32) {
+        self.rig.focus_tile(x, y, zoom);
+    }
+
     pub fn orbit_by_degrees(&mut self, yaw_delta: f32, pitch_delta: f32) {
         self.rig.orbit_by_degrees(yaw_delta, pitch_delta);
     }
@@ -521,6 +539,30 @@ mod tests {
     #[test]
     fn default_view_targets_park_center() {
         assert_eq!(rig().target(), Vec3::new(10.0, 0.0, 7.0));
+    }
+
+    #[test]
+    fn focus_frames_the_objective_tile_and_reset_returns_to_the_whole_park() {
+        for aspect in [DESKTOP, PHONE] {
+            let mut rig = rig();
+            rig.orbit_by_degrees(40.0, 20.0);
+            rig.focus_tile(15.0, 3.0, 1.8);
+            assert_eq!(rig.target(), Vec3::new(15.5, 0.0, 3.5));
+            let center = rig
+                .pick_tile(ScreenPoint::new(0.0, 0.0), aspect)
+                .expect("picks")
+                .expect("hits the park");
+            assert_eq!(
+                center,
+                ParkTile { x: 15, y: 3 },
+                "the focused tile is under the center"
+            );
+            rig.focus_tile(99.0, -5.0, 100.0);
+            assert_eq!(rig.target(), Vec3::new(WIDTH, 0.0, 0.0));
+            assert_eq!(rig.zoom(), MAX_ZOOM);
+            rig.reset();
+            assert_park_inside_frame(rig, aspect);
+        }
     }
 
     #[test]

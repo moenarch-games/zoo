@@ -325,6 +325,7 @@ impl GameState {
                     new_tiles.push(tile);
                     None
                 }
+                Some(TileKind::Water) => Some("Water blocks the stroke"),
                 Some(TileKind::Habitat(_)) => Some("A habitat blocks the stroke"),
                 Some(TileKind::Concession(_)) => Some("A concession stand blocks the stroke"),
                 Some(TileKind::AnimalCareDepot) => {
@@ -431,6 +432,12 @@ impl GameState {
         if ConcessionKind::parse(&definition.service).is_none() {
             return reject("Unknown concession type".to_owned());
         }
+        if !self.unlocks.facility_unlocked(&definition.key) {
+            return reject(format!(
+                "{} is not available in this scenario",
+                definition.label
+            ));
+        }
         match self.tile(x, y) {
             None => return reject("That tile is outside the park".to_owned()),
             Some(TileKind::Concession(id)) => {
@@ -450,6 +457,7 @@ impl GameState {
             Some(TileKind::Path | TileKind::Entrance) => {
                 return reject("Build the stand on grass beside the path".to_owned());
             }
+            Some(TileKind::Water) => return reject("Water covers that tile".to_owned()),
             Some(TileKind::Habitat(_)) => return reject("A habitat occupies that tile".to_owned()),
             Some(TileKind::AnimalCareDepot) => {
                 return reject("The central animal-care depot occupies that tile".to_owned());
@@ -644,6 +652,7 @@ impl GameState {
                 None,
             ),
             Some(TileKind::Entrance) => reject("The park entrance cannot be demolished"),
+            Some(TileKind::Water) => reject("Water cannot be demolished"),
             Some(TileKind::AnimalCareDepot) => {
                 reject("The central animal-care depot cannot be demolished")
             }

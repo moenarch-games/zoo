@@ -68,10 +68,15 @@ export class StorageError extends Error {
 export function summarizeDocument(document: string) {
   const value = JSON.parse(document) as {
     content?: { ruleset_id?: string }
-    park?: { day?: number; minute_of_day?: number; elapsed_minutes?: number }
+    park?: {
+      day?: number
+      minute_of_day?: number
+      elapsed_minutes?: number
+      scenario?: { title?: string }
+    }
   }
   return {
-    scenario: value.content?.ruleset_id ?? "unknown",
+    scenario: value.park?.scenario?.title ?? value.content?.ruleset_id ?? "unknown",
     day: value.park?.day ?? 0,
     minute: value.park?.minute_of_day ?? 0,
     tick: value.park?.elapsed_minutes ?? 0,

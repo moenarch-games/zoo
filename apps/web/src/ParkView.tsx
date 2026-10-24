@@ -6,7 +6,7 @@ import {
   type RendererWorkObservations,
   type ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import { loadEffectsKit } from "./effects-kit"
 import type { Point, Snapshot } from "./game-types"
@@ -44,7 +44,8 @@ type Props = {
   paused: boolean
   /** When true, a primary drag starting on a park tile drives the tool instead of panning. */
   dragTool: boolean
-  resetToken: number
+  /** Each new token reframes the camera: on `focus` (a scenario objective) or the whole park. */
+  camera: CameraRequest
   tooltip?: ReactNode
   onTileDown: (tile: Point) => void
   onTileDrag: (tile: Point) => void
@@ -54,6 +55,11 @@ type Props = {
   /** Reported once when the renderer fails (startup, a render exception or WebGL context loss). */
   onRendererFailure?: (message: string) => void
 }
+
+export type CameraRequest = { token: number; focus: Point | null }
+
+/** Closer than the whole-park frame, so an objective reads clearly; the player zooms freely. */
+const FOCUS_ZOOM = 1.8
 
 type CameraFrame = RendererCamera & {
   eye: Vec3
@@ -158,6 +164,21 @@ export default function ParkView(props: Props) {
   const sceneDirtyRef = useRef(true)
   const bridgeRef = useRef<ParkCameraBridge | null>(null)
   const cameraDirtyRef = useRef(true)
+  const appliedCameraRef = useRef(-1)
+  const applyCameraRequest = useCallback(() => {
+    const bridge = bridgeRef.current
+    const request = propsRef.current.camera
+    if (!bridge || request.token === appliedCameraRef.current) {
+      return
+    }
+    appliedCameraRef.current = request.token
+    if (request.focus) {
+      bridge.focus_tile(request.focus.x, request.focus.y, FOCUS_ZOOM)
+    } else {
+      bridge.reset()
+    }
+    cameraDirtyRef.current = true
+  }, [])
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading")
 
   // Any new snapshot or overlay requires a full scene rebuild on the next frame.
@@ -872,6 +893,10 @@ export default function ParkView(props: Props) {
         effects = effectsKit && new ParkEffects(effectsKit)
         bridge = new ParkCameraBridge(parkWidth, parkHeight)
         bridgeRef.current = bridge
+        // A fresh rig (new park or new map size) applies the latest request, such as a new
+        // scenario's opening focus that arrived before the rig existed.
+        appliedCameraRef.current = -1
+        applyCameraRequest()
         renderer = createThreeSceneRenderer(canvas, { background: BACKGROUND, antialias: true })
         // The loader hook is the shared renderer's public route to its Three.js WebGLRenderer.
         renderer.configureTextureLoader({
@@ -918,21 +943,18 @@ export default function ParkView(props: Props) {
       bridge?.free()
       bridgeRef.current = null
     }
-  }, [parkWidth, parkHeight])
+  }, [parkWidth, parkHeight, applyCameraRequest])
 
-  // Camera reset requests from the HUD.
-  const firstResetRef = useRef(props.resetToken)
+  // Camera requests from the HUD (reset) and from starting a scenario (opening focus).
   useEffect(() => {
-    if (props.resetToken === firstResetRef.current) {
-      return
-    }
-    bridgeRef.current?.reset()
-    cameraDirtyRef.current = true
-  }, [props.resetToken])
+    applyCameraRequest()
+  }, [props.camera.token, applyCameraRequest])
 
   return (
     <div ref={containerRef} className="park-view" data-renderer={status}>
+      {/* A new map size gets a fresh canvas: a released WebGL context cannot be reused. */}
       <canvas
+        key={`${parkWidth}x${parkHeight}`}
         ref={canvasRef}
         className="park-canvas"
         tabIndex={0}

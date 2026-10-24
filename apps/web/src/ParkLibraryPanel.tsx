@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 
+import type { ScenarioSummary } from "./game-types"
 import {
   AUTOSAVE_CADENCES,
   type AutosaveCadence,
@@ -22,17 +23,21 @@ type Props = {
   messageKind: "info" | "error"
   prompt: PanelPrompt | null
   onContinue: () => void
-  onNew: () => void
+  scenarios: ScenarioSummary[]
+  /** The view the panel opens on; the park manager opens the New park picker directly. */
+  initialView: "main" | "new"
+  onNew: (scenarioId: string) => void
   onLoad: (entry: SlotEntry, save: SaveSummary) => void
   onImport: (file: File) => void
   onSaveAs: (name: string) => void
   onClose: () => void
 }
 
-type View = "main" | "load" | "settings" | "save-as"
+type View = "main" | "new" | "load" | "settings" | "save-as"
 
 const VIEW_TITLES: Record<View, string> = {
   main: "",
+  new: " · New park",
   load: " · Load park",
   settings: " · Settings",
   "save-as": " · Save as",
@@ -53,13 +58,16 @@ export function ParkLibraryPanel({
   messageKind,
   prompt,
   onContinue,
+  scenarios,
+  initialView,
   onNew,
   onLoad,
   onImport,
   onSaveAs,
   onClose,
 }: Props) {
-  const [view, setView] = useState<View>("main")
+  const [view, setView] = useState<View>(initialView)
+  const [scenarioId, setScenarioId] = useState(scenarios[0]?.id ?? "")
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
   const [saveAsName, setSaveAsName] = useState("")
@@ -113,6 +121,41 @@ export function ParkLibraryPanel({
           ))}
         </div>
       </div>
+    )
+  } else if (view === "new") {
+    const chosen = scenarios.find((scenario) => scenario.id === scenarioId) ?? scenarios[0]
+    body = (
+      <>
+        <div className="scenario-list" role="radiogroup" aria-label="Starting park">
+          {scenarios.map((scenario) => (
+            <button
+              key={scenario.id}
+              role="radio"
+              aria-checked={scenario.id === chosen?.id}
+              className={`scenario-card${scenario.id === chosen?.id ? " chosen" : ""}`}
+              data-scenario={scenario.id}
+              onClick={() => setScenarioId(scenario.id)}
+            >
+              <strong>{scenario.title}</strong>
+              <small>
+                {scenario.width}×{scenario.height} tiles · $
+                {(scenario.starting_cash_cents / 100).toLocaleString()}
+                {scenario.keeper_training ? " · Keeper training" : ""}
+              </small>
+              <span>{scenario.summary}</span>
+              {scenario.objectives.length > 0 && (
+                <small>Goals: {scenario.objectives.join(" · ")}</small>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="library-actions">
+          <button disabled={!chosen} onClick={() => chosen && onNew(chosen.id)}>
+            {chosen ? `Start “${chosen.title}”` : "Start park"}
+          </button>
+          {back}
+        </div>
+      </>
     )
   } else if (view === "load") {
     body = (
@@ -338,7 +381,7 @@ export function ParkLibraryPanel({
               <button onClick={library.exportCurrent}>Export park file</button>
             </>
           )}
-          <button onClick={onNew}>New park</button>
+          <button onClick={() => setView("new")}>New park</button>
           <button disabled={!library.available} onClick={() => setView("load")}>
             Load park…
           </button>

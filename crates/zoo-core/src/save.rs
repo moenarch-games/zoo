@@ -28,10 +28,10 @@
 //! `tests/fixtures/save-v<n>.json` that must keep loading. Documents newer than this build are
 //! rejected as `unsupported_version`.
 use super::{
-    ENTRANCE_X, ENTRANCE_Y, GameState, HEIGHT, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind,
-    WIDTH,
+    GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind,
     care::CareJobState,
     content::{self, Catalog},
+    scenario,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -143,7 +143,7 @@ pub(crate) fn decode(document: &str) -> Result<GameState, SaveError> {
 fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
     match from {
         SCHEMA_VERSION => Ok(value),
-        // Released schemas add one step each: `1 => migrate(v1_to_v2(value)?, 2),`.
+        1 => migrate(v1_to_v2(value)?, 2),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -151,20 +151,40 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
     }
 }
 
+/// Schema 2 (#91) records the park's scenario source, landmarks, unlocks and objectives.
+/// Every schema 1 park was the fixed 20x14 empty starter layout with all content unlocked.
+fn v1_to_v2(mut value: Value) -> Result<Value, SaveError> {
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "park: missing or not an object"))?;
+    park.insert("entrance".to_owned(), json!({ "x": 0, "y": 7 }));
+    park.insert("depot".to_owned(), json!({ "x": 2, "y": 6 }));
+    park.insert(
+        "scenario".to_owned(),
+        json!({
+            "id": scenario::DEFAULT_SCENARIO_ID,
+            "title": "Empty meadow",
+            "seed": 0,
+            "digest": null,
+            "opening_focus": { "x": 4, "y": 7 },
+        }),
+    );
+    park.insert("unlocks".to_owned(), json!({}));
+    park.insert("objectives".to_owned(), json!([]));
+    value["schema_version"] = json!(2);
+    Ok(value)
+}
+
 impl GameState {
     /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
     /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
-    fn save_violation(&self) -> Option<String> {
+    pub(crate) fn save_violation(&self) -> Option<String> {
         self.save_violation_result().err()
     }
 
     fn save_violation_result(&self) -> Result<(), String> {
-        if self.width != WIDTH || self.height != HEIGHT {
-            return Err(format!(
-                "park is {}x{}, expected {WIDTH}x{HEIGHT}",
-                self.width, self.height
-            ));
-        }
+        self.scenario_violation()?;
         if let Some(violation) = self.invariant_violation() {
             return Err(violation);
         }
@@ -200,7 +220,7 @@ impl GameState {
         };
 
         // Landmarks and tile ownership.
-        if self.tile(ENTRANCE_X, ENTRANCE_Y) != Some(TileKind::Entrance) {
+        if self.tile(self.entrance.x, self.entrance.y) != Some(TileKind::Entrance) {
             return Err("the entrance tile is missing".to_owned());
         }
         let depot = self.depot_position();
@@ -212,7 +232,7 @@ impl GameState {
         for y in 0..self.height {
             for x in 0..self.width {
                 match self.tile(x, y) {
-                    Some(TileKind::Entrance) if (x, y) != (ENTRANCE_X, ENTRANCE_Y) => {
+                    Some(TileKind::Entrance) if (x, y) != (self.entrance.x, self.entrance.y) => {
                         return Err(format!("a second entrance tile at {x},{y}"));
                     }
                     Some(TileKind::AnimalCareDepot) if (x, y) != (depot.x, depot.y) => {

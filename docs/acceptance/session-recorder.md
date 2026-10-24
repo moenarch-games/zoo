@@ -23,7 +23,7 @@ The existing behaviour changes in three ways.
 
 - **Recorded commands.** Every authoritative mutation is appended to the log with its result: `place_path`, `place_concession`, `place_habitat_rect`, `place_habitat`, `bulldoze`, `adopt`, `buy_animal_feed`, `hire_keeper`, `hire_janitor`, `hire_mechanic`, `set_keeper_schedule`, `refill_water`, `clean_habitat`, `add_shelter`, `create_work_zone`, `set_work_zone_bounds`, `delete_work_zone`, `assign_keeper_zone`, `tick` (as `advance`) and `inject_fault`. Read-only queries and previews are never recorded: `snapshot_json`, `content_json`, `evaluate_habitat`, `evaluate_habitat_rect`, `evaluate_work_zone`, `diagnostics_json` and `session_status`. Camera, selection, hover, audio and other cosmetic actions never reach `zoo-core`, so they cannot enter the log.
 - **Frozen sessions.** Once a simulation failure is detected, the session is `frozen`. `tick` becomes a no-op. Every mutating command returns `{"ok": false, "message": "…frozen…"}` without changing state, and it may still be recorded. The snapshot, clock and failure list stay fixed: one failure is recorded, and no failure is re-detected on later calls. Nothing resets the park automatically.
-- **Reset.** `reset()`, which is the player's explicit New park action, starts a fresh session from the same identified initial state, with an empty log, no failures and tick 0. It is the only way out of a frozen session.
+- **Reset.** `start_scenario(id)`, which is the player's explicit New park action, starts a fresh session from the identified initial state of that scenario, with an empty log, no failures and tick 0. It is the only way out of a frozen session.
 
 ### Command entry arguments
 
@@ -111,7 +111,7 @@ The 13 tests use only the public API above.
 | `work_counters_track_simulated_subsystem_work` | `simulated_minutes`, `guest_updates` and `path_searches` exist and are non-zero after work. No counter decreases. |
 | `export_stays_within_one_megabyte_and_keeps_the_latest_command` | 2,100 commands with 4 KiB arguments plus long advances still produce at most 1 MB, with `truncated: true` and the latest command retained. A small session has `truncated: false`. |
 | `detected_invariant_violation_freezes_without_looping_or_resetting` | It freezes and records exactly one failure that names its command. Fifty further 240-minute ticks change nothing. Commands are refused as frozen. The park is not reset. |
-| `fault_injection_rejects_unknown_kinds_and_explicit_reset_starts_a_new_session` | An unknown fault kind is refused. Only an explicit `reset()` leaves a frozen session, and it starts a fresh, identically identified session. |
+| `fault_injection_rejects_unknown_kinds_and_explicit_reset_starts_a_new_session` | An unknown fault kind is refused. Only an explicit `start_scenario(id)` leaves a frozen session, and it starts a fresh, identically identified session. |
 | `bundle_contains_no_credentials_or_external_data` | No cookie, token, password, secret, user-agent, URL or path text appears. |
 
 A WASM *panic* cannot be observed natively, because there is no unwinding on `wasm32` and the crate does not require `catch_unwind`. It is covered by the browser proof.

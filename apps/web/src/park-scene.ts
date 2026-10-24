@@ -300,6 +300,7 @@ const SOIL: Hex = "#8a6a45"
 const PATH: Hex = "#dcc59a"
 const PATH_EDGE: Hex = "#c2a979"
 const ENTRANCE_PLAZA: Hex = "#d4b98a"
+const WATER: Hex = "#4f8fb8"
 
 const HABITAT_GROUND: Record<SpeciesKey, Hex> = {
   empty: "#a58f62",
@@ -331,6 +332,8 @@ function tileColor(tile: Tile, habitatSpecies: Map<number, SpeciesKey | null>): 
       }
       return hash(tile.x, tile.y, 7) > 0.5 ? base : shade(base, -0.04)
     }
+    case "water":
+      return hash(tile.x, tile.y, 11) > 0.5 ? WATER : shade(WATER, 0.05)
     case "grass":
       return (tile.x + tile.y) % 2 === 0 ? GRASS_A : GRASS_B
   }
@@ -356,7 +359,14 @@ function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
 
   for (const tile of snapshot.tiles) {
     const raised = tile.kind === "path" || tile.kind === "entrance" || tile.kind === "concession"
-    const height = raised ? 0.08 : 0.06
+    // Water sits a little lower than grass, paths and stands a little higher.
+    const sunken = tile.kind === "water"
+    let height = 0.06
+    if (raised) {
+      height = 0.08
+    } else if (sunken) {
+      height = 0.045
+    }
     nodes.push(
       node(
         `tile:${tile.x}:${tile.y}`,
