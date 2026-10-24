@@ -28,7 +28,7 @@
 //! `tests/fixtures/save-v<n>.json` that must keep loading. Documents newer than this build are
 //! rejected as `unsupported_version`.
 use super::{
-    GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind,
+    GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind, animal,
     care::CareJobState,
     content::{self, Catalog},
     scenario, shape,
@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 6;
+pub(crate) const SCHEMA_VERSION: u32 = 7;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -148,6 +148,7 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
         3 => migrate(v3_to_v4(value)?, 4),
         4 => migrate(v4_to_v5(value)?, 5),
         5 => migrate(v5_to_v6(value)?, 6),
+        6 => migrate(v6_to_v7(value)?, 7),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -354,6 +355,88 @@ fn v5_to_v6(mut value: Value) -> Result<Value, SaveError> {
     Ok(value)
 }
 
+/// Schema 7 (#96) replaces each habitat's animal count with individual animal records. Every
+/// counted animal becomes an adult with a park-wide ID allocated in habitat then slot order,
+/// standing on the tile the old slot formula placed it at the saved minute, keeping its old
+/// animation phase as its cosmetic seed, rested and about to choose where to walk. Animals
+/// whose arrival predates the records count as arriving on day 1.
+fn v6_to_v7(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let number = |park: &serde_json::Map<String, Value>, name: &str| {
+        park.get(name)
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| invalid(&format!("park/{name}: missing")))
+    };
+    let minute_of_day = number(park, "minute_of_day")?;
+    let day = number(park, "day")?;
+    let now =
+        u64::from(day.saturating_sub(1)) * u64::from(MINUTES_PER_DAY) + u64::from(minute_of_day);
+    let mut next_id: u32 = 1;
+    let habitats = park
+        .get_mut("habitats")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?;
+    for habitat in habitats {
+        let habitat = habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?;
+        let count = habitat
+            .remove("animals")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|count| *count <= 1024)
+            .ok_or_else(|| invalid("park/habitats/animals: missing or out of range"))?;
+        let id = number(habitat, "id")?;
+        let tiles: Vec<Position> = habitat
+            .get("tiles")
+            .cloned()
+            .and_then(|tiles| serde_json::from_value(tiles).ok())
+            .ok_or_else(|| invalid("park/habitats/tiles: missing"))?;
+        let species = habitat
+            .get("species")
+            .and_then(|species| species.get("key"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let mut animals = Vec::new();
+        if count > 0 && (species.is_none() || tiles.is_empty()) {
+            return Err(invalid(
+                "park/habitats: animals without a species or enclosure",
+            ));
+        }
+        if let Some(species) = species {
+            for slot in 0..count {
+                let seed = (slot.saturating_mul(17).saturating_add(id.saturating_mul(7))) % 100;
+                animals.push(animal::Animal {
+                    id: next_id,
+                    species: species.clone(),
+                    name: animal::default_name(animal::seed_for(next_id)),
+                    sex: animal::sex_for(animal::seed_for(next_id)),
+                    life_stage: animal::LifeStage::Adult,
+                    arrived_day: 1,
+                    cosmetic_seed: seed,
+                    position: animal::arrival_tile(&tiles, id, slot, minute_of_day),
+                    activity: animal::Activity::Resting { until_minute: now },
+                    energy: 100,
+                    decisions: 0,
+                });
+                next_id = next_id.saturating_add(1);
+            }
+        }
+        habitat.insert(
+            "animals".to_owned(),
+            serde_json::to_value(animals).expect("animal serialization is infallible"),
+        );
+    }
+    park.insert("next_animal_id".to_owned(), json!(next_id));
+    value["schema_version"] = json!(7);
+    Ok(value)
+}
+
 impl GameState {
     /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
     /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
@@ -470,7 +553,7 @@ impl GameState {
                         species.key
                     ));
                 }
-                None if habitat.animals > 0 => {
+                None if habitat.stocked() => {
                     return Err(format!("habitat {id} has animals but no species"));
                 }
                 _ => {}

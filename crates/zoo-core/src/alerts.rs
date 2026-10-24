@@ -164,13 +164,13 @@ impl GameState {
     pub(crate) fn group_problem(&self, habitat: &Habitat) -> Option<(String, AlertAction)> {
         let species = habitat.species.as_ref()?;
         let minimum = species.welfare_profile().minimum_social_group.max(1);
-        if habitat.animals < minimum {
+        if habitat.animal_count() < minimum {
             Some((
                 format!(
                     "Habitat #{} has {} {}; they are social and need at least {minimum} together. \
                      Adopt more of the same species.",
                     habitat.id,
-                    habitat.animals,
+                    habitat.animal_count(),
                     species.label()
                 ),
                 AlertAction::AdoptAnimals,
@@ -181,7 +181,7 @@ impl GameState {
                     "Habitat #{} is crowded: {} {} need more room than its {} tiles. Build a \
                      larger habitat for this group.",
                     habitat.id,
-                    habitat.animals,
+                    habitat.animal_count(),
                     species.label(),
                     habitat.area()
                 ),
@@ -229,7 +229,7 @@ impl GameState {
         let guests = self.guest_reach();
         let staff = self.staff_reach();
         let occupancy = self.viewing_occupancy();
-        let stocked = self.habitats.iter().any(|habitat| habitat.animals > 0);
+        let stocked = self.habitats.iter().any(|habitat| habitat.stocked());
 
         if stocked && self.feed_crates == 0 {
             raise(
@@ -257,7 +257,7 @@ impl GameState {
             );
         }
 
-        for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+        for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
             let subject = Subject::Habitat(habitat.id);
             let center = Self::habitat_center(habitat);
             let gate_access = self.gate_access_tile(habitat.service_gate);

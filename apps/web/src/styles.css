@@ -178,6 +178,7 @@ button:focus-visible {
 
 .habitat-card,
 .guest-card,
+.animal-card,
 .manager-card {
   padding: 14px;
 }
@@ -519,6 +520,7 @@ dd {
 }
 
 .guest-card h3,
+.animal-card h3,
 .manager-card h3 {
   margin: 18px 0 8px;
   font-size: 12px;
@@ -1480,4 +1482,63 @@ dd {
   .overlay-legend {
     right: 276px;
   }
+}
+
+/* #96: individual animals — the habitat roster and the animal inspector. */
+.animal-roster {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.animal-roster button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.animal-roster small {
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.animal-rename {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.animal-rename label {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.animal-rename input {
+  min-width: 0;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.animal-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.animal-actions button {
+  flex: 1;
+  padding: 8px;
+  font-weight: 800;
 }

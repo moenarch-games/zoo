@@ -151,7 +151,7 @@ impl GameState {
                 )
             }
             OverlayKind::Welfare => {
-                for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+                for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
                     let level = grade(habitat.welfare, 70, super::alerts::LOW_WELFARE);
                     out.footprint(habitat, level, Some(habitat.welfare));
                     let (part, score) = Self::lowest_welfare_part(habitat);
@@ -171,7 +171,7 @@ impl GameState {
                 )
             }
             OverlayKind::Staff => {
-                for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+                for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
                     let open = self.open_care_jobs(habitat.id) as u32;
                     let keepers = self
                         .habitat_zone(habitat)
@@ -311,7 +311,7 @@ impl GameState {
             );
         }
         let occupancy = self.viewing_occupancy();
-        for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+        for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
             let viewable = self
                 .viewing_spots_with_occupancy(habitat, &occupancy)
                 .iter()
@@ -399,7 +399,7 @@ impl GameState {
                 ),
             );
         }
-        for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+        for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
             let level = grade(habitat.cleanliness, 70, 40);
             out.footprint(habitat, level, Some(habitat.cleanliness));
             out.item(
@@ -437,7 +437,7 @@ impl GameState {
                 ),
             );
         }
-        let stocked = self.habitats.iter().any(|habitat| habitat.animals > 0);
+        let stocked = self.habitats.iter().any(|habitat| habitat.stocked());
         let level = match self.feed_crates {
             0 if stocked => Level::Bad,
             1..=2 if stocked => Level::Warn,
@@ -454,7 +454,7 @@ impl GameState {
 
     fn viewing_overlay(&self, out: &mut Builder) {
         let occupancy = self.viewing_occupancy();
-        for habitat in self.habitats.iter().filter(|habitat| habitat.animals > 0) {
+        for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
             for spot in self.viewing_spots_with_occupancy(habitat, &occupancy) {
                 if spot.capacity == 0 {
                     continue;
@@ -540,16 +540,16 @@ impl GameState {
         let stocked: Vec<&Habitat> = self
             .habitats
             .iter()
-            .filter(|habitat| habitat.animals > 0)
+            .filter(|habitat| habitat.stocked())
             .collect();
         let animals: u64 = stocked
             .iter()
-            .map(|habitat| u64::from(habitat.animals))
+            .map(|habitat| u64::from(habitat.animal_count()))
             .sum();
         let welfare = (animals > 0).then(|| {
             (stocked
                 .iter()
-                .map(|habitat| u64::from(habitat.welfare) * u64::from(habitat.animals))
+                .map(|habitat| u64::from(habitat.welfare) * u64::from(habitat.animal_count()))
                 .sum::<u64>()
                 / animals) as u32
         });
@@ -635,7 +635,7 @@ impl GameState {
                         .species
                         .as_ref()
                         .map(|species| species.key().to_owned()),
-                    animals: habitat.animals,
+                    animals: habitat.animal_count(),
                     welfare: habitat.welfare,
                 })
                 .collect(),

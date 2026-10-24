@@ -140,11 +140,23 @@ export type Habitat = Point & {
   appeal: number
 }
 
+export type AnimalActivity = "walking" | "resting"
+
+/** One individual animal (#96); every field is authoritative zoo-core state. */
 export type Animal = Point & {
   id: number
   habitat_id: number
   species: SpeciesKey
-  slot: number
+  name: string
+  sex: "female" | "male"
+  life_stage: "adult"
+  arrived_day: number
+  activity: AnimalActivity
+  /** Where a walking animal is heading. */
+  target: Point | null
+  energy: number
+  /** Presentation-only variation: tile offset and animation phase. */
+  cosmetic_seed: number
   animation_phase: number
 }
 

@@ -344,10 +344,12 @@ impl GameState {
             plan.message = "Fence loop can be built here".to_owned();
             return plan;
         };
-        if habitat.animals > plan.capacity {
+        if habitat.animal_count() > plan.capacity {
             let message = format!(
                 "Habitat #{} keeps {} animals; this fence holds only {}",
-                habitat.id, habitat.animals, plan.capacity
+                habitat.id,
+                habitat.animal_count(),
+                plan.capacity
             );
             return plan.reject(message);
         }
@@ -369,7 +371,7 @@ impl GameState {
         }
         if let Some(species) = &habitat.species {
             let needed = habitat
-                .animals
+                .animal_count()
                 .saturating_mul(species.welfare_profile().space_per_animal);
             if area < needed && area < habitat.area() {
                 plan.warnings.push(format!(
