@@ -6,6 +6,7 @@ export type Tool =
   | "habitat"
   | "bulldoze"
   | "gate"
+  | "reshape"
   | "zone"
   | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
@@ -105,7 +106,8 @@ export type Habitat = Point & {
   id: number
   width: number
   height: number
-  orientation: "horizontal" | "vertical"
+  /** The enclosed tiles, row-major; x, y, width and height are their bounding box. */
+  tiles: Point[]
   footprint_area: number
   fence_length: number
   fence_segments: FenceSegment[]
@@ -403,17 +405,28 @@ export type ActionResult = {
   message: string
 }
 
+/** Rust's plan for a new habitat fence (rectangle or outline) or a reshape of one. */
 export type PlacementEvaluation = {
   ok: boolean
   message: string
+  /** The habitat being reshaped; null for a new enclosure. */
+  habitat_id: number | null
   x: number
   y: number
   width: number
   height: number
-  orientation: "horizontal" | "vertical"
+  area: number
+  perimeter: number
+  capacity: number
   cost_cents: number
   occupied_tiles: Point[]
   fence_segments: FenceSegment[]
+  added_tiles: Point[]
+  removed_tiles: Point[]
+  service_gate: FenceSegment | null
+  warnings: string[]
+  /** The grid corner where a drawn outline fails. */
+  blocked_corner: Point | null
 }
 
 /** Rust's plan for a path stroke, facility placement or demolition; commits re-plan it. */

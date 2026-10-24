@@ -151,7 +151,9 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
     case "path":
       return "Drag across tiles to paint one path stroke; release to build it all or nothing · Esc cancels · Ctrl+Z undoes."
     case "habitat":
-      return "Drag corner to corner to close a fence, or tap a corner to place the size set below · Esc cancels · Ctrl+Z undoes."
+      return "Rectangle: drag corner to corner, or tap to place the size below · Outline: drag or tap along grid corners and close back at the first · Esc cancels · Ctrl+Z undoes."
+    case "reshape":
+      return "Draw the habitat's new fence along grid corners and close it at the first corner · animals, care and staff stay · Esc cancels · Ctrl+Z undoes."
     case "bulldoze":
       return "Hover to see what demolition removes and whether it can be undone · click to demolish."
     case "gate":
@@ -223,6 +225,11 @@ export default function App() {
   const strokeRef = useRef<Point[]>([])
   const [stroke, setStroke] = useState<Point[]>([])
   const [habitatSize, setHabitatSize] = useState({ width: 4, height: 3 })
+  // A fence outline in progress: grid corners in drawing order, kept across taps and drags
+  // until it closes on its first corner; Rust joins, closes and plans it (#95).
+  const [habitatShape, setHabitatShape] = useState<"rect" | "outline">("rect")
+  const outlineRef = useRef<Point[]>([])
+  const [outline, setOutline] = useState<Point[]>([])
   const fenceStartRef = useRef<Point | null>(null)
   const fenceEndRef = useRef<Point | null>(null)
 
@@ -513,13 +520,21 @@ export default function App() {
     setStroke([])
   }, [])
 
+  const clearOutline = useCallback(() => {
+    outlineRef.current = []
+    setOutline([])
+  }, [])
+
+  const outlineMode = tool === "reshape" || (tool === "habitat" && habitatShape === "outline")
+
   useEffect(() => {
     clearStroke()
     clearFenceGesture()
+    clearOutline()
     if (tool !== "zone") {
       setZoneEdit(null)
     }
-  }, [clearFenceGesture, clearStroke, tool])
+  }, [clearFenceGesture, clearOutline, clearStroke, habitatShape, tool])
 
   useEffect(() => {
     setZoneEdit(null)
@@ -608,7 +623,7 @@ export default function App() {
 
   // A drawn fence, or (without a gesture) the typed habitat size anchored at the hovered tile.
   const fenceCorners = useMemo((): [Point, Point] | null => {
-    if (tool !== "habitat") {
+    if (tool !== "habitat" || habitatShape !== "rect") {
       return null
     }
     if (fenceStart && fenceEnd) {
@@ -624,17 +639,31 @@ export default function App() {
       ]
     }
     return null
-  }, [fenceEnd, fenceStart, habitatSize, hoveredTile, tool])
+  }, [fenceEnd, fenceStart, habitatShape, habitatSize, hoveredTile, tool])
 
+  // Rectangles, outlines and reshapes all preview through Rust's enclosure plan.
   const placement = useMemo(() => {
     const game = gameRef.current
-    if (!game || !snapshot || !fenceCorners) {
+    if (!game || !snapshot) {
       return null
     }
-    const [a, b] = fenceCorners
-    const text = callGame(() => game.evaluate_habitat_rect(a.x, a.y, b.x, b.y))
+    let text: string | undefined
+    if (outlineMode) {
+      if (outline.length === 0) {
+        return null
+      }
+      const points = Uint32Array.from(outline.flatMap((corner) => [corner.x, corner.y]))
+      if (tool !== "reshape") {
+        text = callGame(() => game.evaluate_habitat_outline(points))
+      } else if (selectedHabitatId !== null) {
+        text = callGame(() => game.evaluate_habitat_reshape(selectedHabitatId, points))
+      }
+    } else if (fenceCorners) {
+      const [a, b] = fenceCorners
+      text = callGame(() => game.evaluate_habitat_rect(a.x, a.y, b.x, b.y))
+    }
     return text === undefined ? null : (JSON.parse(text) as PlacementEvaluation)
-  }, [callGame, fenceCorners, snapshot])
+  }, [callGame, fenceCorners, outline, outlineMode, selectedHabitatId, snapshot, tool])
 
   // Path strokes, facilities and demolition preview through the same Rust plan the commit runs.
   const constructionPreview = useMemo(() => {
@@ -678,16 +707,17 @@ export default function App() {
   }, [tool])
 
   useEffect(() => {
-    setTool((current) => (current === "gate" ? "select" : current))
+    setTool((current) => (current === "gate" || current === "reshape" ? "select" : current))
   }, [selectedHabitatId])
 
   const gatePreview = gateCandidate ?? (gateHover?.segment ? gateHover : null)
 
-  const ghostTiles = useMemo(
-    () =>
-      snapshot && fenceCorners ? previewTiles(fenceCorners[0], fenceCorners[1], snapshot) : [],
-    [fenceCorners, snapshot?.width, snapshot?.height],
-  )
+  const ghostTiles = useMemo(() => {
+    if (outlineMode) {
+      return placement?.occupied_tiles ?? []
+    }
+    return snapshot && fenceCorners ? previewTiles(fenceCorners[0], fenceCorners[1], snapshot) : []
+  }, [fenceCorners, outlineMode, placement, snapshot?.width, snapshot?.height])
 
   const zonesVisible = tool === "zone" || selectedZoneId !== null
 
@@ -696,6 +726,7 @@ export default function App() {
       tool,
       hoveredTile,
       ghostTiles,
+      outline,
       placement,
       construction: constructionPreview,
       selectedHabitatId,
@@ -713,6 +744,7 @@ export default function App() {
       ghostTiles,
       hoveredTile,
       overlayView,
+      outline,
       placement,
       selectedDepot,
       selectedGuestId,
@@ -733,8 +765,48 @@ export default function App() {
     setStroke(strokeRef.current)
   }
 
+  const extendOutline = (corner: Point) => {
+    const last = outlineRef.current.at(-1)
+    if (last && last.x === corner.x && last.y === corner.y) {
+      return
+    }
+    outlineRef.current = [...outlineRef.current, corner]
+    setOutline(outlineRef.current)
+  }
+
+  // An outline closes when it returns to its first corner; Rust decides whether it is valid.
+  const outlineClosed = (corners: Point[]) => {
+    const first = corners[0]
+    const last = corners.at(-1)
+    return corners.length >= 4 && !!first && !!last && first.x === last.x && first.y === last.y
+  }
+
+  const commitOutline = () => {
+    const game = gameRef.current
+    const points = Uint32Array.from(outlineRef.current.flatMap((corner) => [corner.x, corner.y]))
+    clearOutline()
+    if (!game) {
+      return
+    }
+    if (tool === "reshape" && selectedHabitatId !== null) {
+      const result = perform(() => game.reshape_habitat(selectedHabitatId, points))
+      if (result.ok) {
+        setTool("select")
+      }
+    } else {
+      perform(() => game.place_habitat_outline(points))
+    }
+  }
+
+  const cancelOutline = () => {
+    clearOutline()
+    inform("Fence outline cleared · nothing was built.")
+  }
+
   const onTileDown = (tile: Point) => {
-    if (tool === "path") {
+    if (outlineMode) {
+      extendOutline(tile)
+    } else if (tool === "path") {
       strokeRef.current = []
       extendStroke(tile)
     } else if (tool === "habitat" || tool === "zone") {
@@ -746,7 +818,9 @@ export default function App() {
   }
 
   const onTileDrag = (tile: Point) => {
-    if (tool === "path") {
+    if (outlineMode) {
+      extendOutline(tile)
+    } else if (tool === "path") {
       extendStroke(tile)
     } else if ((tool === "habitat" || tool === "zone") && fenceStartRef.current) {
       fenceEndRef.current = tile
@@ -821,6 +895,17 @@ export default function App() {
   // One gesture commits at most one construction transaction; a cancelled gesture commits none.
   const onToolGestureEnd = (commit: boolean) => {
     const game = gameRef.current
+    if (outlineMode) {
+      // Esc or a lost pointer clears the outline; a release keeps it until it closes.
+      if (!commit) {
+        cancelOutline()
+      } else if (outlineClosed(outlineRef.current)) {
+        commitOutline()
+      } else {
+        inform("Keep drawing: tap or drag back to the first corner to close the fence.")
+      }
+      return
+    }
     if (tool === "zone") {
       finishZoneGesture(commit)
       return
@@ -1692,7 +1777,7 @@ export default function App() {
   const tooltip =
     zoneTooltip ??
     constructionTooltip ??
-    (placement && hoveredTile ? (
+    (placement && hoveredTile && !outlineMode ? (
       <div className={placement.ok ? "valid" : "invalid"}>
         <b>
           {placement.ok ? "✓ Fence closes" : "! Cannot build"} · {placement.width}×
@@ -1835,7 +1920,10 @@ export default function App() {
             snapshot={snapshot}
             overlay={overlay}
             paused={speed === 0}
-            dragTool={tool === "path" || tool === "habitat" || tool === "zone"}
+            dragTool={
+              tool === "path" || tool === "habitat" || tool === "zone" || tool === "reshape"
+            }
+            cornerTool={outlineMode}
             camera={camera}
             tooltip={tooltip}
             onTileDown={onTileDown}
@@ -1899,7 +1987,7 @@ export default function App() {
         )}
 
         <aside
-          className={`side-panel bevel${tool === "gate" ? " gate-mode" : ""}${
+          className={`side-panel bevel${tool === "gate" || tool === "reshape" ? " gate-mode" : ""}${
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
           }${workspaceTab !== null ? " behind-workspace" : ""}`}
         >
@@ -2410,12 +2498,30 @@ export default function App() {
                       </button>
                     </>
                   ) : (
-                    <button className="shop-row" onClick={startGateMove}>
-                      <span>
-                        <b>Move gate</b>
-                        <small>Then tap a fence segment; the tile outside stays clear</small>
-                      </span>
-                    </button>
+                    <>
+                      <button className="shop-row" onClick={startGateMove}>
+                        <span>
+                          <b>Move gate</b>
+                          <small>Then tap a fence segment; the tile outside stays clear</small>
+                        </span>
+                      </button>
+                      <button
+                        className={`shop-row${tool === "reshape" ? " active" : ""}`}
+                        onClick={() => {
+                          setTool(tool === "reshape" ? "select" : "reshape")
+                          if (tool !== "reshape") {
+                            inform(
+                              "Draw the new fence along grid corners; the preview shows added and removed tiles.",
+                            )
+                          }
+                        }}
+                      >
+                        <span>
+                          <b>{tool === "reshape" ? "Stop reshaping" : "Reshape fence"}</b>
+                          <small>Expand or shrink; animals, care and staff stay</small>
+                        </span>
+                      </button>
+                    </>
                   )}
                 </div>
 
@@ -2683,36 +2789,79 @@ export default function App() {
         <div className="message-stack">
           <div className={`message bevel ${messageKind === "error" ? "error" : ""}`}>{message}</div>
           <div className="tool-hint">{toolHint(tool, snapshot)}</div>
-          {tool === "habitat" && (
-            <div className="habitat-size" aria-label="Habitat size">
-              {(["width", "height"] as const).map((side) => (
-                <label key={side}>
-                  {side === "width" ? "W" : "H"}
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={habitatSize[side]}
-                    aria-label={`Habitat ${side}`}
-                    onChange={(event) => {
-                      const value = Math.round(Number(event.target.value))
-                      if (Number.isFinite(value) && value >= 1 && value <= 20) {
-                        setHabitatSize((size) => ({ ...size, [side]: value }))
-                      }
-                    }}
-                  />
-                </label>
-              ))}
-              <button
-                onClick={() =>
-                  setHabitatSize((size) => ({ width: size.height, height: size.width }))
-                }
-                aria-label="Rotate habitat"
+          {/* One row: the shape toggle, then the outline status or the rectangle size. */}
+          <div className="habitat-tools">
+            {tool === "habitat" && (
+              <div className="habitat-shape" role="group" aria-label="Fence shape">
+                {(["rect", "outline"] as const).map((shape) => (
+                  <button
+                    key={shape}
+                    className={habitatShape === shape ? "active" : ""}
+                    aria-pressed={habitatShape === shape}
+                    onClick={() => setHabitatShape(shape)}
+                  >
+                    {shape === "rect" ? "▭ Rectangle" : "⌐ Outline"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {outlineMode && (
+              <div
+                className={`outline-status ${placement?.ok ? "valid" : "invalid"}`}
+                role="status"
+                aria-label="Fence outline"
+                data-corners={outline.map((corner) => `${corner.x},${corner.y}`).join(" ")}
               >
-                ⟳ Rotate
-              </button>
-            </div>
-          )}
+                <span>
+                  {placement === null ? (
+                    "Tap or drag along grid corners to start the fence."
+                  ) : (
+                    <>
+                      <b>
+                        {placement.ok ? "✓" : "!"}{" "}
+                        {placement.area > 0
+                          ? `${placement.area} tiles · fence ${placement.perimeter} · ${money(placement.cost_cents)}`
+                          : `${outline.length} corners`}
+                      </b>{" "}
+                      {placement.message}
+                      {placement.warnings.map((warning) => ` · ${warning}`).join("")}
+                    </>
+                  )}
+                </span>
+                {outline.length > 0 && <button onClick={cancelOutline}>Clear</button>}
+              </div>
+            )}
+            {tool === "habitat" && habitatShape === "rect" && (
+              <div className="habitat-size" aria-label="Habitat size">
+                {(["width", "height"] as const).map((side) => (
+                  <label key={side}>
+                    {side === "width" ? "W" : "H"}
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={habitatSize[side]}
+                      aria-label={`Habitat ${side}`}
+                      onChange={(event) => {
+                        const value = Math.round(Number(event.target.value))
+                        if (Number.isFinite(value) && value >= 1 && value <= 20) {
+                          setHabitatSize((size) => ({ ...size, [side]: value }))
+                        }
+                      }}
+                    />
+                  </label>
+                ))}
+                <button
+                  onClick={() =>
+                    setHabitatSize((size) => ({ width: size.height, height: size.width }))
+                  }
+                  aria-label="Rotate habitat"
+                >
+                  ⟳ Rotate
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <nav className="toolbar bevel" aria-label="Build tools">
           <ToolButton

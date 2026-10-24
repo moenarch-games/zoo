@@ -31,7 +31,7 @@ use super::{
     GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind,
     care::CareJobState,
     content::{self, Catalog},
-    scenario,
+    scenario, shape,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -146,6 +146,7 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
         1 => migrate(v1_to_v2(value)?, 2),
         2 => migrate(v2_to_v3(value)?, 3),
         3 => migrate(v3_to_v4(value)?, 4),
+        4 => migrate(v4_to_v5(value)?, 5),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -229,6 +230,46 @@ fn v3_to_v4(mut value: Value) -> Result<Value, SaveError> {
     Ok(value)
 }
 
+/// Schema 5 (#95) stores each habitat as its enclosed tiles instead of a rectangle, so fences
+/// can take any simple orthogonal shape. Every schema 4 habitat becomes the row-major tiles of
+/// its rectangle; area, capacity, fence, gate and ownership stay exactly as they were.
+fn v4_to_v5(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let habitats = value
+        .get_mut("park")
+        .and_then(|park| park.get_mut("habitats"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?;
+    for habitat in habitats {
+        let habitat = habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?;
+        let mut field = |name: &str| {
+            habitat
+                .remove(name)
+                .and_then(|value| value.as_u64())
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| invalid(&format!("park/habitats/{name}: missing")))
+        };
+        let (x, y, width, height) = (field("x")?, field("y")?, field("width")?, field("height")?);
+        if width == 0 || height == 0 || width > 1024 || height > 1024 {
+            return Err(invalid("park/habitats: footprint out of range"));
+        }
+        habitat.remove("orientation");
+        let tiles = x
+            .checked_add(width)
+            .zip(y.checked_add(height))
+            .map(|_| shape::rect_tiles(x, y, width, height))
+            .ok_or_else(|| invalid("park/habitats: footprint out of range"))?;
+        habitat.insert(
+            "tiles".to_owned(),
+            serde_json::to_value(tiles).expect("tile serialization is infallible"),
+        );
+    }
+    value["schema_version"] = json!(5);
+    Ok(value)
+}
+
 impl GameState {
     /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
     /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
@@ -303,23 +344,27 @@ impl GameState {
         }
         for habitat in &self.habitats {
             let id = habitat.id;
-            let fits = habitat.width > 0
-                && habitat.height > 0
-                && habitat
-                    .x
-                    .checked_add(habitat.width)
-                    .is_some_and(|r| r <= self.width)
-                && habitat
-                    .y
-                    .checked_add(habitat.height)
-                    .is_some_and(|b| b <= self.height);
-            if !fits {
+            if habitat
+                .tiles
+                .iter()
+                .any(|tile| tile.x >= self.width || tile.y >= self.height)
+            {
                 return Err(format!("habitat {id} footprint leaves the park"));
             }
-            let owned = (habitat.y..habitat.y + habitat.height).all(|y| {
-                (habitat.x..habitat.x + habitat.width)
-                    .all(|x| self.tile(x, y) == Some(TileKind::Habitat(id)))
-            });
+            let ordered = habitat
+                .tiles
+                .windows(2)
+                .all(|pair| (pair[0].y, pair[0].x) < (pair[1].y, pair[1].x));
+            if !ordered || shape::clockwise_fence(&habitat.tiles).is_none() {
+                return Err(format!("habitat {id} is not one simple enclosure"));
+            }
+            if !habitat.fence_segments().contains(&habitat.service_gate) {
+                return Err(format!("habitat {id} service gate is not on its fence"));
+            }
+            let owned = habitat
+                .tiles
+                .iter()
+                .all(|tile| self.tile(tile.x, tile.y) == Some(TileKind::Habitat(id)));
             let tiles = self
                 .tiles
                 .iter()

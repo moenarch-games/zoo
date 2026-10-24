@@ -100,10 +100,8 @@ impl Builder {
     }
 
     fn footprint(&mut self, habitat: &Habitat, level: Level, value: Option<u32>) {
-        for y in habitat.y..habitat.y + habitat.height {
-            for x in habitat.x..habitat.x + habitat.width {
-                self.cell(Position { x, y }, level, value);
-            }
+        for tile in &habitat.tiles {
+            self.cell(*tile, level, value);
         }
     }
 

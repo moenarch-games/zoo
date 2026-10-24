@@ -6,7 +6,7 @@
 //! lasts: it keeps its first occurrence and refreshes its last occurrence and message while the
 //! condition holds, and it disappears as soon as the condition is resolved or its object is
 //! gone. Alerts are saved with the park so their first occurrence survives a reload.
-use super::{FenceSide, GameState, Habitat, Position, care::CareJobState};
+use super::{FenceSide, GameState, Habitat, Position, care::CareJobState, shape};
 use serde::{Deserialize, Serialize};
 
 /// Welfare below this raises an alert; below the critical line it is critical.
@@ -132,11 +132,17 @@ impl GameState {
         self.reach_from(&self.depot_access_tiles())
     }
 
+    /// The habitat's bounding-box centre, or a middle tile when that lies outside its fence.
     pub(crate) fn habitat_center(habitat: &Habitat) -> Position {
-        Position {
-            x: habitat.x + habitat.width / 2,
-            y: habitat.y + habitat.height / 2,
+        let (x, y, width, height) = shape::bounds(&habitat.tiles);
+        let center = Position {
+            x: x + width / 2,
+            y: y + height / 2,
+        };
+        if habitat.contains(center) {
+            return center;
         }
+        habitat.tiles[habitat.tiles.len() / 2]
     }
 
     /// The weakest welfare part of a habitat, by name and score.

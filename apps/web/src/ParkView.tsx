@@ -44,6 +44,8 @@ type Props = {
   paused: boolean
   /** When true, a primary drag starting on a park tile drives the tool instead of panning. */
   dragTool: boolean
+  /** When true, tool gestures report the nearest grid corner (fence outlines) instead of a tile. */
+  cornerTool?: boolean
   /** Each new token reframes the camera: on `focus` (a scenario objective) or the whole park. */
   camera: CameraRequest
   tooltip?: ReactNode
@@ -69,7 +71,7 @@ type CameraFrame = RendererCamera & {
   zoom: number
 }
 
-type BridgePick = { ground: [number, number]; tile: Point | null } | null
+type BridgePick = { ground: [number, number]; tile: Point | null; corner: Point | null } | null
 
 type Gesture =
   | { kind: "pending"; pointerId: number; startX: number; startY: number }
@@ -241,6 +243,11 @@ export default function ParkView(props: Props) {
     }
 
     const pickTile = (clientX: number, clientY: number) => pick(clientX, clientY)?.tile ?? null
+    // Drag tools pick tiles, or grid corners while drawing a fence outline.
+    const pickToolPoint = (clientX: number, clientY: number) => {
+      const picked = pick(clientX, clientY)
+      return (propsRef.current.cornerTool ? picked?.corner : picked?.tile) ?? null
+    }
 
     const pickAnchor = (clientX: number, clientY: number): PickAnchor | null => {
       if (!camera) {
@@ -499,7 +506,7 @@ export default function ParkView(props: Props) {
       }
 
       if (propsRef.current.dragTool) {
-        const tile = pickTile(event.clientX, event.clientY)
+        const tile = pickToolPoint(event.clientX, event.clientY)
         if (tile && !mouse) {
           gesture = {
             kind: "toolPending",
@@ -525,7 +532,7 @@ export default function ParkView(props: Props) {
     }
 
     const dragToolTo = (tool: Extract<Gesture, { kind: "tool" }>, event: PointerEvent) => {
-      const tile = pickTile(event.clientX, event.clientY)
+      const tile = pickToolPoint(event.clientX, event.clientY)
       if (!tile) {
         return
       }
@@ -535,7 +542,7 @@ export default function ParkView(props: Props) {
       }
       tool.tileKey = key
       propsRef.current.onTileDrag(tile)
-      if (hoverKey !== key) {
+      if (!propsRef.current.cornerTool && hoverKey !== key) {
         hoverKey = key
         propsRef.current.onHover(tile)
       }

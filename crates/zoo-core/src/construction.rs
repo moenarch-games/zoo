@@ -21,8 +21,9 @@
 //! - History is session state: saves do not carry it and a load starts with none. Undo and redo
 //!   are recorded commands, so session replay reproduces them exactly.
 use super::{
-    ActionResult, Concession, ConcessionKind, ExpenseCategory, GameState, Habitat,
-    PlacementEvaluation, Position, TileKind, content, gate::gate_access_message,
+    ActionResult, Concession, ConcessionKind, ExpenseCategory, FenceSegment, GameState, Habitat,
+    HabitatOrientation, PlacementEvaluation, Position, TileKind, content,
+    gate::gate_access_message, shape,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -71,14 +72,23 @@ enum Change {
     },
     BuildHabitat {
         id: u32,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
+        tiles: Vec<Position>,
+    },
+    ReshapeHabitat {
+        id: u32,
+        before: Enclosure,
+        after: Vec<Position>,
     },
     RemovePath(Position),
     RemoveConcession(Box<Concession>),
     RemoveHabitat(Box<Habitat>),
+}
+
+/// A habitat's fence before a reshape, restored exactly by undo.
+#[derive(Clone, Debug)]
+struct Enclosure {
+    tiles: Vec<Position>,
+    gate: FenceSegment,
 }
 
 /// What committing a construction action would do, computed by the same plan the commit uses.
@@ -555,6 +565,22 @@ impl GameState {
 
     // --- Habitats --------------------------------------------------------------------------
 
+    pub(crate) fn place_habitat(
+        &mut self,
+        x: u32,
+        y: u32,
+        orientation: HabitatOrientation,
+    ) -> ActionResult {
+        let (width, height) = orientation.dimensions();
+        self.place_habitat_rect(
+            x,
+            y,
+            x.saturating_add(width - 1),
+            y.saturating_add(height - 1),
+        )
+    }
+
+    /// The rectangle tool: a convenience over the same enclosure representation.
     pub(crate) fn place_habitat_rect(
         &mut self,
         ax: u32,
@@ -563,54 +589,71 @@ impl GameState {
         by: u32,
     ) -> ActionResult {
         let (x, y, width, height) = super::normalized_rect(ax, ay, bx, by);
-        if let Some(existing) = self.habitats.iter().find(|habitat| {
-            habitat.x == x && habitat.y == y && habitat.width == width && habitat.height == height
-        }) {
-            return ActionResult::ok(format!("Habitat #{} already uses this fence", existing.id));
+        let tiles = (width <= 64 && height <= 64).then(|| shape::rect_tiles(x, y, width, height));
+        if let Some(existing) = tiles.and_then(|tiles| self.habitat_with_tiles(&tiles)) {
+            return ActionResult::ok(format!("Habitat #{existing} already uses this fence"));
         }
         let evaluation = self.evaluate_habitat_rect(ax, ay, bx, by);
-        if !evaluation.ok {
-            return ActionResult::error(evaluation.message);
+        self.commit_new_habitat(&evaluation)
+    }
+
+    /// Builds a habitat inside a drawn outline (flat `x, y` corner pairs) as one transaction.
+    pub(crate) fn place_habitat_outline(&mut self, points: &[u32]) -> ActionResult {
+        let evaluation = self.evaluate_habitat_outline(points);
+        if let Some(existing) = self.habitat_with_tiles(&evaluation.occupied_tiles) {
+            return ActionResult::ok(format!("Habitat #{existing} already uses this fence"));
         }
+        self.commit_new_habitat(&evaluation)
+    }
+
+    fn habitat_with_tiles(&self, tiles: &[Position]) -> Option<u32> {
+        if tiles.is_empty() {
+            return None;
+        }
+        self.habitats
+            .iter()
+            .find(|habitat| habitat.tiles == tiles)
+            .map(|habitat| habitat.id)
+    }
+
+    fn commit_new_habitat(&mut self, evaluation: &PlacementEvaluation) -> ActionResult {
+        if !evaluation.ok {
+            return ActionResult::error(evaluation.message.clone());
+        }
+        let Some(gate) = evaluation.service_gate else {
+            return ActionResult::error("The fence has no service gate");
+        };
         if let Err(message) = self.spend(evaluation.cost_cents, ExpenseCategory::Construction) {
             return ActionResult::error(message);
         }
         let id = self.next_habitat_id;
         self.next_habitat_id += 1;
-        self.insert_habitat(id, &evaluation);
+        self.insert_habitat(id, evaluation.occupied_tiles.clone(), gate);
         self.record_construction(
             format!("habitat #{id}"),
             evaluation.cost_cents,
             Change::BuildHabitat {
                 id,
-                x: evaluation.x,
-                y: evaluation.y,
-                width: evaluation.width,
-                height: evaluation.height,
+                tiles: evaluation.occupied_tiles.clone(),
             },
         );
-        ActionResult::ok(format!(
-            "Habitat #{id} fenced · {}×{} · {} tiles",
-            evaluation.width,
-            evaluation.height,
-            evaluation.width.saturating_mul(evaluation.height)
-        ))
+        ActionResult::ok(if evaluation.area == evaluation.width * evaluation.height {
+            format!(
+                "Habitat #{id} fenced · {}×{} · {} tiles",
+                evaluation.width, evaluation.height, evaluation.area
+            )
+        } else {
+            format!(
+                "Habitat #{id} fenced · {} tiles · {} fence segments",
+                evaluation.area, evaluation.perimeter
+            )
+        })
     }
 
-    fn insert_habitat(&mut self, id: u32, evaluation: &PlacementEvaluation) {
-        let service_gate = self.default_service_gate(
-            evaluation.x,
-            evaluation.y,
-            evaluation.width,
-            evaluation.height,
-        );
+    fn insert_habitat(&mut self, id: u32, tiles: Vec<Position>, service_gate: FenceSegment) {
         self.restore_habitat(Habitat {
             id,
-            x: evaluation.x,
-            y: evaluation.y,
-            width: evaluation.width,
-            height: evaluation.height,
-            orientation: evaluation.orientation,
+            tiles,
             species: None,
             animals: 0,
             welfare: 100,
@@ -624,11 +667,71 @@ impl GameState {
     }
 
     fn restore_habitat(&mut self, habitat: Habitat) {
-        for tile in habitat_tiles(&habitat) {
+        for tile in &habitat.tiles {
             self.set_tile(tile.x, tile.y, TileKind::Habitat(habitat.id));
         }
         let at = self.habitats.partition_point(|other| other.id < habitat.id);
         self.habitats.insert(at, habitat);
+    }
+
+    /// Moves habitat `habitat_id`'s fence onto a drawn outline as one transaction, keeping its
+    /// ID, animals, care state and staff assignments.
+    pub(crate) fn reshape_habitat(&mut self, habitat_id: u32, points: &[u32]) -> ActionResult {
+        let plan = self.evaluate_habitat_reshape(habitat_id, points);
+        if !plan.ok {
+            return ActionResult::error(plan.message);
+        }
+        let Some(habitat) = self.habitats.iter().find(|h| h.id == habitat_id) else {
+            return ActionResult::error("Select a habitat first");
+        };
+        if habitat.tiles == plan.occupied_tiles {
+            return ActionResult::ok(plan.message);
+        }
+        let Some(gate) = plan.service_gate else {
+            return ActionResult::error("The fence has no service gate");
+        };
+        let before = Enclosure {
+            tiles: habitat.tiles.clone(),
+            gate: habitat.service_gate,
+        };
+        if let Err(message) = self.spend(plan.cost_cents, ExpenseCategory::Construction) {
+            return ActionResult::error(message);
+        }
+        self.apply_enclosure(habitat_id, plan.occupied_tiles.clone(), gate);
+        self.record_construction(
+            format!("habitat #{habitat_id} reshape"),
+            plan.cost_cents,
+            Change::ReshapeHabitat {
+                id: habitat_id,
+                before,
+                after: plan.occupied_tiles.clone(),
+            },
+        );
+        let mut message = format!(
+            "Habitat #{habitat_id} reshaped · {} tiles · {} fence segments",
+            plan.area, plan.perimeter
+        );
+        for warning in &plan.warnings {
+            message.push_str(" · ");
+            message.push_str(warning);
+        }
+        ActionResult::ok(message)
+    }
+
+    fn apply_enclosure(&mut self, habitat_id: u32, tiles: Vec<Position>, gate: FenceSegment) {
+        let Some(index) = self.habitats.iter().position(|h| h.id == habitat_id) else {
+            return;
+        };
+        for tile in &self.habitats[index].tiles.clone() {
+            self.set_tile(tile.x, tile.y, TileKind::Grass);
+        }
+        for tile in &tiles {
+            self.set_tile(tile.x, tile.y, TileKind::Habitat(habitat_id));
+        }
+        let habitat = &mut self.habitats[index];
+        habitat.tiles = tiles;
+        habitat.service_gate = gate;
+        self.refresh_guest_routes();
     }
 
     // --- Demolition ------------------------------------------------------------------------
@@ -710,7 +813,7 @@ impl GameState {
                     "demolish",
                     format!("Remove habitat #{id}"),
                     0,
-                    habitat_tiles(habitat),
+                    habitat.tiles.clone(),
                 );
                 plan.affected.push(Affected {
                     kind: "habitat",
@@ -849,7 +952,7 @@ impl GameState {
             .position(|habitat| habitat.id == id)
             .expect("planned habitat exists");
         let habitat = self.habitats.remove(index);
-        for tile in habitat_tiles(&habitat) {
+        for tile in &habitat.tiles {
             self.set_tile(tile.x, tile.y, TileKind::Grass);
         }
         let departing: Vec<u32> = self
@@ -937,6 +1040,22 @@ impl GameState {
                     return used(format!("guests are visiting habitat #{id}"));
                 }
             }
+            Change::ReshapeHabitat { id, before, after } => {
+                let Some(habitat) = self.habitats.iter().find(|habitat| habitat.id == *id) else {
+                    return Err(format!("habitat #{id} no longer exists"));
+                };
+                if habitat.tiles != *after {
+                    return Err(format!("habitat #{id} changed since"));
+                }
+                // The restored fence passes the same checks as any reshape, paid or not.
+                let plan = self.plan_enclosure(before.tiles.clone(), Some(*id));
+                if !plan.ok {
+                    return Err(plan.message.to_lowercase());
+                }
+                if !self.gate_usable_for(before.gate, *id, &before.tiles) {
+                    return Err("its former service gate would open onto a building".to_owned());
+                }
+            }
             Change::RemovePath(tile) => {
                 if self.tile(tile.x, tile.y) != Some(TileKind::Grass) {
                     return Err("something else now stands on that tile".to_owned());
@@ -958,11 +1077,11 @@ impl GameState {
                 }
             }
             Change::RemoveHabitat(habitat) => {
-                for tile in habitat_tiles(habitat) {
+                for tile in &habitat.tiles {
                     if self.tile(tile.x, tile.y) != Some(TileKind::Grass) {
                         return Err("something else now stands inside that fence".to_owned());
                     }
-                    if let Some(owner) = self.service_gate_owner(tile) {
+                    if let Some(owner) = self.service_gate_owner(*tile) {
                         return Err(gate_access_message(owner));
                     }
                 }
@@ -989,6 +1108,9 @@ impl GameState {
             Change::BuildHabitat { id, .. } => {
                 self.remove_habitat(*id);
             }
+            Change::ReshapeHabitat { id, before, .. } => {
+                self.apply_enclosure(*id, before.tiles.clone(), before.gate);
+            }
             Change::RemovePath(tile) => self.lay_paths(&[*tile]),
             Change::RemoveConcession(stand) => self.restore_concession(stand.as_ref().clone()),
             Change::RemoveHabitat(habitat) => self.restore_habitat(habitat.as_ref().clone()),
@@ -1014,14 +1136,21 @@ impl GameState {
                 }
                 plan.cost_cents
             }
-            Change::BuildHabitat {
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => {
-                let plan = self.evaluate_habitat_rect(*x, *y, x + width - 1, y + height - 1);
+            Change::BuildHabitat { tiles, .. } => {
+                let plan = self.plan_enclosure(tiles.clone(), None);
+                if !plan.ok {
+                    return Err(plan.message);
+                }
+                plan.cost_cents
+            }
+            Change::ReshapeHabitat { id, before, after } => {
+                let Some(habitat) = self.habitats.iter().find(|h| h.id == *id) else {
+                    return Err(format!("habitat #{id} no longer exists"));
+                };
+                if habitat.tiles != before.tiles {
+                    return Err(format!("habitat #{id} changed since"));
+                }
+                let plan = self.plan_enclosure(after.clone(), Some(*id));
                 if !plan.ok {
                     return Err(plan.message);
                 }
@@ -1044,9 +1173,10 @@ impl GameState {
             }
             Change::RemoveHabitat(habitat) => {
                 let id = habitat.id;
+                let first = habitat.tiles[0];
                 self.check_redo_demolition(
-                    habitat.x,
-                    habitat.y,
+                    first.x,
+                    first.y,
                     |target| matches!(target, Target::Habitat(other) if other == id),
                 )?;
                 0
@@ -1091,15 +1221,15 @@ impl GameState {
             Change::BuildConcession { id, x, y, key } => {
                 self.insert_concession(*id, *x, *y, key);
             }
-            Change::BuildHabitat {
-                id,
-                x,
-                y,
-                width,
-                height,
-            } => {
-                let plan = self.evaluate_habitat_rect(*x, *y, x + width - 1, y + height - 1);
-                self.insert_habitat(*id, &plan);
+            Change::BuildHabitat { id, tiles } => {
+                let plan = self.plan_enclosure(tiles.clone(), None);
+                let gate = plan.service_gate.ok_or("the fence has no service gate")?;
+                self.insert_habitat(*id, tiles.clone(), gate);
+            }
+            Change::ReshapeHabitat { id, after, .. } => {
+                let plan = self.plan_enclosure(after.clone(), Some(*id));
+                let gate = plan.service_gate.ok_or("the fence has no service gate")?;
+                self.apply_enclosure(*id, after.clone(), gate);
             }
             Change::RemovePath(tile) => self.remove_path(*tile),
             Change::RemoveConcession(stand) => {
@@ -1157,12 +1287,6 @@ impl GameState {
         self.construction.undo.push(transaction);
         ActionResult::ok(message)
     }
-}
-
-fn habitat_tiles(habitat: &Habitat) -> Vec<Position> {
-    (habitat.y..habitat.y + habitat.height)
-        .flat_map(|y| (habitat.x..habitat.x + habitat.width).map(move |x| Position { x, y }))
-        .collect()
 }
 
 #[cfg(test)]

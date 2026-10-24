@@ -357,6 +357,20 @@ impl ParkCameraRig {
             .and_then(|ground| self.tile_at(ground)))
     }
 
+    /// The grid corner nearest a picked ground point; corner `(x, y)` is the north-west corner
+    /// of tile `(x, y)`, so corners run `0..=width × 0..=depth`. Fence outlines snap to these.
+    fn corner_at(self, ground: Vec3) -> Option<ParkTile> {
+        let x = ground.x.round();
+        let y = ground.z.round();
+        if x < 0.0 || y < 0.0 || x > self.park_width || y > self.park_depth {
+            return None;
+        }
+        Some(ParkTile {
+            x: x as i32,
+            y: y as i32,
+        })
+    }
+
     fn tile_at(self, ground: Vec3) -> Option<ParkTile> {
         let x = ground.x.floor();
         let y = ground.z.floor();
@@ -409,6 +423,7 @@ impl BrowserCameraFrame {
 struct BrowserPick {
     ground: [f32; 2],
     tile: Option<ParkTile>,
+    corner: Option<ParkTile>,
 }
 
 fn js_error(error: impl fmt::Display) -> JsValue {
@@ -485,6 +500,7 @@ impl ParkCameraBridge {
         let pick = ground.map(|ground| BrowserPick {
             ground: [ground.x, ground.z],
             tile: self.rig.tile_at(ground),
+            corner: self.rig.corner_at(ground),
         });
         serde_json::to_string(&pick).map_err(js_error)
     }

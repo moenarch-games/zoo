@@ -397,6 +397,67 @@ dd {
   font-size: 10px;
 }
 
+.habitat-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.habitat-tools:empty {
+  display: none;
+}
+
+.habitat-shape {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 4px 4px 0;
+}
+
+.habitat-shape button {
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.habitat-shape button.active {
+  background: #f6d36f;
+  color: #24302b;
+}
+
+.outline-status {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 4px 0;
+  font-size: 10px;
+  color: #e7f2ee;
+}
+
+/* One line, so the dock (and with it the map) never changes height while drawing. */
+.outline-status > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outline-status.invalid b {
+  color: #f0a08f;
+}
+
+.outline-status.valid b {
+  color: #b8e89a;
+}
+
+.outline-status button {
+  font-size: 10px;
+  flex: none;
+}
+
 .tool span {
   font-size: 23px;
   line-height: 1;

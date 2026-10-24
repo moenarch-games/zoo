@@ -2,6 +2,7 @@ import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
 import {runConstructionAcceptance} from "./construction-proof.mjs"
+import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
@@ -501,6 +502,9 @@ try {
 
   // #92 transactional construction on a fresh park: preview, build, cancel, undo and redo.
   await runConstructionAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
+
+  // #95 non-rectangular habitats: draw an L outline, inspect, move its gate, reshape, cancel, undo.
+  await runHabitatShapesAcceptance({cdp, evaluate, assert, sleep, previewUrl, project, tile, clickButton, mouse, key, frame, screenshot})
 
   // #87 session recorder and failure recovery (docs/acceptance/session-recorder.md). Runs after
   // the existing journey so that journey's evidence stays independent of the new contract.

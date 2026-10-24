@@ -40,6 +40,8 @@ export type SceneOverlay = {
   tool: Tool
   hoveredTile: Point | null
   ghostTiles: Point[]
+  /** The fence outline being drawn: grid corners in drawing order (#95). */
+  outline: Point[]
   placement: PlacementEvaluation | null
   /** Rust's plan for the path stroke, facility or demolition under the pointer (#92). */
   construction: ConstructionPreview | null
@@ -537,6 +539,25 @@ function sceneryPlacements(snapshot: Snapshot): SceneryPlacement[] {
   return placements
 }
 
+/** Whether the habitat fills its bounding box (every pre-#95 habitat does). */
+function isRectangular(habitat: Habitat): boolean {
+  return habitat.tiles.length === habitat.width * habitat.height
+}
+
+/** A representative tile near the middle of the enclosure, for centred furnishing. */
+function middleTile(habitat: Habitat): Point {
+  return habitat.tiles[Math.floor(habitat.tiles.length / 2)] ?? habitat
+}
+
+/** The enclosure's centre: the bounding-box centre for rectangles, else a middle tile's. */
+function habitatCentre(habitat: Habitat): { x: number; z: number } {
+  if (isRectangular(habitat)) {
+    return { x: habitat.x + habitat.width / 2, z: habitat.y + habitat.height / 2 }
+  }
+  const tile = middleTile(habitat)
+  return { x: tile.x + 0.5, z: tile.y + 0.5 }
+}
+
 /** The decorative pond of a water-loving species' habitat, if it has one. */
 function habitatPond(habitat: Habitat): { x: number; z: number; radius: number } | null {
   if (
@@ -545,6 +566,10 @@ function habitatPond(habitat: Habitat): { x: number; z: number; radius: number }
     habitat.species !== "penguin"
   ) {
     return null
+  }
+  if (!isRectangular(habitat)) {
+    const tile = middleTile(habitat)
+    return { x: tile.x + 0.5, z: tile.y + 0.5, radius: 0.36 }
   }
   return {
     x: habitat.x + habitat.width * 0.62,
@@ -565,11 +590,25 @@ function habitatPlacements(habitat: Habitat): SceneryPlacement[] {
 function habitatPieces(habitat: Habitat): SceneryPlacement[] {
   const id = `habitat:${habitat.id}`
   const placements: SceneryPlacement[] = []
-  const spot = (salt: number, index: number) => ({
-    x: habitat.x + 0.4 + hash(habitat.id, index, salt) * (habitat.width - 0.8),
-    z: habitat.y + 0.4 + hash(habitat.id, index, salt + 1) * (habitat.height - 0.8),
-    yaw: hash(habitat.id, index, salt + 2) * Math.PI * 2,
-  })
+  const rectangular = isRectangular(habitat)
+  const spot = (salt: number, index: number) => {
+    const yaw = hash(habitat.id, index, salt + 2) * Math.PI * 2
+    if (rectangular) {
+      return {
+        x: habitat.x + 0.4 + hash(habitat.id, index, salt) * (habitat.width - 0.8),
+        z: habitat.y + 0.4 + hash(habitat.id, index, salt + 1) * (habitat.height - 0.8),
+        yaw,
+      }
+    }
+    // Any other shape: a seeded tile of the enclosure, then a seeded point inside it.
+    const tiles = habitat.tiles
+    const tile = tiles[Math.floor(hash(habitat.id, index, salt + 3) * tiles.length)] ?? habitat
+    return {
+      x: tile.x + 0.2 + hash(habitat.id, index, salt) * 0.6,
+      z: tile.y + 0.2 + hash(habitat.id, index, salt + 1) * 0.6,
+      yaw,
+    }
+  }
   // One small rock and one boulder for texture.
   const rock = spot(11, 0)
   placements.push({
@@ -586,7 +625,7 @@ function habitatPieces(habitat: Habitat): SceneryPlacement[] {
     scale: 0.55 + hash(habitat.id, 1, 13) * 0.2,
   })
   // Grass tufts: about one per three tiles, never more than the cap.
-  const tufts = Math.min(HABITAT_GRASS_CAP, Math.floor((habitat.width * habitat.height) / 3))
+  const tufts = Math.min(HABITAT_GRASS_CAP, Math.floor(habitat.tiles.length / 3))
   for (let index = 0; index < tufts; index += 1) {
     placements.push({
       piece: "grass-tuft",
@@ -603,8 +642,9 @@ function habitatPieces(habitat: Habitat): SceneryPlacement[] {
     placements.push({
       piece: "tree-acacia",
       id: `${id}:acacia`,
-      x: habitat.x + habitat.width - 0.6,
-      z: habitat.y + habitat.height - 0.6,
+      // The last row-major tile: the south-east corner of a rectangle.
+      x: (habitat.tiles.at(-1)?.x ?? habitat.x) + 0.4,
+      z: (habitat.tiles.at(-1)?.y ?? habitat.y) + 0.4,
       scale: 1,
       yaw: hash(habitat.id, 31) * Math.PI * 2,
     })
@@ -1124,10 +1164,9 @@ function tileAt(snapshot: Snapshot, x: number, y: number): Tile | undefined {
 function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): RendererSceneNode[] {
   const nodes: RendererSceneNode[] = []
   const id = `habitat:${habitat.id}`
-  const right = habitat.x + habitat.width
-
   // Water trough against the north fence.
-  const trough = model(`${id}:trough`, { x: habitat.x + 0.55, z: habitat.y + 0.3 })
+  const first = habitat.tiles[0] ?? habitat
+  const trough = model(`${id}:trough`, { x: first.x + 0.55, z: first.y + 0.3 })
   nodes.push(
     trough.box("basin", [0, 0.08, 0], [0.5, 0.14, 0.22], "#7d6a52"),
     trough.box(
@@ -1160,7 +1199,10 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
   }
 
   if (habitat.has_shelter) {
-    const shelter = model(`${id}:shelter`, { x: right - 0.55, z: habitat.y + 0.55 }, Math.PI)
+    // Against the north fence at the east end of the first row.
+    const firstRow = habitat.tiles.filter((tile) => tile.y === habitat.y)
+    const east = (firstRow.at(-1)?.x ?? habitat.x) + 1
+    const shelter = model(`${id}:shelter`, { x: east - 0.55, z: habitat.y + 0.55 }, Math.PI)
     nodes.push(
       shelter.box("back", [0, 0.3, 0.18], [0.72, 0.6, 0.08], "#8d6a45"),
       shelter.box("left", [-0.32, 0.3, 0], [0.08, 0.6, 0.44], "#8d6a45"),
@@ -1171,10 +1213,7 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
 
   if (habitat.animals === 0) {
     // Signpost marking an empty enclosure waiting for animals.
-    const sign = model(`${id}:vacant`, {
-      x: habitat.x + habitat.width / 2,
-      z: habitat.y + habitat.height / 2,
-    })
+    const sign = model(`${id}:vacant`, habitatCentre(habitat))
     nodes.push(
       sign.cylinder("post", [0, 0.3, 0], 0.03, 0.6, "#7a5536"),
       sign.box("board", [0, 0.58, 0], [0.42, 0.24, 0.04], "#f2d274"),
@@ -1183,7 +1222,7 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
     )
   }
 
-  if (selected) {
+  if (selected && isRectangular(habitat)) {
     const x = habitat.x + habitat.width / 2
     const z = habitat.y + habitat.height / 2
     nodes.push(
@@ -1197,6 +1236,19 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
         },
       ),
     )
+  } else if (selected) {
+    // Any other shape highlights tile by tile.
+    for (const tile of habitat.tiles) {
+      nodes.push(
+        node(
+          `${id}:selection:${tile.x}:${tile.y}`,
+          [tile.x + 0.5, 0.03, tile.y + 0.5],
+          boxGeometry([1, 0.02, 1]),
+          "#f6d36f",
+          { opacity: 0.28 },
+        ),
+      )
+    }
   }
   return nodes
 }
@@ -1546,6 +1598,7 @@ function toolColor(tool: Tool): Hex {
       return "#f3e3b8"
     case "habitat":
     case "gate":
+    case "reshape":
       return "#f6d36f"
     case "zone":
       return "#9fd0f6"
@@ -1556,8 +1609,67 @@ function toolColor(tool: Tool): Hex {
   }
 }
 
+/** The outline being drawn: a post at each corner (the first one larger, as the closing
+ * target) and a low rail along each axis-aligned leg; Rust joins diagonal legs. */
+function outlineNodes(overlay: SceneOverlay): RendererSceneNode[] {
+  const corners = overlay.outline
+  if (corners.length === 0) {
+    return []
+  }
+  const color: Hex = overlay.placement?.ok ? "#f1d66b" : "#e0a04f"
+  const nodes: RendererSceneNode[] = corners.map((corner, index) =>
+    node(
+      `overlay:outline:post:${index}`,
+      [corner.x, 0.18, corner.y],
+      boxGeometry(index === 0 ? [0.16, 0.36, 0.16] : [0.09, 0.3, 0.09]),
+      index === 0 ? "#ffffff" : color,
+    ),
+  )
+  for (let index = 1; index < corners.length; index += 1) {
+    const from = corners[index - 1]
+    const to = corners[index]
+    if (!from || !to || (from.x !== to.x && from.y !== to.y)) {
+      continue
+    }
+    const length = Math.abs(to.x - from.x) + Math.abs(to.y - from.y)
+    nodes.push(
+      node(
+        `overlay:outline:rail:${index}`,
+        [(from.x + to.x) / 2, 0.22, (from.y + to.y) / 2],
+        boxGeometry(from.y === to.y ? [length, 0.05, 0.05] : [0.05, 0.05, length]),
+        color,
+        { opacity: 0.9 },
+      ),
+    )
+  }
+  const blocked = overlay.placement?.blocked_corner
+  if (blocked) {
+    nodes.push(
+      node(
+        "overlay:outline:blocked",
+        [blocked.x, 0.2, blocked.y],
+        boxGeometry([0.22, 0.4, 0.22]),
+        "#e0473a",
+      ),
+    )
+  }
+  return nodes
+}
+
 function overlayNodes(overlay: SceneOverlay): RendererSceneNode[] {
-  const nodes: RendererSceneNode[] = []
+  const nodes: RendererSceneNode[] = outlineNodes(overlay)
+  // A reshape preview marks the tiles the new fence gives up.
+  for (const tile of overlay.placement?.removed_tiles ?? []) {
+    nodes.push(
+      node(
+        `overlay:removed:${tile.x}:${tile.y}`,
+        [tile.x + 0.5, 0.045, tile.y + 0.5],
+        boxGeometry([0.96, 0.02, 0.96]),
+        "#e0473a",
+        { opacity: 0.42 },
+      ),
+    )
+  }
   if (overlay.ghostTiles.length > 0) {
     const color: Hex = overlay.placement?.ok ? "#9fe07a" : "#e0604f"
     for (const tile of overlay.ghostTiles) {
