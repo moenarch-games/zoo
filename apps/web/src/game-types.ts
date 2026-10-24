@@ -108,6 +108,7 @@ export type Habitat = Point & {
   height: number
   /** The enclosed tiles, row-major; x, y, width and height are their bounding box. */
   tiles: Point[]
+  fence: FenceType
   footprint_area: number
   fence_length: number
   fence_segments: FenceSegment[]
@@ -259,6 +260,8 @@ export type SpeciesOffer = {
   appeal: number
   minimum_social_group: number
   space_per_animal: number
+  /** The lowest habitat fence, in centimetres, this species can be adopted behind. */
+  minimum_fence_height_cm: number
 }
 
 export type FinanceBreakdown = {
@@ -378,6 +381,8 @@ export type Snapshot = {
     failed_concessions: number
   }
   species_catalog: SpeciesOffer[]
+  /** Fence types a habitat can be rebuilt with; the first is what new habitats get. */
+  fence_catalog: FenceType[]
   complaints: {
     hungry: number
     thirsty: number
@@ -435,7 +440,7 @@ export type ConstructionPreview = {
   /** False when committing would leave the park unchanged (an existing path, empty grass). */
   changes: boolean
   message: string
-  action: "path" | "facility" | "demolish"
+  action: "path" | "facility" | "demolish" | "fence"
   cost_cents: number
   tiles: Point[]
   blocked_tiles: Point[]
@@ -539,4 +544,14 @@ export type DailySummary = {
   litter: number
   maintenance: number
   headline: string
+}
+
+/** A content-defined fence type (#95): look, height and per-segment price and upkeep. */
+export type FenceType = {
+  key: string
+  label: string
+  material: "wood" | "steel"
+  height_cm: number
+  segment_cents: number
+  segment_hourly_cents: number
 }

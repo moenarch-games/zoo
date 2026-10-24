@@ -8,6 +8,7 @@ const FIXTURE_V2: &str = "tests/fixtures/save-v2.json";
 const FIXTURE_V3: &str = "tests/fixtures/save-v3.json";
 const FIXTURE_V4: &str = "tests/fixtures/save-v4.json";
 const FIXTURE_V5: &str = "tests/fixtures/save-v5.json";
+const FIXTURE_V6: &str = "tests/fixtures/save-v6.json";
 
 /// What the schema 4 → 5 migration (#95) does to a document's habitats: each rectangle becomes
 /// its row-major enclosed tiles.
@@ -22,6 +23,55 @@ fn rectangles_as_tiles(value: &mut Value) {
             .collect();
         habitat.insert("tiles".to_owned(), tiles.into());
     }
+}
+
+/// What the schema 5 → 6 migration (#95) does to a document made with the built-in content:
+/// fences move into the content, every species gains its minimum fence height and every
+/// habitat is fenced with the wooden rail at the old price and upkeep.
+fn fences_from_content(value: &mut Value) {
+    let built_in = json(&ZooGame::new().content_json());
+    let wooden = built_in["fences"][0].clone();
+    assert_eq!(wooden["key"], "wooden_rail");
+    for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
+        if habitat["species"].is_object() {
+            let key = habitat["species"]["key"].clone();
+            let species = built_in["species"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|species| species["key"] == key)
+                .unwrap();
+            habitat["species"]["minimum_fence_height_cm"] =
+                species["minimum_fence_height_cm"].clone();
+        }
+        habitat
+            .as_object_mut()
+            .unwrap()
+            .insert("fence".to_owned(), wooden.clone());
+    }
+    value["content"] = built_in;
+}
+
+/// Schema 5 parks keep their fence price and upkeep as the wooden rail type and gain the
+/// steel mesh; nothing else changes and the park runs on.
+#[test]
+fn the_schema_v5_fixture_moves_its_fence_into_content() {
+    let fixture = std::fs::read_to_string(FIXTURE_V5).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut original = json(&fixture);
+    assert_eq!(
+        original["content"]["balance"]["construction"]["fence_segment_cents"],
+        json(&game.content_json())["fences"][0]["segment_cents"]
+    );
+    fences_from_content(&mut original);
+    original["schema_version"] = 6.into();
+    assert_eq!(
+        json(&game.save_json()),
+        original,
+        "migration changes nothing else"
+    );
+    game.tick(60);
 }
 
 fn json(text: &str) -> Value {
@@ -156,7 +206,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 6.into()),
+            mutate(&|v| v["schema_version"] = 7.into()),
         ),
         (
             "invalid_save",
@@ -211,16 +261,16 @@ fn repeated_imports_replace_rather_than_accumulate() {
 }
 
 #[test]
-fn the_schema_v5_fixture_still_loads_unchanged() {
+fn the_schema_v6_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V5,
+            FIXTURE_V6,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V5).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V6).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));
@@ -250,6 +300,7 @@ fn the_schema_v3_fixture_migrates_by_reading_its_alerts() {
     saved["schema_version"] = 3.into();
     let mut original = json(&fixture);
     rectangles_as_tiles(&mut original);
+    fences_from_content(&mut original);
     assert_eq!(saved, original, "migration changes nothing else");
     game.tick(60);
 }
@@ -273,7 +324,8 @@ fn the_schema_v4_fixture_migrates_rectangles_to_enclosure_tiles() {
         .collect();
     assert!(!rectangles.is_empty());
     rectangles_as_tiles(&mut original);
-    original["schema_version"] = 5.into();
+    fences_from_content(&mut original);
+    original["schema_version"] = 6.into();
     assert_eq!(
         json(&game.save_json()),
         original,
@@ -308,6 +360,7 @@ fn the_schema_v2_fixture_migrates_keeper_training_to_the_opening_guide() {
     assert_eq!(park["objectives"].as_array().unwrap().len(), 13);
     let mut original = json(&fixture);
     rectangles_as_tiles(&mut original);
+    fences_from_content(&mut original);
     for value in [&mut saved, &mut original] {
         let park = value["park"].as_object_mut().unwrap();
         for key in ["tutorial", "objectives", "alerts"] {
@@ -356,6 +409,7 @@ fn the_schema_v1_fixture_migrates_to_the_opening_scenario() {
     saved["schema_version"] = 1.into();
     let mut original = json(&fixture);
     rectangles_as_tiles(&mut original);
+    fences_from_content(&mut original);
     original["park"].as_object_mut().unwrap().remove("tutorial");
     assert_eq!(saved, original, "migration changes nothing else");
     game.tick(60);

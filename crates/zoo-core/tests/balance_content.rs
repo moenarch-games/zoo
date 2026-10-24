@@ -33,12 +33,13 @@ fn edited_balance_drives_construction_staff_and_care_costs() {
         "path_tile_cents": 111,
         "habitat_base_cents": 1000,
         "habitat_tile_cents": 10,
-        "fence_segment_cents": 1,
     });
     balance["staff"]["keeper"]["hire_cents"] = json!(4321);
     balance["staff"]["janitor"]["hire_cents"] = json!(321);
     balance["habitat_care"]["shelter_cents"] = json!(77);
     balance["feed_batch_cents"] = json!(55);
+    // The default (first) fence type prices every new fence segment.
+    definition["fences"][0]["segment_cents"] = json!(1);
     let mut game = load(&definition);
 
     assert_eq!(spent(&mut game, |g| g.place_path(10, 2)), 111);

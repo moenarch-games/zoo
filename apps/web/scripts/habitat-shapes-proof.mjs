@@ -217,6 +217,47 @@ export async function runHabitatShapesAcceptance(context) {
   )
   assert((await cashCents()) === expandAt, "#95: reshape undo did not refund exactly")
 
+  // Fence types: each species states its minimum fence; rebuilding the wooden rail as steel mesh
+  // charges the previewed full price, shows in the inspector, and undo refunds it exactly.
+  await click(await tile(4, 9))
+  await waitFor(
+    "the habitat inspector for the fence",
+    `document.querySelector('.window-title span')?.textContent === 'Habitat #1'`,
+  )
+  // The adoption list states each species' fence requirement (giraffes need 200 cm).
+  assert(
+    await evaluate(
+      `[...document.querySelectorAll('.species-row')].some((row) => row.textContent.includes('Giraffe') && row.textContent.includes('fence 200 cm+'))`,
+    ),
+    "#95: the giraffe row does not state its fence requirement",
+  )
+  const steelPrice = await evaluate(`(() => {
+    const button = document.querySelector('button[aria-label="Rebuild fence as Steel mesh"]')
+    const text = button?.querySelector('strong')?.textContent ?? ''
+    return Math.round(Number(text.replace(/[^0-9.]/g, '')) * 100)
+  })()`)
+  assert(steelPrice > 0, "#95: the steel mesh rebuild shows no price")
+  const fenceAt = await cashCents()
+  assert(await clickButton("Rebuild fence as Steel mesh"), "#95: steel mesh rebuild missing")
+  assert(
+    (await message()).includes("fence rebuilt as Steel mesh"),
+    "#95: fence rebuild failed",
+    await message(),
+  )
+  assert(fenceAt - (await cashCents()) === steelPrice, "#95: rebuild cost differs from preview")
+  await screenshot("test-results/habitat-shapes-steel-fence.png")
+  assert(
+    await evaluate(`document.querySelector('.habitat-card')?.textContent.includes('Steel mesh · 250 cm') ?? false`),
+    "#95: the inspector does not show the steel mesh fence",
+  )
+  assert(await clickButton("Undo"), "#95: undo missing after rebuild")
+  assert(
+    (await message()).startsWith("Undid habitat #1 fence change"),
+    "#95: fence change undo failed",
+    await message(),
+  )
+  assert((await cashCents()) === fenceAt, "#95: fence undo did not refund exactly")
+
   // --- Phone: tap the corners of a second L ---------------------------------------------------
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 390,
@@ -327,6 +368,6 @@ export async function runHabitatShapesAcceptance(context) {
   await cdp.send("Emulation.clearDeviceMetricsOverride")
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false })
   console.log(
-    "#95 habitat shapes dogfood passed: dragged L outline builds at its previewed price, inspected through its leg, gate moved onto the leg, expanded by reshape at its previewed price, Escape-cancelled reshape spends nothing, reshape undo refunds exactly (desktop); tapped L outline builds, is inspected and expanded by tapped reshape, and Clear cancels (phone).",
+    "#95 habitat shapes dogfood passed: dragged L outline builds at its previewed price, inspected through its leg, gate moved onto the leg, expanded by reshape at its previewed price, Escape-cancelled reshape spends nothing, reshape undo refunds exactly, species fence requirements shown and a steel mesh rebuild at its previewed price that undo refunds (desktop); tapped L outline builds, is inspected and expanded by tapped reshape, and Clear cancels (phone).",
   )
 }

@@ -1,13 +1,12 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "ruleset_id": "zoo-classic-v1",
   "balance": {
     "admission_price_cents": 1200,
     "construction": {
       "path_tile_cents": 1000,
       "habitat_base_cents": 10000,
-      "habitat_tile_cents": 3000,
-      "fence_segment_cents": 1500
+      "habitat_tile_cents": 3000
     },
     "habitat_care": {
       "water_refill_cents": 800,
@@ -22,10 +21,27 @@
       "mechanic": { "hire_cents": 22000, "hourly_wage_cents": 1000 }
     },
     "upkeep": {
-      "habitat_hourly_cents": 250,
-      "fence_segment_hourly_cents": 8
+      "habitat_hourly_cents": 250
     }
   },
+  "fences": [
+    {
+      "key": "wooden_rail",
+      "label": "Wooden rail",
+      "material": "wood",
+      "height_cm": 120,
+      "segment_cents": 1500,
+      "segment_hourly_cents": 8
+    },
+    {
+      "key": "steel_mesh",
+      "label": "Steel mesh",
+      "material": "steel",
+      "height_cm": 250,
+      "segment_cents": 3000,
+      "segment_hourly_cents": 12
+    }
+  ],
   "unlocks": [
     {
       "key": "available",
@@ -40,6 +56,7 @@
       "appeal": 95,
       "minimum_social_group": 2,
       "space_per_animal": 4,
+      "minimum_fence_height_cm": 90,
       "hourly_upkeep_cents": 125,
       "asset_ref": "capybara",
       "unlock_ref": "available",
@@ -77,6 +94,7 @@
       "appeal": 80,
       "minimum_social_group": 3,
       "space_per_animal": 2,
+      "minimum_fence_height_cm": 90,
       "hourly_upkeep_cents": 125,
       "asset_ref": "flamingo",
       "unlock_ref": "available",
@@ -114,6 +132,7 @@
       "appeal": 125,
       "minimum_social_group": 3,
       "space_per_animal": 5,
+      "minimum_fence_height_cm": 120,
       "hourly_upkeep_cents": 125,
       "asset_ref": "zebra",
       "unlock_ref": "available",
@@ -151,6 +170,7 @@
       "appeal": 160,
       "minimum_social_group": 2,
       "space_per_animal": 8,
+      "minimum_fence_height_cm": 200,
       "hourly_upkeep_cents": 125,
       "asset_ref": "giraffe",
       "unlock_ref": "available",
@@ -195,6 +215,7 @@
       "appeal": 190,
       "minimum_social_group": 2,
       "space_per_animal": 12,
+      "minimum_fence_height_cm": 200,
       "hourly_upkeep_cents": 125,
       "asset_ref": "elephant",
       "unlock_ref": "available",
@@ -239,6 +260,7 @@
       "appeal": 110,
       "minimum_social_group": 4,
       "space_per_animal": 3,
+      "minimum_fence_height_cm": 90,
       "hourly_upkeep_cents": 125,
       "asset_ref": "penguin",
       "unlock_ref": "available",

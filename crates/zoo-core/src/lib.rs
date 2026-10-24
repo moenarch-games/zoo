@@ -422,6 +422,8 @@ struct Habitat {
     id: u32,
     /// The enclosed tiles, row-major: one connected enclosure without holes (#95).
     tiles: Vec<Position>,
+    /// The fence type it is enclosed with, owned like its species definition.
+    fence: content::FenceType,
     species: Option<Species>,
     animals: u32,
     welfare: u32,
@@ -867,6 +869,15 @@ impl GameState {
             .is_some_and(|current| current.key != species.key)
         {
             return ActionResult::error("Each habitat currently keeps one species");
+        }
+        if habitat.fence.height_cm < species.minimum_fence_height_cm {
+            return ActionResult::error(format!(
+                "{} needs a fence at least {} cm high; habitat #{habitat_id}'s {} is {} cm. Upgrade its fence first",
+                species.label(),
+                species.minimum_fence_height_cm,
+                habitat.fence.label.to_lowercase(),
+                habitat.fence.height_cm
+            ));
         }
         if let Some(problem) = self.zone_staffing_problem(habitat) {
             return ActionResult::error(format!("Staff this habitat before adopting: {problem}"));
@@ -2115,7 +2126,7 @@ impl GameState {
                 .saturating_add(animals)
                 .saturating_add(times(
                     habitat.fence_length() as usize,
-                    balance.upkeep.fence_segment_hourly_cents,
+                    habitat.fence.segment_hourly_cents,
                 ))
         });
         let park_upkeep = self
@@ -2634,6 +2645,7 @@ impl GameState {
                     appeal: species.appeal(),
                     minimum_social_group: profile.minimum_social_group,
                     space_per_animal: profile.space_per_animal,
+                    minimum_fence_height_cm: species.minimum_fence_height_cm,
                 }
             })
             .collect()
@@ -2974,6 +2986,7 @@ impl GameState {
                     width: bounds.2,
                     height: bounds.3,
                     tiles: habitat.tiles.clone(),
+                    fence: habitat.fence.clone(),
                     footprint_area: habitat.area(),
                     fence_length: habitat.fence_length(),
                     fence_segments: habitat.fence_segments(),
@@ -3154,6 +3167,7 @@ impl GameState {
                     .count() as u32,
             },
             species_catalog: self.species_catalog(),
+            fence_catalog: self.catalog.fences.clone(),
             complaints: self.complaint_summary(),
             construction: self.construction_view(),
             finance: FinanceView::new(
@@ -3309,6 +3323,7 @@ struct HabitatView {
     height: u32,
     /// The enclosed tiles, row-major; x, y, width and height are their bounding box.
     tiles: Vec<Position>,
+    fence: content::FenceType,
     footprint_area: u32,
     fence_length: u32,
     fence_segments: Vec<FenceSegment>,
@@ -3394,6 +3409,7 @@ struct SpeciesOfferView {
     appeal: u32,
     minimum_social_group: u32,
     space_per_animal: u32,
+    minimum_fence_height_cm: u32,
 }
 
 #[derive(Serialize)]
@@ -3485,6 +3501,8 @@ struct Snapshot {
     work_zones: Vec<zone::WorkZoneView>,
     operations: OperationsView,
     species_catalog: Vec<SpeciesOfferView>,
+    /// The fence types a habitat can be rebuilt with (#95).
+    fence_catalog: Vec<content::FenceType>,
     complaints: ComplaintSummary,
     construction: construction::HistoryView,
     finance: FinanceView,
@@ -3652,6 +3670,7 @@ impl ZooGame {
             "build_path_stroke" => self.build_path_stroke(points()?),
             "place_habitat_outline" => self.place_habitat_outline(points()?),
             "reshape_habitat" => self.reshape_habitat(number("habitat_id")?, points()?),
+            "upgrade_fence" => self.upgrade_fence(number("habitat_id")?, text("fence")?),
             "undo_construction" => self.undo_construction(),
             "redo_construction" => self.redo_construction(),
             "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
@@ -3992,6 +4011,20 @@ impl ZooGame {
         })
     }
 
+    /// Previews rebuilding a habitat's whole fence as another catalog fence type.
+    pub fn evaluate_fence_upgrade(&self, habitat_id: u32, fence: String) -> String {
+        serde_json::to_string(&self.state.evaluate_fence_upgrade(habitat_id, &fence))
+            .expect("construction preview serialization is infallible")
+    }
+
+    /// Rebuilds a habitat's whole fence as another type at full price, as one transaction.
+    pub fn upgrade_fence(&mut self, habitat_id: u32, fence: String) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "fence": fence });
+        self.command("upgrade_fence", args, |state| {
+            state.upgrade_fence(habitat_id, &fence)
+        })
+    }
+
     pub fn evaluate_habitat(&self, x: u32, y: u32, orientation: u8) -> String {
         serde_json::to_string(&self.state.evaluate_habitat(
             x,
@@ -4210,6 +4243,10 @@ mod tests {
         Habitat {
             id: 1,
             tiles: shape::rect_tiles(x, y, width, height),
+            fence: Catalog::parse(content::DEFAULT_DOCUMENT)
+                .expect("valid built-in catalog")
+                .fences[0]
+                .clone(),
             species: Some(Species::parse("capybara").expect("default catalog capybara")),
             animals: 1,
             welfare: 100,
@@ -4633,6 +4670,7 @@ mod tests {
         assert!(state.place_habitat_rect(11, 5, 14, 7).ok);
         let second_id = state.habitats[1].id;
         staff_habitat(&mut state, second_id);
+        assert!(state.upgrade_fence(second_id, "steel_mesh").ok);
         assert!(state.adopt(second_id, "giraffe").ok);
         for x in 4..=10 {
             assert!(state.place_path(x, ENTRANCE_Y + 1).ok);
@@ -4694,6 +4732,7 @@ mod tests {
         assert!(state.place_habitat_rect(11, 5, 14, 7).ok);
         let second_id = state.habitats[1].id;
         staff_habitat(&mut state, second_id);
+        assert!(state.upgrade_fence(second_id, "steel_mesh").ok);
         assert!(state.adopt(second_id, "giraffe").ok);
         for x in 4..=10 {
             assert!(state.place_path(x, ENTRANCE_Y + 1).ok);
@@ -5555,6 +5594,9 @@ mod tests {
         assert!(state.place_habitat_rect(x, 8, x + 2, 10).ok);
         let habitat_id = state.habitats.last().unwrap().id;
         staff_habitat(state, habitat_id);
+        if matches!(species, "elephant" | "giraffe") {
+            assert!(state.upgrade_fence(habitat_id, "steel_mesh").ok);
+        }
         assert!(state.adopt(habitat_id, species).ok);
         habitat_id
     }
@@ -5576,6 +5618,7 @@ mod tests {
         assert!(state.habitats[0].care_schedule.is_none());
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
+        assert!(state.upgrade_fence(habitat_id, "steel_mesh").ok);
         assert!(state.adopt(habitat_id, "elephant").ok);
 
         let elephant = Species::parse("elephant").unwrap();
@@ -5724,6 +5767,7 @@ mod tests {
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
+        assert!(state.upgrade_fence(habitat_id, "steel_mesh").ok);
         assert!(state.adopt(habitat_id, "elephant").ok);
         let habitat = habitat_view(&state, habitat_id);
         assert_eq!(
@@ -5746,6 +5790,7 @@ mod tests {
         state.hire_zoned_keeper();
         state.hire_zoned_keeper();
         let habitat_id = state.habitats[0].id;
+        assert!(state.upgrade_fence(habitat_id, "steel_mesh").ok);
         assert!(state.adopt(habitat_id, "elephant").ok);
         // Only the pushed job runs, so the crew's work is easy to follow.
         state.habitats[0]
@@ -5833,6 +5878,7 @@ mod tests {
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
         state.hire_zoned_keeper();
+        assert!(state.upgrade_fence(habitat_id, "steel_mesh").ok);
         assert!(state.adopt(habitat_id, "elephant").ok);
         state.habitats[0].food = 40;
         let crates = state.feed_crates;

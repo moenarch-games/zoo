@@ -22,7 +22,7 @@
 //!   are recorded commands, so session replay reproduces them exactly.
 use super::{
     ActionResult, Concession, ConcessionKind, ExpenseCategory, FenceSegment, GameState, Habitat,
-    HabitatOrientation, PlacementEvaluation, Position, TileKind, content,
+    HabitatOrientation, PlacementEvaluation, Position, TileKind, content, content::FenceType,
     gate::gate_access_message, shape,
 };
 use serde::Serialize;
@@ -78,6 +78,11 @@ enum Change {
         id: u32,
         before: Enclosure,
         after: Vec<Position>,
+    },
+    Refence {
+        id: u32,
+        before: Box<FenceType>,
+        after: Box<FenceType>,
     },
     RemovePath(Position),
     RemoveConcession(Box<Concession>),
@@ -654,6 +659,7 @@ impl GameState {
         self.restore_habitat(Habitat {
             id,
             tiles,
+            fence: self.default_fence().clone(),
             species: None,
             animals: 0,
             welfare: 100,
@@ -732,6 +738,122 @@ impl GameState {
         habitat.tiles = tiles;
         habitat.service_gate = gate;
         self.refresh_guest_routes();
+    }
+
+    // --- Fence types -----------------------------------------------------------------------
+
+    /// Why habitat `habitat`'s animals cannot live behind `fence`, if they cannot.
+    fn fence_too_low(habitat: &Habitat, fence: &FenceType) -> Option<String> {
+        let species = habitat.species.as_ref()?;
+        (fence.height_cm < species.minimum_fence_height_cm).then(|| {
+            format!(
+                "{} needs a fence at least {} cm high; {} is {} cm",
+                species.label, species.minimum_fence_height_cm, fence.label, fence.height_cm
+            )
+        })
+    }
+
+    /// The price of rebuilding a whole habitat fence as `fence`: every segment at full price.
+    fn fence_rebuild_cost(habitat: &Habitat, fence: &FenceType) -> i64 {
+        i64::from(habitat.fence_length()).saturating_mul(fence.segment_cents)
+    }
+
+    /// Previews rebuilding habitat `habitat_id`'s whole fence as type `fence_key` (#95).
+    pub(crate) fn evaluate_fence_upgrade(
+        &self,
+        habitat_id: u32,
+        fence_key: &str,
+    ) -> ConstructionPreview {
+        let reject = |message: String| {
+            ConstructionPreview::rejected("fence", message, Vec::new(), Vec::new())
+        };
+        let Some(habitat) = self.habitats.iter().find(|h| h.id == habitat_id) else {
+            return reject("Select a habitat first".to_owned());
+        };
+        let Some(fence) = self.catalog.fences.iter().find(|f| f.key == fence_key) else {
+            return reject("Unknown fence type".to_owned());
+        };
+        if habitat.fence.key == fence.key {
+            return ConstructionPreview::unchanged(
+                "fence",
+                format!("Habitat #{habitat_id} already has a {}", fence.label),
+            );
+        }
+        if let Some(problem) = Self::fence_too_low(habitat, fence) {
+            return reject(problem);
+        }
+        let cost = Self::fence_rebuild_cost(habitat, fence);
+        if self.cash_cents < cost {
+            return reject(format!("Not enough cash: it costs {}", dollars(cost)));
+        }
+        let mut plan = ConstructionPreview::planned(
+            "fence",
+            format!(
+                "Rebuild habitat #{habitat_id}'s {} fence segments as {} ({} cm)",
+                habitat.fence_length(),
+                fence.label,
+                fence.height_cm
+            ),
+            cost,
+            habitat.tiles.clone(),
+        );
+        plan.affected.push(Affected {
+            kind: "habitat",
+            id: Some(habitat_id),
+            effect: format!(
+                "{} {} cm → {} {} cm",
+                habitat.fence.label, habitat.fence.height_cm, fence.label, fence.height_cm
+            ),
+        });
+        plan
+    }
+
+    /// Rebuilds a habitat's whole fence as another type: full price, nothing refunded, one
+    /// undoable transaction.
+    pub(crate) fn upgrade_fence(&mut self, habitat_id: u32, fence_key: &str) -> ActionResult {
+        let plan = self.evaluate_fence_upgrade(habitat_id, fence_key);
+        if !plan.ok {
+            return ActionResult::error(plan.message);
+        }
+        if !plan.changes {
+            return ActionResult::ok(plan.message);
+        }
+        let Some(fence) = self
+            .catalog
+            .fences
+            .iter()
+            .find(|f| f.key == fence_key)
+            .cloned()
+        else {
+            return ActionResult::error("Unknown fence type");
+        };
+        if let Err(message) = self.spend(plan.cost_cents, ExpenseCategory::Construction) {
+            return ActionResult::error(message);
+        }
+        let Some(habitat) = self.habitats.iter_mut().find(|h| h.id == habitat_id) else {
+            return ActionResult::error("Select a habitat first");
+        };
+        let before = std::mem::replace(&mut habitat.fence, fence.clone());
+        self.record_construction(
+            format!("habitat #{habitat_id} fence change"),
+            plan.cost_cents,
+            Change::Refence {
+                id: habitat_id,
+                before: Box::new(before),
+                after: Box::new(fence.clone()),
+            },
+        );
+        ActionResult::ok(format!(
+            "Habitat #{habitat_id} fence rebuilt as {} · {}",
+            fence.label,
+            dollars(plan.cost_cents)
+        ))
+    }
+
+    fn set_fence(&mut self, habitat_id: u32, fence: &FenceType) {
+        if let Some(habitat) = self.habitats.iter_mut().find(|h| h.id == habitat_id) {
+            habitat.fence = fence.clone();
+        }
     }
 
     // --- Demolition ------------------------------------------------------------------------
@@ -1056,6 +1178,17 @@ impl GameState {
                     return Err("its former service gate would open onto a building".to_owned());
                 }
             }
+            Change::Refence { id, before, after } => {
+                let Some(habitat) = self.habitats.iter().find(|habitat| habitat.id == *id) else {
+                    return Err(format!("habitat #{id} no longer exists"));
+                };
+                if habitat.fence != **after {
+                    return Err(format!("habitat #{id}'s fence changed since"));
+                }
+                if let Some(problem) = Self::fence_too_low(habitat, before) {
+                    return Err(problem.to_lowercase());
+                }
+            }
             Change::RemovePath(tile) => {
                 if self.tile(tile.x, tile.y) != Some(TileKind::Grass) {
                     return Err("something else now stands on that tile".to_owned());
@@ -1111,6 +1244,7 @@ impl GameState {
             Change::ReshapeHabitat { id, before, .. } => {
                 self.apply_enclosure(*id, before.tiles.clone(), before.gate);
             }
+            Change::Refence { id, before, .. } => self.set_fence(*id, before),
             Change::RemovePath(tile) => self.lay_paths(&[*tile]),
             Change::RemoveConcession(stand) => self.restore_concession(stand.as_ref().clone()),
             Change::RemoveHabitat(habitat) => self.restore_habitat(habitat.as_ref().clone()),
@@ -1155,6 +1289,18 @@ impl GameState {
                     return Err(plan.message);
                 }
                 plan.cost_cents
+            }
+            Change::Refence { id, before, after } => {
+                let Some(habitat) = self.habitats.iter().find(|h| h.id == *id) else {
+                    return Err(format!("habitat #{id} no longer exists"));
+                };
+                if habitat.fence != **before {
+                    return Err(format!("habitat #{id}'s fence changed since"));
+                }
+                if let Some(problem) = Self::fence_too_low(habitat, after) {
+                    return Err(problem.to_lowercase());
+                }
+                Self::fence_rebuild_cost(habitat, after)
             }
             Change::RemovePath(tile) => {
                 self.check_redo_demolition(tile.x, tile.y, |target| {
@@ -1231,6 +1377,7 @@ impl GameState {
                 let gate = plan.service_gate.ok_or("the fence has no service gate")?;
                 self.apply_enclosure(*id, after.clone(), gate);
             }
+            Change::Refence { id, after, .. } => self.set_fence(*id, after),
             Change::RemovePath(tile) => self.remove_path(*tile),
             Change::RemoveConcession(stand) => {
                 self.remove_concession(stand.id);
