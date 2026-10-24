@@ -81,14 +81,12 @@ pub(crate) fn start_identity(
     scenario: &crate::scenario::ScenarioIdentity,
     content_json: &str,
     ruleset_id: &str,
-    schema_version: u32,
 ) -> Value {
     json!({
         "scenario": scenario.id,
         "scenario_digest": scenario.digest,
         "seed": scenario.seed,
         "ruleset_id": ruleset_id,
-        "schema_version": schema_version,
         "content_digest": fnv1a64(content_json.as_bytes()),
     })
 }

@@ -6,8 +6,8 @@
 //! { "format": "zoo-save", "schema_version": 1, "content": { ...catalog... }, "park": { ... } }
 //! ```
 //!
-//! `content` is the validated catalog the park runs on (it carries the content schema version
-//! and ruleset id), so a save restores the same rules and species definitions it was made with.
+//! `content` is the validated catalog the park runs on (it carries the ruleset id), so a save
+//! restores the same rules and species definitions it was made with.
 //! `park` is the complete authoritative [`GameState`]: tiles, entities, stable next IDs, tick
 //! and time accumulators, stocks, ledgers, care jobs, staff assignments and tutorial progress.
 //! The simulation uses no random streams. Camera, windows and device settings are never part of
@@ -21,11 +21,13 @@
 //!
 //! # Migration procedure
 //!
-//! Every change to the saved shape bumps [`SCHEMA_VERSION`] and adds one arm to [`migrate`]
-//! that rewrites a version `n` document's JSON into version `n + 1`. Migrations run in order on
-//! the raw JSON value before typed deserialization, so the typed `GameState` only ever reads
-//! the current schema. Each released schema keeps an immutable fixture under
-//! `tests/fixtures/save-v<n>.json` that must keep loading. Documents newer than this build are
+//! Every change to the saved shape (including the embedded catalog's shape) appends one
+//! function to [`MIGRATIONS`] that rewrites the previous schema's raw JSON into the new one,
+//! and one immutable fixture `tests/fixtures/save-v<n>.json` that must keep loading. Never
+//! write a schema number by hand: [`SCHEMA_VERSION`] is the length of the migration list plus
+//! one, and [`migrate`] stamps it once at the end (docs/decisions/merge-safe-format-identities.md).
+//! Migrations run in order on the raw JSON value before typed deserialization, so the typed
+//! `GameState` only ever reads the current schema. Documents newer than this build are
 //! rejected as `unsupported_version`.
 use super::{
     GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind, animal,
@@ -39,7 +41,20 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 7;
+type Migration = fn(Value) -> Result<Value, SaveError>;
+/// Append-only: entry `i` rewrites a schema `i + 1` document into schema `i + 2`.
+const MIGRATIONS: &[Migration] = &[
+    v1_to_v2,
+    v2_to_v3,
+    v3_to_v4,
+    v4_to_v5,
+    v5_to_v6,
+    v6_to_v7,
+    drop_content_schema_version,
+];
+/// Derived, never hand-written: two PRs that each add a migration both append after the same
+/// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
+pub(crate) const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32 + 1;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -139,21 +154,26 @@ pub(crate) fn decode(document: &str) -> Result<GameState, SaveError> {
     Ok(state)
 }
 
-/// Rewrites a document of schema `from` into the current schema, one version at a time.
-fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
-    match from {
-        SCHEMA_VERSION => Ok(value),
-        1 => migrate(v1_to_v2(value)?, 2),
-        2 => migrate(v2_to_v3(value)?, 3),
-        3 => migrate(v3_to_v4(value)?, 4),
-        4 => migrate(v4_to_v5(value)?, 5),
-        5 => migrate(v5_to_v6(value)?, 6),
-        6 => migrate(v6_to_v7(value)?, 7),
-        other => Err(SaveError::new(
-            "unsupported_version",
-            format!("no migration from save schema {other}"),
-        )),
+/// Rewrites a document of schema `from` (1..=[`SCHEMA_VERSION`]) into the current schema,
+/// running every later migration in order.
+fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
+    for migration in &MIGRATIONS[from as usize - 1..] {
+        value = migration(value)?;
     }
+    value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 8 drops the embedded catalog's own `schema_version`: Serde's strict typed catalog is
+/// the content schema and the session's `content_digest` its identity, so no hand-bumped
+/// content number remains.
+fn drop_content_schema_version(mut value: Value) -> Result<Value, SaveError> {
+    value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "content: missing or not an object"))?
+        .remove("schema_version");
+    Ok(value)
 }
 
 /// Schema 2 (#91) records the park's scenario source, landmarks, unlocks and objectives.
@@ -177,7 +197,6 @@ fn v1_to_v2(mut value: Value) -> Result<Value, SaveError> {
     );
     park.insert("unlocks".to_owned(), json!({}));
     park.insert("objectives".to_owned(), json!([]));
-    value["schema_version"] = json!(2);
     Ok(value)
 }
 
@@ -216,7 +235,6 @@ fn v2_to_v3(mut value: Value) -> Result<Value, SaveError> {
         );
     }
     park.insert("tutorial".to_owned(), json!({ "status": status }));
-    value["schema_version"] = json!(3);
     Ok(value)
 }
 
@@ -228,7 +246,6 @@ fn v3_to_v4(mut value: Value) -> Result<Value, SaveError> {
         .and_then(Value::as_object_mut)
         .ok_or_else(|| SaveError::new("invalid_save", "park: missing or not an object"))?;
     park.insert("alerts".to_owned(), json!([]));
-    value["schema_version"] = json!(4);
     Ok(value)
 }
 
@@ -268,7 +285,6 @@ fn v4_to_v5(mut value: Value) -> Result<Value, SaveError> {
             serde_json::to_value(tiles).expect("tile serialization is infallible"),
         );
     }
-    value["schema_version"] = json!(5);
     Ok(value)
 }
 
@@ -336,7 +352,7 @@ fn v5_to_v6(mut value: Value) -> Result<Value, SaveError> {
             serde_json::to_value(steel).expect("fence serialization")
         ]),
     );
-    content.insert("schema_version".to_owned(), json!(content::SCHEMA_VERSION));
+    content.insert("schema_version".to_owned(), json!(3));
     let habitats = value
         .get_mut("park")
         .and_then(|park| park.get_mut("habitats"))
@@ -351,7 +367,6 @@ fn v5_to_v6(mut value: Value) -> Result<Value, SaveError> {
             .ok_or_else(|| invalid("park/habitats: entry is not an object"))?
             .insert("fence".to_owned(), wooden.clone());
     }
-    value["schema_version"] = json!(6);
     Ok(value)
 }
 
@@ -433,7 +448,6 @@ fn v6_to_v7(mut value: Value) -> Result<Value, SaveError> {
         );
     }
     park.insert("next_animal_id".to_owned(), json!(next_id));
-    value["schema_version"] = json!(7);
     Ok(value)
 }
 

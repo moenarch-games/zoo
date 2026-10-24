@@ -1,5 +1,4 @@
 {
-  "schema_version": 3,
   "ruleset_id": "zoo-classic-v1",
   "balance": {
     "admission_price_cents": 1200,

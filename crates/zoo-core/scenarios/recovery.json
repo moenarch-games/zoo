@@ -1,6 +1,5 @@
 {
   "format": "zoo-scenario",
-  "schema_version": 1,
   "id": "recovery",
   "title": "Neglected corner zoo",
   "summary": "A tiny zoo in trouble: the capybaras are thirsty in a dirty habitat, the feed store is empty and the food stand is breaking down. Cash is tight.",

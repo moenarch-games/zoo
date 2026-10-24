@@ -130,13 +130,11 @@ fn bundle_declares_build_start_identity_clock_limits_and_only_declared_fields() 
             "scenario_digest",
             "seed",
             "ruleset_id",
-            "schema_version",
             "content_digest"
         ])
     );
     assert_eq!(bundle["start"]["scenario"], "first-zoo");
     assert_eq!(bundle["start"]["ruleset_id"], content["ruleset_id"]);
-    assert_eq!(bundle["start"]["schema_version"], content["schema_version"]);
     assert_eq!(bundle["status"], "running");
     assert_eq!(game.session_status(), "running");
     let view = snapshot(&game);

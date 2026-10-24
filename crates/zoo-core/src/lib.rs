@@ -3562,12 +3562,7 @@ impl ZooGame {
         state.update_alerts();
         let content = serde_json::to_string(state.catalog.as_ref())
             .expect("validated catalog serialization is infallible");
-        let start = session::start_identity(
-            &state.scenario,
-            &content,
-            &state.catalog.ruleset_id,
-            state.catalog.schema_version,
-        );
+        let start = session::start_identity(&state.scenario, &content, &state.catalog.ruleset_id);
         Self {
             state,
             session: session::Session::new(start),

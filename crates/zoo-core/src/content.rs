@@ -11,13 +11,11 @@ pub(crate) const MAX_CENTS: i64 = 9_007_199_254_740_991;
 // A park has at most MAX_MAP_TILES tiles and habitat capacity is twelve. Bound even
 // a conservative whole-park appeal sum before any arithmetic is performed.
 const MAX_RULE_VALUE: u32 = u32::MAX / (super::scenario::MAX_MAP_TILES * 12);
-pub(crate) const SCHEMA_VERSION: u32 = 3;
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Catalog {
-    pub schema_version: u32,
     pub ruleset_id: String,
     pub balance: Balance,
     pub fences: Vec<FenceType>,
@@ -281,19 +279,6 @@ impl Catalog {
     pub fn parse(document: &str) -> Result<Self, String> {
         if document.len() > MAX_DOCUMENT_BYTES {
             return Err(format!("catalog: exceeds {MAX_DOCUMENT_BYTES} bytes"));
-        }
-        // Check the version before the full schema, so a catalog written for another version
-        // (such as one embedded in an older save) reports that instead of a missing field.
-        #[derive(Deserialize)]
-        struct Version {
-            schema_version: u32,
-        }
-        let version: Version = serde_json::from_str(document)
-            .map_err(|error| format!("catalog/schema_version: {error}"))?;
-        if version.schema_version != SCHEMA_VERSION {
-            return Err(format!(
-                "schema_version: only version {SCHEMA_VERSION} is supported"
-            ));
         }
         // Keep Serde's typed definition as the only schema authority. The
         // adapter records its field path without first building a parallel JSON
