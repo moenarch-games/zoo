@@ -132,16 +132,19 @@ export function HabitatDesignPanel({
             {catalog.surfaces.map((surface) => (
               <button
                 key={surface.key}
+                data-brush={`surface:${surface.key}`}
                 className={active({ kind: "surface", surface: surface.key }) ? "active" : ""}
                 onClick={() => onBrush({ kind: "surface", surface: surface.key })}
               >
-                {surface.label} <small>{money(surface.tile_cents)}/tile</small>
+                {surface.label.charAt(0).toUpperCase() + surface.label.slice(1)}{" "}
+                <small>{money(surface.tile_cents)}/tile</small>
               </button>
             ))}
           </div>
           <label className="design-height">
             Height (0–{catalog.max_height})
             <input
+              aria-label="Tile height"
               type="number"
               min={0}
               max={catalog.max_height}
@@ -170,6 +173,7 @@ export function HabitatDesignPanel({
             {catalog.objects.map((object) => (
               <button
                 key={object.key}
+                data-brush={`object:${object.key}`}
                 className={active({ kind: "object", key: object.key }) ? "active" : ""}
                 onClick={() => onBrush({ kind: "object", key: object.key })}
               >
@@ -199,7 +203,12 @@ export function HabitatDesignPanel({
                 {object.label} #{object.id} at {object.x},{object.y}
                 {object.reachable ? "" : " · unreachable, no benefit"}
               </span>
-              <button onClick={() => onRemoveObject(object.id)}>Remove</button>
+              <button
+                aria-label={`Remove ${object.label} #${object.id}`}
+                onClick={() => onRemoveObject(object.id)}
+              >
+                Remove
+              </button>
             </li>
           ))}
         </ul>

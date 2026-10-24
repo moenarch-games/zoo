@@ -3,6 +3,7 @@ import {
   createWorldProjector,
   type RendererCamera,
   type RendererInstanceBatch,
+  type RendererSceneNode,
   type RendererWorkObservations,
   type ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer"
@@ -113,6 +114,10 @@ type ViewDebugHook = {
   /** The screen point of animal `id`'s rendered pick anchor (#96 browser proof). */
   animalPoint: (id: number) => { x: number; y: number; visible: boolean } | null
   parkFootprintInFrame: () => boolean
+  /** One static scene node (terrain, furnishings) by id, before batching (#97 browser proof). */
+  staticNode: (
+    id: string,
+  ) => { translation: Vec3 | null; geometry: RendererSceneNode["geometry"]; color: string } | null
   /** Scene parts submitted, counting each instance. */
   nodeCount: () => number
   /** Renderer objects submitted: individual nodes plus one per instance batch. */
@@ -217,6 +222,7 @@ export default function ParkView(props: Props) {
     let staticKey: { snapshot: Snapshot; overlay: SceneOverlay } | null = null
     let staticGeneration = 0
     let staticBatches: RendererInstanceBatch[] = []
+    let staticNodes: RendererSceneNode[] = []
     let scenery: { key: string; batches: RendererInstanceBatch[] } | null = null
     let lastTime = performance.now()
     let hoverClient: [number, number] | null = null
@@ -370,7 +376,7 @@ export default function ParkView(props: Props) {
             staticGeneration += 1
             staticBatches = batchNodes(
               "static",
-              buildStaticNodes(current.snapshot, current.overlay, kit),
+              (staticNodes = buildStaticNodes(current.snapshot, current.overlay, kit)),
               String(staticGeneration),
             )
             sources = effectSources(current.snapshot)
@@ -863,6 +869,16 @@ export default function ParkView(props: Props) {
             y: rect.top + projected.y,
             visible: projected.visible,
           }
+        },
+        staticNode: (id) => {
+          const found = staticNodes.find((entry) => entry.id === id)
+          return found
+            ? {
+                translation: found.transform?.translation ?? null,
+                geometry: found.geometry,
+                color: String(found.color),
+              }
+            : null
         },
         nodeCount: () => nodeCount,
         drawCount: () => drawCount,

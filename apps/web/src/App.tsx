@@ -2144,6 +2144,8 @@ export default function App() {
         <aside
           className={`side-panel bevel${tool === "gate" || tool === "reshape" ? " gate-mode" : ""}${
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
+          }${
+            tool === "terrain" ? " design-mode" : ""
           }${workspaceTab !== null ? " behind-workspace" : ""}`}
         >
           {snapshot.scenario.objectives.length > 0 &&
