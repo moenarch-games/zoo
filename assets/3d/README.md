@@ -1,6 +1,6 @@
 # Zoo 3D asset stages
 
-`development/` contains editable glTF packages: a `.gltf`, its external `.bin`, and the Blender `.blend` source. `production/` contains the matching packed `.glb` runtime derivatives. Production is never edited directly.
+These models are **deprecated placeholders** ([Atlas decision 5.1.3](../../docs/decisions/atlas.md)). Their only authority is the Python generator `tools/build_assets.py`: both stages are rebuilt from it, so `development/` (a `.gltf`, its external `.bin` and a `.blend`) and `production/` (packed `.glb` runtime derivatives) are disposable outputs. Do not hand-edit either stage; the next build discards edits to the `.blend` or `.gltf`. Replacement animals and characters come from asset-tooling's version-pinned published outputs (Atlas 5.1.1, #112), and the matching generator sources are retired as they land.
 
 The catalog covers only entities defined by `zoo-core` and the current UI: entrance, animal-care depot, food/drink concessions, fence, terrain markers, feed/litter props, six catalog species, a guest, and keeper/janitor/mechanic characters. Characters and animals export multi-part `idle` and in-place `walk` clips using named transform-node hierarchies: limbs, wings and necks pivot at their anatomical joint, and dependent details (hands, shoes, hooves, feet, facial features) are parented beneath the moving part they belong to. `tools/tests/attachment_pose_blender.py` checks those attachments at intermediate idle/walk poses. No textures are needed; a compact embedded PBR palette preserves the clean, readable low-poly style.
 
@@ -25,4 +25,4 @@ In CI, the path-scoped `3D asset catalog` workflow (`.github/workflows/assets.ym
 - the #73 attachment contract on the tracked outputs and on freshly generated candidates;
 - the #75 harness `tools/tests/asset_validation_negative.py`, which proves the validator rejects broken buffers, corrupt GLBs, non-finite positions, triangle drift, over-budget outputs, motionless or missing clips and unimportable meshes.
 
-The general `Verify` workflow does not run Blender, and its asset-tooling SVG replay covers only the park texture, not these 3D assets. Whether edits to development sources reach production (#74) is not yet verified.
+The general `Verify` workflow does not run Blender, and its asset-tooling SVG replay covers only the park texture, not these 3D assets.
