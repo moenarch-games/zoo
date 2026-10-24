@@ -737,8 +737,8 @@ dd {
   font: inherit;
 }
 
-/* Keeper training heads the side panel, so it never covers park tiles or the inspector's
-   controls below it. */
+/* The guide heads the side panel, so it never covers park tiles or the inspector's
+   controls below it. A long checklist scrolls inside the card. */
 .tutorial-card {
   margin: 8px;
   border-radius: 5px;
@@ -755,8 +755,10 @@ dd {
 }
 
 .tutorial-card ol {
+  max-height: 11.5em;
   margin: 6px 0;
   padding: 0;
+  overflow-y: auto;
   list-style: none;
 }
 

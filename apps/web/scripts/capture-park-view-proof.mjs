@@ -5,6 +5,7 @@ import {runConstructionAcceptance} from "./construction-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
+import {runOpeningScenarioAcceptance} from "./opening-scenario-proof.mjs"
 import {runScenarioAcceptance} from "./scenario-proof.mjs"
 
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
@@ -309,10 +310,10 @@ try {
   assert((await message()).includes("Habitat #1 fenced"), "Habitat drag did not fence", await message())
   // #137: the keeper-training checklist ticks from Rust state and shows the park's own
   // staffing problem: the new habitat's service gate has no work zone yet.
-  const stepDone = (key) => evaluate(`document.querySelector('.tutorial-card [data-step="${key}"]')?.classList.contains('done') ?? false`)
-  assert(await stepDone("build_habitat"), "Keeper training did not tick the built habitat")
+  const stepDone = (key) => evaluate(`document.querySelector('.tutorial-card [data-objective="${key}"]')?.classList.contains('done') ?? false`)
+  assert(await stepDone("build-habitat"), "Guide did not tick the built habitat")
   assert(await evaluate(`document.querySelector('.tutorial-problem')?.textContent.startsWith('No work zone') ?? false`),
-    "Keeper training did not show the unzoned service gate")
+    "Guide did not show the unzoned service gate")
   // A rejected fence keeps its candidate footprint in red, and releasing it builds nothing.
   assert(await clickButton("Ⅱ"), "Pause control missing")
   await frame()
@@ -388,16 +389,16 @@ try {
   await waitFor("guests to arrive", `Number(document.querySelectorAll('.stat strong')[1]?.textContent) > 0`, 200)
   await sleep(1500)
   await screenshot("test-results/park-view-desktop.png")
-  assert(await stepDone("zone_gate") && await stepDone("assign_keeper") && await stepDone("stock_habitat"),
-    "Keeper training did not tick the zone, keeper and adoption steps")
-  await waitFor("the habitat to create care work", `document.querySelector('.tutorial-card [data-step="job_generated"]')?.classList.contains('done') ?? false`, 300)
+  assert(await stepDone("zone-gate") && await stepDone("staff-zone") && await stepDone("adopt-group"),
+    "Guide did not tick the zone, keeper and adoption steps")
+  await waitFor("the habitat to create care work", `document.querySelector('.tutorial-card [data-objective="see-care-work"]')?.classList.contains('done') ?? false`, 300)
   // One small priority edit in the habitat's Care list, whichever direction is allowed.
   assert(await evaluate(`(() => {
     const button = [...document.querySelectorAll('button[aria-label$=" priority"]')].find((candidate) => !candidate.disabled)
     button?.click()
     return Boolean(button)
   })()`), "No care priority control was enabled")
-  await waitFor("the priority edit to tick", `document.querySelector('.tutorial-card [data-step="edit_schedule"]')?.classList.contains('done') ?? false`)
+  await waitFor("the priority edit to tick", `document.querySelector('.tutorial-card [data-objective="edit-schedule"]')?.classList.contains('done') ?? false`)
   // #86: a keeper working in the habitat kicks up asset-tooling dust particles (cosmetic only).
   await waitFor("keeper dust particles", `(window.__zooParkView.effects()?.live.dust ?? 0) > 0`, 900)
   const habitatCentre = await project([8.5, 0, 3.5])
@@ -413,9 +414,9 @@ try {
   })()`)
   await cdp.send("Emulation.setEmulatedMedia", {features: []})
   assert(await clickButton("Reset view"), "Reset view button missing after the dust close-up")
-  await waitFor("a keeper to finish care and complete training", `document.querySelector('.tutorial-card') === null`, 900)
+  await waitFor("a keeper to finish care and the guide to complete", `document.querySelector('.tutorial-card') === null`, 900)
   assert(await closeInspector(), "Habitat inspector close missing")
-  await waitFor("the training restart control", `[...document.querySelectorAll('button')].some((button) => button.textContent === 'Restart keeper training')`)
+  await waitFor("the guide restart control", `[...document.querySelectorAll('button')].some((button) => button.textContent === 'Restart guide')`)
 
   // --- Phone-sized touch viewport ----------------------------------------------------------------
   await cdp.send("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 2, mobile: true})
@@ -516,6 +517,9 @@ try {
 
   // #91: New park → pick each scenario → framed, playable, reproducible start.
   await runScenarioAcceptance({cdp, evaluate, assert, sleep, previewUrl, screenshot, clickButton, frame})
+
+  // #93: a guided walk through the opening scenario to an operating zoo, saved and resumed.
+  await runOpeningScenarioAcceptance({cdp, evaluate, assert, sleep, previewUrl, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

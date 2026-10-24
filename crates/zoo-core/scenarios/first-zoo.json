@@ -1,0 +1,121 @@
+{
+  "format": "zoo-scenario",
+  "schema_version": 1,
+  "id": "first-zoo",
+  "title": "Your first zoo",
+  "summary": "An empty meadow with an entrance, a short path and the animal-care depot. A guide walks you through a first habitat, its care, guests and a stand until the zoo runs itself; skip it for a free build.",
+  "seed": 1,
+  "map": { "width": 20, "height": 14 },
+  "entrance": { "x": 0, "y": 7 },
+  "depot": { "x": 2, "y": 6 },
+  "starting_cash_cents": 5000000,
+  "setup": [{ "kind": "path", "from": { "x": 1, "y": 7 }, "to": { "x": 4, "y": 7 } }],
+  "tutorial": "guided",
+  "opening_focus": { "x": 4, "y": 7 },
+  "objectives": [
+    {
+      "id": "build-habitat",
+      "title": "Fence a habitat",
+      "goal": { "kind": "habitats", "at_least": 1 },
+      "focus": { "x": 8, "y": 4 },
+      "tool": "habitat",
+      "hint": "Choose Draw habitat and drag a rectangle on clear grass with one side along a path, so guests can see in. Bigger habitats hold more animals; the price follows area and fence length. Undo refunds it today."
+    },
+    {
+      "id": "connect-gate",
+      "title": "Connect the service gate to the path",
+      "goal": { "kind": "gates_reachable" },
+      "focus": { "x": 6, "y": 7 },
+      "tool": "gate",
+      "hint": "Keepers walk from the depot along paths and enter through the habitat's service gate, the marked gap in the fence. Move the gate to a fence side along a connected path, or extend the path to the tile just outside it."
+    },
+    {
+      "id": "zone-gate",
+      "title": "Put the service gate in a work zone",
+      "goal": { "kind": "zoned_habitats", "at_least": 1 },
+      "focus": { "x": 8, "y": 6 },
+      "tool": "zone",
+      "hint": "A habitat belongs to the work zone that contains its service gate, not its fence. Choose Zones and drag a rectangle around the gate."
+    },
+    {
+      "id": "staff-zone",
+      "title": "Hire a keeper and assign them to the zone",
+      "goal": { "kind": "staffed_habitats", "at_least": 1 },
+      "focus": { "x": 2, "y": 6 },
+      "tool": "depot",
+      "hint": "Habitats create care work; keepers accept it. Only keepers assigned to a zone take its habitats' jobs. Hire a keeper at the depot, then assign them in the zone inspector."
+    },
+    {
+      "id": "buy-feed",
+      "title": "Stock feed at the depot",
+      "goal": { "kind": "feed_crates", "at_least": 1 },
+      "focus": { "x": 2, "y": 6 },
+      "tool": "depot",
+      "hint": "Feeding jobs take crates from the depot. Without feed, animals go hungry however many keepers you hire. Buy feed crates in the depot inspector."
+    },
+    {
+      "id": "adopt-group",
+      "title": "Adopt a suitable social group",
+      "goal": { "kind": "suitable_groups", "at_least": 1 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "Open the habitat and adopt animals of one species until the social and space scores both read 100: enough to keep each other company, not so many they crowd."
+    },
+    {
+      "id": "add-shelter",
+      "title": "Add a shelter",
+      "goal": { "kind": "sheltered_habitats", "at_least": 1 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "Animals without shelter lose welfare. Add basic shelter in the habitat inspector."
+    },
+    {
+      "id": "see-care-work",
+      "title": "See the habitat create care work",
+      "goal": { "kind": "care_jobs", "at_least": 1 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "Adopting copied the species' care routine into the habitat. Its Care list shows each task's time, interval and when it is next due; each due time becomes one job for the zone's keepers."
+    },
+    {
+      "id": "edit-schedule",
+      "title": "Change one care task's priority",
+      "goal": { "kind": "customized_care_tasks", "at_least": 1 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "Priorities decide which job goes first when keepers are short and work piles up. Raise or lower one task's priority in the habitat's Care list."
+    },
+    {
+      "id": "first-guests",
+      "title": "Welcome your first guests",
+      "goal": { "kind": "guests", "at_least": 3 },
+      "focus": { "x": 4, "y": 7 },
+      "tool": "speed",
+      "hint": "Guests arrive along paths that pass a stocked habitat's fence and pay admission at the gate. Each viewing spot holds only a few guests, so a crowded fence turns guests away. Let time run."
+    },
+    {
+      "id": "open-stand",
+      "title": "Open a food or drink stand",
+      "goal": { "kind": "concessions", "at_least": 1 },
+      "focus": { "x": 5, "y": 8 },
+      "tool": "concession",
+      "hint": "Hungry and thirsty guests grow unhappy and leave. A stand beside the path sells to them. Cash rises with admissions and sales and falls with wages, feed and upkeep."
+    },
+    {
+      "id": "care-done",
+      "title": "Watch a keeper finish a care job",
+      "goal": { "kind": "care_jobs_completed", "at_least": 1 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "A due job waits until a keeper in the zone who accepts its care category and is on shift walks in through the gate. The Care list says why a job is still waiting."
+    },
+    {
+      "id": "healthy-welfare",
+      "title": "Raise every habitat's welfare to 70",
+      "goal": { "kind": "welfare", "at_least": 70 },
+      "focus": { "x": 8, "y": 3 },
+      "tool": "habitat_inspector",
+      "hint": "Welfare follows social group and space, counted twice, plus food, water, cleanliness and shelter. Keepers restore food, water and cleanliness on schedule; fix the lowest part shown in the inspector."
+    }
+  ]
+}

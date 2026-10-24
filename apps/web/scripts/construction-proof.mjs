@@ -249,7 +249,7 @@ export async function runConstructionAcceptance(context) {
   await evaluate(`document.querySelector(".window-title button")?.click()`)
   // The training checklist opened at desktop size; collapse it so the map takes touches.
   await evaluate(
-    `(() => { const card = document.querySelector('details[aria-label="Keeper training checklist"]'); if (card) card.open = false })()`,
+    `(() => { const card = document.querySelector('details[aria-label="Park guide"]'); if (card) card.open = false })()`,
   )
   await key("Home")
   const touch = (type, points) =>

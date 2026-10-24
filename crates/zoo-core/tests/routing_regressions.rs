@@ -263,11 +263,11 @@ fn demolishing_a_guest_occupied_path_is_rejected_atomically() {
     let mut game = populated_park();
     advance(&mut game, 36);
     assert_position(guest(&snapshot(&game), 1).unwrap(), 2, 7);
-    let before = game.snapshot_json();
+    let before = game.save_json();
     let result: Value = serde_json::from_str(&game.bulldoze(2, 7)).unwrap();
     assert_eq!(result["ok"], false);
     assert!(result["message"].as_str().unwrap().contains("guest"));
-    assert_eq!(game.snapshot_json(), before);
+    assert_eq!(game.save_json(), before);
 }
 #[test]
 fn both_staff_roles_spawn_on_the_connected_side_of_the_depot() {
@@ -309,13 +309,13 @@ fn disconnected_depot_hiring_preserves_cash_ledger_and_staff_ids() {
     let mut game = ZooGame::new();
     accepted(game.bulldoze(2, 7));
     accepted(game.place_path(2, 5));
-    let before = game.snapshot_json();
+    let before = game.save_json();
     let janitor: Value = serde_json::from_str(&game.hire_janitor()).unwrap();
     assert_eq!(janitor["ok"], false);
-    assert_eq!(game.snapshot_json(), before);
+    assert_eq!(game.save_json(), before);
     let mechanic: Value = serde_json::from_str(&game.hire_mechanic()).unwrap();
     assert_eq!(mechanic["ok"], false);
-    assert_eq!(game.snapshot_json(), before);
+    assert_eq!(game.save_json(), before);
     accepted(game.place_path(2, 7));
     accepted(game.hire_janitor());
     accepted(game.hire_mechanic());

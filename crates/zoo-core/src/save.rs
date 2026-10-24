@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -144,6 +144,7 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
     match from {
         SCHEMA_VERSION => Ok(value),
         1 => migrate(v1_to_v2(value)?, 2),
+        2 => migrate(v2_to_v3(value)?, 3),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -163,7 +164,7 @@ fn v1_to_v2(mut value: Value) -> Result<Value, SaveError> {
     park.insert(
         "scenario".to_owned(),
         json!({
-            "id": scenario::DEFAULT_SCENARIO_ID,
+            "id": "empty-starter",
             "title": "Empty meadow",
             "seed": 0,
             "digest": null,
@@ -173,6 +174,45 @@ fn v1_to_v2(mut value: Value) -> Result<Value, SaveError> {
     park.insert("unlocks".to_owned(), json!({}));
     park.insert("objectives".to_owned(), json!([]));
     value["schema_version"] = json!(2);
+    Ok(value)
+}
+
+/// Schema 3 (#93) replaces the fixed keeper-training steps with the guided opening scenario:
+/// the guide's progress is the park's objective progress. Keeper-training parks (the
+/// `empty-starter` scenario, now the guided `first-zoo`) receive the opening objectives,
+/// unfinished, and keep their guide status; every other park's guide is off.
+fn v2_to_v3(mut value: Value) -> Result<Value, SaveError> {
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "park: missing or not an object"))?;
+    let keeper_training = park
+        .get("scenario")
+        .and_then(|scenario| scenario.get("id"))
+        .and_then(Value::as_str)
+        == Some("empty-starter");
+    let status = if keeper_training {
+        park.get("tutorial")
+            .and_then(|tutorial| tutorial.get("status"))
+            .and_then(Value::as_str)
+            .filter(|status| matches!(*status, "active" | "skipped" | "completed"))
+            .ok_or_else(|| SaveError::new("invalid_save", "park/tutorial/status: missing"))?
+            .to_owned()
+    } else {
+        "off".to_owned()
+    };
+    if keeper_training {
+        let opening = scenario::Scenario::built_in(scenario::DEFAULT_SCENARIO_ID)
+            .expect("the opening scenario is built in");
+        park["scenario"]["id"] = json!(scenario::DEFAULT_SCENARIO_ID);
+        park.insert(
+            "objectives".to_owned(),
+            serde_json::to_value(opening.objective_progress())
+                .expect("objective serialization is infallible"),
+        );
+    }
+    park.insert("tutorial".to_owned(), json!({ "status": status }));
+    value["schema_version"] = json!(3);
     Ok(value)
 }
 

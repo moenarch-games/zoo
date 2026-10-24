@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs"
 import { enterNewPark, frameWholePark, startPickedScenario } from "./park-library-proof.mjs"
 
 const MENU = `[aria-label="Park menu"][role="dialog"]`
-const ORDER = ["empty-starter", "partly-prepared", "living-starter", "recovery"]
+const ORDER = ["first-zoo", "partly-prepared", "living-starter", "recovery"]
 
 const scenario = (id) =>
   JSON.parse(readFileSync(new URL(`../../../crates/zoo-core/scenarios/${id}.json`, import.meta.url)))
@@ -94,16 +94,16 @@ export async function runScenarioAcceptance(context) {
       `${label}: opening focus is not centered`,
       { focus, center },
     )
-    const objectives = await evaluate(`[...document.querySelectorAll('[aria-label="Scenario objectives"] li')].map((li) => li.dataset.objective)`)
+    const objectives = await evaluate(`[...document.querySelectorAll('details.tutorial-card li')].map((li) => li.dataset.objective)`)
     assert(
       JSON.stringify(objectives) === JSON.stringify((definition.objectives ?? []).map((objective) => objective.id)),
       `${label}: objective checklist does not match the scenario`,
       objectives,
     )
     assert(
-      (await evaluate(`Boolean(document.querySelector('[aria-label="Keeper training checklist"]'))`)) ===
-        (definition.tutorial === "keeper_training"),
-      `${label}: keeper training visibility does not match the scenario`,
+      (await evaluate(`Boolean(document.querySelector('[aria-label="Park guide"]'))`)) ===
+        (definition.tutorial === "guided"),
+      `${label}: guide visibility does not match the scenario`,
     )
     await screenshot(`test-results/scenario-${id}-${phone ? "phone" : "desktop"}.png`)
 

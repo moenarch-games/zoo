@@ -3,7 +3,7 @@
 //! A scenario is a versioned, data-only template for a new park:
 //!
 //! ```json
-//! { "format": "zoo-scenario", "schema_version": 1, "id": "empty-starter", "seed": 1,
+//! { "format": "zoo-scenario", "schema_version": 1, "id": "first-zoo", "seed": 1,
 //!   "map": { "width": 20, "height": 14, "terrain": [] }, "entrance": {..}, "depot": {..},
 //!   "starting_cash_cents": 5000000, "unlocks": {..}, "setup": [..], "tutorial": "none",
 //!   "opening_focus": {..}, "objectives": [..] }
@@ -23,6 +23,7 @@
 //! streams derive from it rather than from wall-clock entropy.
 use super::{
     ActionResult, GameState, Position, TileKind,
+    care::CareJobState,
     content::{self, Catalog},
     session::{DomainEvent, fnv1a64},
     tutorial::Tutorial,
@@ -31,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-pub(crate) const DEFAULT_SCENARIO_ID: &str = "empty-starter";
+pub(crate) const DEFAULT_SCENARIO_ID: &str = "first-zoo";
 pub(crate) const MIN_MAP_DIMENSION: u32 = 8;
 pub(crate) const MAX_MAP_DIMENSION: u32 = 64;
 pub(crate) const MAX_MAP_TILES: u32 = MAX_MAP_DIMENSION * MAX_MAP_DIMENSION;
@@ -49,7 +50,7 @@ const SERVICED_CONDITION: u32 = super::MAINTENANCE_SERVICE_THRESHOLD;
 
 /// Scenarios shipped with the game, in picker order.
 const BUILT_IN: [&str; 4] = [
-    include_str!("../scenarios/empty-starter.json"),
+    include_str!("../scenarios/first-zoo.json"),
     include_str!("../scenarios/partly-prepared.json"),
     include_str!("../scenarios/living-starter.json"),
     include_str!("../scenarios/recovery.json"),
@@ -107,9 +108,10 @@ struct TerrainPatch {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum TutorialMode {
-    /// The #137 keeper-training checklist runs from the first minute.
-    KeeperTraining,
-    /// No checklist runs; the player may still start it from the park manager.
+    /// The objectives are a guided introduction (#93): the next one shows its hint, the park's
+    /// current blocker and a tool pointer, and the player may skip or restart the guide.
+    Guided,
+    /// The objectives are plain scenario goals.
     None,
 }
 
@@ -289,6 +291,52 @@ pub(crate) enum Goal {
     GatesReachable,
     /// Every concession (and at least one) is in serviceable condition.
     ConcessionsServiced,
+    /// Habitats whose service gate lies inside a work zone.
+    ZonedHabitats {
+        at_least: u32,
+    },
+    /// Habitats whose gate's work zone has at least one keeper.
+    StaffedHabitats {
+        at_least: u32,
+    },
+    ShelteredHabitats {
+        at_least: u32,
+    },
+    /// Stocked habitats whose group meets its species' social minimum without crowding.
+    SuitableGroups {
+        at_least: u32,
+    },
+    /// Care jobs the habitats' schedules have created, open or resolved.
+    CareJobs {
+        at_least: u32,
+    },
+    CareJobsCompleted {
+        at_least: u32,
+    },
+    /// Care tasks the player has changed from the species defaults.
+    CustomizedCareTasks {
+        at_least: u32,
+    },
+}
+
+impl Goal {
+    /// Whether the goal describes something the park is built of, which undo or demolition
+    /// can take away again; the others are moments (a job done, a crowd, a welfare level).
+    pub(crate) fn structural(&self) -> bool {
+        matches!(
+            self,
+            Goal::Habitats { .. }
+                | Goal::StockedHabitats { .. }
+                | Goal::Keepers { .. }
+                | Goal::Concessions { .. }
+                | Goal::GatesReachable
+                | Goal::ZonedHabitats { .. }
+                | Goal::StaffedHabitats { .. }
+                | Goal::ShelteredHabitats { .. }
+                | Goal::SuitableGroups { .. }
+                | Goal::CustomizedCareTasks { .. }
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,17 +347,43 @@ struct ObjectiveDefinition {
     goal: Goal,
     /// The tile the camera frames for this objective.
     focus: Position,
+    /// One useful next action, shown while this is the next objective.
+    #[serde(default)]
+    hint: Option<String>,
+    /// The tool or object the hint points at.
+    #[serde(default)]
+    tool: Option<GuideTool>,
+}
+
+/// What an objective's hint points at; the HUD maps it to a tool or inspector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuideTool {
+    Path,
+    Habitat,
+    Gate,
+    Zone,
+    Depot,
+    /// The inspector of the habitat being taught.
+    HabitatInspector,
+    Concession,
+    /// The speed controls: the next step needs simulated time to pass.
+    Speed,
 }
 
 /// A park's own copy of one objective; it latches once reached.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObjectiveProgress {
-    id: String,
+    pub id: String,
     title: String,
-    goal: Goal,
+    pub goal: Goal,
     focus: Position,
-    done: bool,
+    #[serde(default)]
+    pub hint: Option<String>,
+    #[serde(default)]
+    pub tool: Option<GuideTool>,
+    pub done: bool,
 }
 
 /// The immutable source of a park, recorded in its saves and diagnostics.
@@ -332,7 +406,8 @@ pub(crate) struct ScenarioSummary<'a> {
     width: u32,
     height: u32,
     starting_cash_cents: i64,
-    keeper_training: bool,
+    /// The objectives are a guided introduction with hints.
+    guided: bool,
     objectives: Vec<&'a str>,
 }
 
@@ -342,6 +417,8 @@ pub(crate) struct ObjectiveView {
     title: String,
     done: bool,
     focus: Position,
+    hint: Option<String>,
+    tool: Option<GuideTool>,
 }
 
 #[derive(Serialize)]
@@ -481,6 +558,12 @@ impl Scenario {
                 MAX_TEXT_BYTES,
             )?;
             inside(&format!("objectives/{i}/focus"), objective.focus)?;
+            if let Some(hint) = &objective.hint {
+                text(hint, &format!("objectives/{i}/hint"), MAX_TEXT_BYTES)?;
+            }
+        }
+        if self.tutorial == TutorialMode::Guided && self.objectives.is_empty() {
+            return Err("tutorial: a guided scenario needs objectives".to_owned());
         }
         Ok(())
     }
@@ -506,7 +589,7 @@ impl Scenario {
             width: self.map.width,
             height: self.map.height,
             starting_cash_cents: self.starting_cash_cents,
-            keeper_training: self.tutorial == TutorialMode::KeeperTraining,
+            guided: self.tutorial == TutorialMode::Guided,
             objectives: self
                 .objectives
                 .iter()
@@ -532,6 +615,22 @@ impl Scenario {
             digest: Some(self.digest()),
             opening_focus: self.opening_focus,
         }
+    }
+
+    /// A park's own, unfinished copy of this scenario's objectives.
+    pub(crate) fn objective_progress(&self) -> Vec<ObjectiveProgress> {
+        self.objectives
+            .iter()
+            .map(|objective| ObjectiveProgress {
+                id: objective.id.clone(),
+                title: objective.title.clone(),
+                goal: objective.goal.clone(),
+                focus: objective.focus,
+                hint: objective.hint.clone(),
+                tool: objective.tool,
+                done: false,
+            })
+            .collect()
     }
 
     /// Builds a new park from this scenario on `catalog`, or explains why it cannot start.
@@ -572,23 +671,13 @@ impl Scenario {
                     .to_owned(),
             );
         }
-        state.objectives = self
-            .objectives
-            .iter()
-            .map(|objective| ObjectiveProgress {
-                id: objective.id.clone(),
-                title: objective.title.clone(),
-                goal: objective.goal.clone(),
-                focus: objective.focus,
-                done: false,
-            })
-            .collect();
+        state.objectives = self.objective_progress();
         state.tutorial = match self.tutorial {
-            TutorialMode::KeeperTraining => Tutorial::default(),
-            TutorialMode::None => Tutorial::skipped(),
+            TutorialMode::Guided => Tutorial::active(),
+            TutorialMode::None => Tutorial::off(),
         };
-        state.update_tutorial();
         state.update_objectives();
+        state.update_tutorial();
         state.pending_events.clear();
         if let Some(violation) = state.save_violation() {
             return Err(format!("the created park is invalid: {violation}"));
@@ -693,7 +782,7 @@ impl GameState {
         }
     }
 
-    fn goal_reached(&self, goal: &Goal) -> bool {
+    pub(crate) fn goal_reached(&self, goal: &Goal) -> bool {
         let count = |n: usize, at_least: u32| n >= at_least as usize;
         let stocked = || self.habitats.iter().filter(|habitat| habitat.animals > 0);
         match goal {
@@ -725,6 +814,47 @@ impl GameState {
                         .iter()
                         .all(|stand| stand.condition >= SERVICED_CONDITION)
             }
+            Goal::ZonedHabitats { at_least } => count(
+                self.habitats
+                    .iter()
+                    .filter(|habitat| self.habitat_zone(habitat).is_some())
+                    .count(),
+                *at_least,
+            ),
+            Goal::StaffedHabitats { at_least } => count(
+                self.habitats
+                    .iter()
+                    .filter(|habitat| self.zone_staffing_problem(habitat).is_none())
+                    .count(),
+                *at_least,
+            ),
+            Goal::ShelteredHabitats { at_least } => count(
+                self.habitats.iter().filter(|h| h.has_shelter).count(),
+                *at_least,
+            ),
+            Goal::SuitableGroups { at_least } => count(
+                stocked()
+                    .filter(|h| h.social_score() >= 100 && h.space_score() >= 100)
+                    .count(),
+                *at_least,
+            ),
+            Goal::CareJobs { at_least } => count(self.care_jobs.len(), *at_least),
+            Goal::CareJobsCompleted { at_least } => count(
+                self.care_jobs
+                    .iter()
+                    .filter(|job| job.state == CareJobState::Completed)
+                    .count(),
+                *at_least,
+            ),
+            Goal::CustomizedCareTasks { at_least } => count(
+                self.habitats
+                    .iter()
+                    .filter_map(|h| h.care_schedule.as_ref())
+                    .flat_map(|schedule| &schedule.tasks)
+                    .filter(|task| task.customized)
+                    .count(),
+                *at_least,
+            ),
         }
     }
 
@@ -761,6 +891,8 @@ impl GameState {
                     title: objective.title.clone(),
                     done: objective.done,
                     focus: objective.focus,
+                    hint: objective.hint.clone(),
+                    tool: objective.tool,
                 })
                 .collect(),
         }
@@ -849,13 +981,13 @@ mod tests {
 
     #[test]
     fn starting_parks_differ_as_authored() {
-        let empty = built("empty-starter");
+        let empty = built("first-zoo");
         assert!(empty.habitats.is_empty());
         assert_eq!(empty.tutorial_view_status(), "active");
         let partly = built("partly-prepared");
         assert!(!partly.habitats.is_empty());
         assert!(partly.habitats.iter().all(|habitat| habitat.animals == 0));
-        assert_eq!(partly.tutorial_view_status(), "skipped");
+        assert_eq!(partly.tutorial_view_status(), "off");
         let living = built("living-starter");
         assert!(living.habitats.iter().any(|habitat| habitat.animals > 0));
         assert!(!living.keepers.is_empty() && !living.concessions.is_empty());

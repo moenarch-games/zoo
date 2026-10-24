@@ -48,17 +48,9 @@ fn the_picker_offers_the_agreed_starting_conditions_in_order() {
     let ids = scenario_ids();
     assert_eq!(
         ids,
-        [
-            "empty-starter",
-            "partly-prepared",
-            "living-starter",
-            "recovery"
-        ]
+        ["first-zoo", "partly-prepared", "living-starter", "recovery"]
     );
-    assert_eq!(
-        catalog[0]["keeper_training"], true,
-        "keeper training lives in the empty starter"
-    );
+    assert_eq!(catalog[0]["guided"], true, "the opening scenario is guided");
     for entry in catalog.as_array().unwrap() {
         assert!(
             entry["title"]
@@ -162,7 +154,7 @@ fn the_living_starter_operates_without_player_input() {
 #[test]
 fn a_new_scenario_starts_with_an_empty_undo_history() {
     for id in scenario_ids() {
-        let mut game = started("empty-starter");
+        let mut game = started("first-zoo");
         ok(game.place_path(5, 7));
         ok(game.start_scenario(&id));
         let view = json(&game.snapshot_json());

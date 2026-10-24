@@ -1,248 +1,303 @@
-//! Keeper-management onboarding (#137): a compact checklist that teaches the
-//! habitat-creates-work / keeper-accepts-work model through the player's first habitat.
+//! The guided introduction (#93, building on #137's keeper training): a guided scenario's
+//! objectives become a compact checklist where the next objective shows its authored hint, a
+//! pointer to the tool or object it needs, and the park's own current blocker for it.
 //!
-//! Progress is read from authoritative park state after every command and advance, never
-//! from UI clicks or prescribed coordinates, so any valid layout and any step order count.
-//! A step latches once reached. The tutorial only observes: it never issues commands,
-//! creates jobs or grants money, so skipping, restarting or replaying the command log cannot
-//! duplicate jobs or rewards. Its state lives beside the simulation rules, not inside them.
-use super::{GameState, Habitat, care::CareJobState, session::DomainEvent};
+//! Progress is the scenario's objective progress, read from authoritative park state after
+//! every command and advance, never from UI clicks or prescribed coordinates, so any valid
+//! layout and any step order count. The guide only observes: it never issues commands,
+//! creates jobs or grants money, so skipping, restarting, loading or replaying the command log
+//! cannot duplicate jobs or rewards. Its state lives beside the simulation rules, not inside
+//! them, and is saved with the park.
+use super::{
+    ActionResult, FenceSide, GameState, Habitat, Position,
+    construction::dollars,
+    scenario::{Goal, GuideTool},
+    session::DomainEvent,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TutorialStatus {
+    /// The park's scenario is not guided; its objectives are plain goals.
+    Off,
     Active,
     Skipped,
     Completed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TutorialStep {
-    BuildHabitat,
-    ZoneGate,
-    AssignKeeper,
-    StockHabitat,
-    JobGenerated,
-    EditSchedule,
-    JobCompleted,
-}
-
-impl TutorialStep {
-    const ALL: [TutorialStep; 7] = [
-        TutorialStep::BuildHabitat,
-        TutorialStep::ZoneGate,
-        TutorialStep::AssignKeeper,
-        TutorialStep::StockHabitat,
-        TutorialStep::JobGenerated,
-        TutorialStep::EditSchedule,
-        TutorialStep::JobCompleted,
-    ];
-
-    fn title(self) -> &'static str {
-        match self {
-            TutorialStep::BuildHabitat => "Build a habitat",
-            TutorialStep::ZoneGate => "Put its service gate in a work zone",
-            TutorialStep::AssignKeeper => "Assign a keeper to that zone",
-            TutorialStep::StockHabitat => "Adopt animals",
-            TutorialStep::JobGenerated => "See the habitat create care work",
-            TutorialStep::EditSchedule => "Change one care task's priority",
-            TutorialStep::JobCompleted => "Watch a keeper finish a care job",
-        }
-    }
-
-    /// The idea this step teaches, shown while it is the next step.
-    fn lesson(self) -> &'static str {
-        match self {
-            TutorialStep::BuildHabitat => {
-                "Draw a closed fence anywhere on clear grass. Habitats are where care work comes from."
-            }
-            TutorialStep::ZoneGate => {
-                "A habitat belongs to the work zone that contains its service gate, not its fence. \
-                 Choose Zones and drag a rectangle around the gate; move the gate to change owner."
-            }
-            TutorialStep::AssignKeeper => {
-                "Zones limit who may work: only keepers assigned to the zone take its habitats' jobs. \
-                 Hire a keeper at the depot, then assign them in the zone inspector."
-            }
-            TutorialStep::StockHabitat => {
-                "Adopting animals copies the species' care routine into the habitat: feeding, \
-                 cleaning and inspection times and priorities are already set."
-            }
-            TutorialStep::JobGenerated => {
-                "Select the habitat: Care lists each task's time, interval and when it is next due. \
-                 Each due time becomes one job."
-            }
-            TutorialStep::EditSchedule => {
-                "Priorities decide which job goes first when keepers are short. Raise or lower one \
-                 task's priority in the habitat's Care list."
-            }
-            TutorialStep::JobCompleted => {
-                "Keepers declare the care categories and shift hours they accept; a due job waits \
-                 until an eligible keeper in the zone walks in through the gate."
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Tutorial {
     status: TutorialStatus,
-    reached: Vec<TutorialStep>,
-    /// The habitat being taught; re-chosen if it is demolished.
-    habitat_id: Option<u32>,
-}
-
-impl Default for Tutorial {
-    fn default() -> Self {
-        Self {
-            status: TutorialStatus::Active,
-            reached: Vec::new(),
-            habitat_id: None,
-        }
-    }
+    /// The latest refused command while guiding, so the guide can explain how to recover.
+    /// Session-only: a reloaded park starts without a pending refusal.
+    #[serde(skip)]
+    refusal: Option<String>,
 }
 
 impl Tutorial {
-    /// A checklist that does not run until the player restarts it.
-    pub(crate) fn skipped() -> Self {
+    pub(crate) fn active() -> Self {
         Self {
-            status: TutorialStatus::Skipped,
-            ..Self::default()
+            status: TutorialStatus::Active,
+            refusal: None,
         }
     }
-}
 
-#[derive(Serialize)]
-pub(crate) struct TutorialStepView {
-    key: TutorialStep,
-    title: &'static str,
-    done: bool,
+    pub(crate) fn off() -> Self {
+        Self {
+            status: TutorialStatus::Off,
+            refusal: None,
+        }
+    }
+
+    /// Remembers why the latest command was refused; a successful command clears it.
+    pub(crate) fn note_result(&mut self, result: &ActionResult) {
+        if self.status == TutorialStatus::Active {
+            self.refusal = (!result.ok).then(|| result.message.clone());
+        }
+    }
 }
 
 #[derive(Serialize)]
 pub(crate) struct TutorialView {
     status: TutorialStatus,
+    /// The habitat being taught: the first stocked habitat, else the first habitat.
     habitat_id: Option<u32>,
-    steps: Vec<TutorialStepView>,
-    /// The first unreached step, its lesson and the park's current blocker for it, if any.
-    next: Option<TutorialStep>,
-    lesson: Option<&'static str>,
+    /// The first unfinished objective while guiding.
+    next: Option<String>,
+    hint: Option<String>,
+    tool: Option<GuideTool>,
+    /// The park's current blocker for the next objective, or how to recover from a refusal.
     problem: Option<String>,
 }
 
 impl GameState {
     fn tutorial_habitat(&self) -> Option<&Habitat> {
-        let chosen = self
-            .tutorial
-            .habitat_id
-            .and_then(|id| self.habitats.iter().find(|habitat| habitat.id == id));
-        chosen
-            .or_else(|| self.habitats.iter().find(|habitat| habitat.animals > 0))
+        self.habitats
+            .iter()
+            .find(|habitat| habitat.animals > 0)
             .or_else(|| self.habitats.first())
     }
 
-    fn tutorial_step_reached(&self, step: TutorialStep, habitat: &Habitat) -> bool {
-        let jobs = || {
-            self.care_jobs
-                .iter()
-                .filter(|job| job.habitat_id == habitat.id)
-        };
-        match step {
-            TutorialStep::BuildHabitat => true,
-            TutorialStep::ZoneGate => self.habitat_zone(habitat).is_some(),
-            TutorialStep::AssignKeeper => self
-                .habitat_zone(habitat)
-                .is_some_and(|zone_id| self.zone_keeper_count(zone_id) > 0),
-            TutorialStep::StockHabitat => habitat.animals > 0,
-            TutorialStep::JobGenerated => jobs().next().is_some(),
-            TutorialStep::EditSchedule => habitat
-                .care_schedule
-                .as_ref()
-                .is_some_and(|schedule| schedule.tasks.iter().any(|task| task.customized)),
-            TutorialStep::JobCompleted => jobs().any(|job| job.state == CareJobState::Completed),
-        }
-    }
-
-    /// Latches every step the park now satisfies; called after each command and advance.
+    /// Completes the guide once every objective is done; called after objectives update.
     pub(crate) fn update_tutorial(&mut self) {
-        if self.tutorial.status != TutorialStatus::Active {
+        if self.tutorial.status != TutorialStatus::Active
+            || !self.objectives.iter().all(|objective| objective.done)
+        {
             return;
         }
-        let Some(habitat) = self.tutorial_habitat() else {
-            return;
-        };
-        let habitat_id = habitat.id;
-        let newly: Vec<TutorialStep> = TutorialStep::ALL
-            .into_iter()
-            .filter(|step| !self.tutorial.reached.contains(step))
-            .filter(|step| self.tutorial_step_reached(*step, habitat))
-            .collect();
-        self.tutorial.habitat_id = Some(habitat_id);
-        for step in newly {
-            self.tutorial.reached.push(step);
-            self.pending_events.push(DomainEvent {
-                tick: self.elapsed_minutes,
-                kind: "tutorial_step_reached",
-                entity_id: Some(habitat_id),
-            });
-        }
-        if self.tutorial.reached.len() == TutorialStep::ALL.len() {
-            self.tutorial.status = TutorialStatus::Completed;
-            self.pending_events.push(DomainEvent {
-                tick: self.elapsed_minutes,
-                kind: "tutorial_completed",
-                entity_id: Some(habitat_id),
-            });
-        }
+        self.tutorial.status = TutorialStatus::Completed;
+        self.tutorial.refusal = None;
+        self.pending_events.push(DomainEvent {
+            tick: self.elapsed_minutes,
+            kind: "tutorial_completed",
+            entity_id: None,
+        });
     }
 
-    pub(crate) fn skip_tutorial(&mut self) -> super::ActionResult {
+    pub(crate) fn skip_tutorial(&mut self) -> ActionResult {
         if self.tutorial.status != TutorialStatus::Active {
-            return super::ActionResult::error("Keeper training is not running");
+            return ActionResult::error("The park guide is not running");
         }
         self.tutorial.status = TutorialStatus::Skipped;
-        super::ActionResult::ok("Keeper training skipped; restart it from the park manager")
+        self.tutorial.refusal = None;
+        ActionResult::ok("Guide skipped; restart it from the park manager")
     }
 
-    /// Restarts the checklist; steps the park already satisfies are ticked again at once.
-    pub(crate) fn restart_tutorial(&mut self) -> super::ActionResult {
-        self.tutorial = Tutorial::default();
-        super::ActionResult::ok("Keeper training restarted")
+    /// Restarts the guide: every objective is re-checked against the park as it is now, so
+    /// steps the park already satisfies tick again at once. The park itself is untouched.
+    pub(crate) fn restart_tutorial(&mut self) -> ActionResult {
+        if self.tutorial.status == TutorialStatus::Off {
+            return ActionResult::error("This scenario has no guide");
+        }
+        self.tutorial = Tutorial::active();
+        for objective in &mut self.objectives {
+            objective.done = false;
+        }
+        ActionResult::ok("Guide restarted")
     }
 
     pub(crate) fn tutorial_view(&self) -> TutorialView {
-        let habitat = self.tutorial_habitat();
-        let reached = |step: TutorialStep| self.tutorial.reached.contains(&step);
+        // A latched step whose structure was undone or demolished is the next step again, so
+        // the guide points at rebuilding it rather than at a step that now cannot happen.
         let next = (self.tutorial.status == TutorialStatus::Active)
-            .then(|| TutorialStep::ALL.into_iter().find(|step| !reached(*step)))
+            .then(|| {
+                self.objectives.iter().find(|objective| {
+                    !objective.done
+                        || (objective.goal.structural() && !self.goal_reached(&objective.goal))
+                })
+            })
             .flatten();
-        let problem = match (next, habitat) {
-            (Some(TutorialStep::ZoneGate | TutorialStep::AssignKeeper), Some(habitat)) => {
-                self.zone_staffing_problem(habitat)
-            }
-            (Some(TutorialStep::JobCompleted), Some(habitat)) => self
-                .care_job_views(habitat.id)
-                .into_iter()
-                .find_map(|job| job.waiting_reason),
-            _ => None,
-        };
         TutorialView {
             status: self.tutorial.status,
-            habitat_id: habitat.map(|habitat| habitat.id),
-            steps: TutorialStep::ALL
-                .into_iter()
-                .map(|step| TutorialStepView {
-                    key: step,
-                    title: step.title(),
-                    done: reached(step),
-                })
-                .collect(),
-            next,
-            lesson: next.map(TutorialStep::lesson),
-            problem,
+            habitat_id: self.tutorial_habitat().map(|habitat| habitat.id),
+            next: next.map(|objective| objective.id.clone()),
+            hint: next.and_then(|objective| objective.hint.clone()),
+            tool: next.and_then(|objective| objective.tool),
+            problem: next.and_then(|objective| self.guide_problem(&objective.goal)),
         }
+    }
+
+    /// The one most useful thing standing between the park and `goal`, read from park state.
+    fn guide_problem(&self, goal: &Goal) -> Option<String> {
+        // Other refusals already explain themselves where the command was made; the park's
+        // own blocker below is the more useful pointer for them.
+        if let Some(refusal) = &self.tutorial.refusal
+            && refusal.starts_with("Not enough cash")
+        {
+            return Some(format!(
+                "{refusal}. You have {}. Undo construction you no longer need today for a full \
+                 refund, or let guest admissions and stand sales build up first.",
+                dollars(self.cash_cents)
+            ));
+        }
+        let habitat = self.tutorial_habitat();
+        let specific = match goal {
+            Goal::GatesReachable => self
+                .habitats
+                .iter()
+                .find(|habitat| !self.service_gate_reachable(habitat))
+                .map(|habitat| self.unreachable_gate_problem(habitat)),
+            Goal::ZonedHabitats { .. } | Goal::StaffedHabitats { .. } => {
+                habitat.and_then(|habitat| self.guide_staffing_problem(habitat))
+            }
+            Goal::SuitableGroups { .. } => self.unsuitable_group_problem(),
+            Goal::Guests { .. } => self.guest_problem(),
+            Goal::CareJobsCompleted { .. } => habitat.and_then(|habitat| {
+                self.care_job_views(habitat.id)
+                    .into_iter()
+                    .find_map(|job| job.waiting_reason)
+            }),
+            Goal::Welfare { at_least } => self.welfare_problem(*at_least),
+            _ => None,
+        };
+        specific.or_else(|| self.standing_problem())
+    }
+
+    fn unreachable_gate_problem(&self, habitat: &Habitat) -> String {
+        let side = match habitat.service_gate.side {
+            FenceSide::North => "north",
+            FenceSide::East => "east",
+            FenceSide::South => "south",
+            FenceSide::West => "west",
+        };
+        match self.gate_access_tile(habitat.service_gate) {
+            Some(Position { x, y }) => format!(
+                "Habitat #{}'s service gate, on its {side} fence (tile {x},{y}), has no path \
+                 from the depot. Extend the path to it, or move the gate to a side along a \
+                 connected path.",
+                habitat.id
+            ),
+            None => format!(
+                "Habitat #{}'s service gate faces the park edge; move it to a side along a path.",
+                habitat.id
+            ),
+        }
+    }
+
+    fn guide_staffing_problem(&self, habitat: &Habitat) -> Option<String> {
+        let problem = self.zone_staffing_problem(habitat)?;
+        if self.habitat_zone(habitat).is_some() && self.keepers.is_empty() {
+            return Some(format!(
+                "{problem}. You have no keepers yet: hire one at the depot first."
+            ));
+        }
+        Some(problem)
+    }
+
+    fn unsuitable_group_problem(&self) -> Option<String> {
+        self.habitats.iter().find_map(|habitat| {
+            let species = habitat.species.as_ref()?;
+            let minimum = species.welfare_profile().minimum_social_group.max(1);
+            if habitat.animals < minimum {
+                Some(format!(
+                    "Habitat #{} has {} {}; they are social and need at least {minimum} together. \
+                     Adopt more of the same species.",
+                    habitat.id,
+                    habitat.animals,
+                    species.label()
+                ))
+            } else if habitat.space_score() < 100 {
+                Some(format!(
+                    "Habitat #{} is crowded: {} {} need more room than its {} tiles. Build a \
+                     larger habitat for this group.",
+                    habitat.id,
+                    habitat.animals,
+                    species.label(),
+                    habitat.area()
+                ))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn guest_problem(&self) -> Option<String> {
+        if !self.habitats.iter().any(|habitat| habitat.animals > 0) {
+            return Some("Guests come to see animals: stock a habitat first.".to_owned());
+        }
+        let start = self.entrance;
+        let occupancy = self.viewing_occupancy();
+        let viewable = self.habitats.iter().any(|habitat| {
+            habitat.animals > 0
+                && self
+                    .viewing_route_with_occupancy(habitat, start, &occupancy)
+                    .is_some()
+        });
+        (!viewable).then(|| {
+            "Guests need a path from the entrance that runs beside a stocked habitat's fence; \
+             each viewing spot along it holds only a few guests."
+                .to_owned()
+        })
+    }
+
+    /// The lowest welfare component of the worst stocked habitat below `at_least`.
+    fn welfare_problem(&self, at_least: u32) -> Option<String> {
+        let habitat = self
+            .habitats
+            .iter()
+            .filter(|habitat| habitat.animals > 0 && habitat.welfare < at_least)
+            .min_by_key(|habitat| habitat.welfare)?;
+        let components = [
+            ("social group", habitat.social_score()),
+            ("space", habitat.space_score()),
+            ("food", habitat.food_score()),
+            ("water", habitat.water_score()),
+            ("cleanliness", habitat.cleanliness_score()),
+            ("shelter", habitat.shelter_score()),
+        ];
+        let (name, score) = components
+            .into_iter()
+            .min_by_key(|(_, score)| *score)
+            .expect("components are not empty");
+        let trend = if habitat.welfare_target() > habitat.welfare {
+            "rising"
+        } else {
+            "not rising"
+        };
+        Some(format!(
+            "Habitat #{} welfare is {} and {trend}; its lowest part is {name} at {score}. Welfare \
+             blends social group and space with food, water, cleanliness and shelter.",
+            habitat.id, habitat.welfare
+        ))
+    }
+
+    /// Problems that matter whatever the next step is: stocked animals nobody can care for, or
+    /// an empty feed store.
+    fn standing_problem(&self) -> Option<String> {
+        let stocked = || self.habitats.iter().filter(|habitat| habitat.animals > 0);
+        if let Some(problem) = stocked().find_map(|habitat| {
+            self.staffing_problem(habitat).map(|problem| {
+                format!("Habitat #{} has animals but no care: {problem}", habitat.id)
+            })
+        }) {
+            return Some(problem);
+        }
+        (stocked().next().is_some() && self.feed_crates == 0).then(|| {
+            "The depot is out of feed: feeding jobs wait and animals go hungry. Buy feed crates \
+             at the depot."
+                .to_owned()
+        })
     }
 }

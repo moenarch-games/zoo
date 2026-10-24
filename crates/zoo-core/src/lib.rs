@@ -879,7 +879,7 @@ impl GameState {
             next_care_job_id: 1,
             work_zones: Vec::new(),
             next_work_zone_id: 1,
-            tutorial: tutorial::Tutorial::default(),
+            tutorial: tutorial::Tutorial::off(),
             construction: construction::History::default(),
             work: WorkCounters::default(),
         };
@@ -3849,8 +3849,9 @@ impl ZooGame {
             ActionResult::error(session::FROZEN_MESSAGE)
         } else {
             let result = run(&mut self.state);
-            self.state.update_tutorial();
             self.state.update_objectives();
+            self.state.update_tutorial();
+            self.state.tutorial.note_result(&result);
             result
         };
         self.session
@@ -3896,8 +3897,8 @@ impl ZooGame {
             return None;
         }
         self.state.tick(minutes);
-        self.state.update_tutorial();
         self.state.update_objectives();
+        self.state.update_tutorial();
         self.session.record_advance(tick, u64::from(minutes));
         self.drain_events();
         Some(ActionResult::ok(session::advance_message(u64::from(
