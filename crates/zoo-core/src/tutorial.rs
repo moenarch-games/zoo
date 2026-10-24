@@ -7,9 +7,9 @@
 //! creates jobs or grants money, so skipping, restarting or replaying the command log cannot
 //! duplicate jobs or rewards. Its state lives beside the simulation rules, not inside them.
 use super::{GameState, Habitat, care::CareJobState, session::DomainEvent};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TutorialStatus {
     Active,
@@ -17,7 +17,7 @@ pub(crate) enum TutorialStatus {
     Completed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TutorialStep {
     BuildHabitat,
@@ -86,7 +86,8 @@ impl TutorialStep {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Tutorial {
     status: TutorialStatus,
     reached: Vec<TutorialStep>,

@@ -29,10 +29,11 @@ use super::{
     Position, TileKind,
     content::{self, CareCategory, CareProfile},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// What a keeper is doing; positions live on the keeper itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum KeeperActivity {
     AtDepot,
     ToGate {
@@ -84,7 +85,8 @@ enum Supply {
 
 /// Which jobs and hours a keeper works: availability windows and accepted categories, never
 /// a fixed route through habitats.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KeeperSchedule {
     /// Accepted categories, deduplicated in catalog order; never empty.
     pub categories: Vec<CareCategory>,
@@ -123,7 +125,8 @@ pub(crate) const CARE_GRACE_MINUTES: u64 = 60;
 const RESOLVED_JOB_RETENTION_MINUTES: u64 = 24 * 60;
 const MINUTES_PER_DAY: u64 = 24 * 60;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CareTask {
     pub category: CareCategory,
     pub first_minute_of_day: u32,
@@ -132,11 +135,12 @@ pub(crate) struct CareTask {
     pub work_minutes: u32,
     /// Whether the player changed this task away from its species default.
     pub customized: bool,
-    #[serde(skip)]
+    /// The absolute minute of the next occurrence; saved, never shown.
     pub next_due_minute: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CareSchedule {
     pub required_keepers: u32,
     pub tasks: Vec<CareTask>,
@@ -180,7 +184,7 @@ fn next_occurrence(first_minute_of_day: u32, interval_minutes: u32, now: u64) ->
     day_start + offset + since.div_ceil(interval) * interval
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CareJobState {
     Due,
@@ -191,7 +195,8 @@ pub(crate) enum CareJobState {
 }
 
 /// One authoritative scheduled care occurrence.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CareJob {
     pub id: u32,
     pub habitat_id: u32,
@@ -211,8 +216,12 @@ pub(crate) struct CareJob {
 
 #[derive(Serialize)]
 pub(crate) struct CareTaskView {
-    #[serde(flatten)]
-    pub task: CareTask,
+    pub category: CareCategory,
+    pub first_minute_of_day: u32,
+    pub interval_minutes: u32,
+    pub priority: u32,
+    pub work_minutes: u32,
+    pub customized: bool,
     pub next_due_in_minutes: u64,
 }
 
@@ -917,7 +926,12 @@ impl GameState {
             .tasks
             .iter()
             .map(|task| CareTaskView {
-                task: *task,
+                category: task.category,
+                first_minute_of_day: task.first_minute_of_day,
+                interval_minutes: task.interval_minutes,
+                priority: task.priority,
+                work_minutes: task.work_minutes,
+                customized: task.customized,
                 next_due_in_minutes: task.next_due_minute.saturating_sub(now),
             })
             .collect()

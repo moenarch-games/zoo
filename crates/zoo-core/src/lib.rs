@@ -1,13 +1,14 @@
 mod care;
 mod content;
 mod gate;
+mod save;
 mod session;
 mod tutorial;
 mod zone;
 
 use content::{Catalog, Facility, Species};
 use gate::gate_access_message;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -71,7 +72,7 @@ const VIEWING_PENALTY_INTERVAL_MINUTES: u32 = 5;
 const GATE_UNREACHABLE: &str =
     "Gate unreachable: connect a path from the care depot to the service gate";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum TileKind {
     Grass,
@@ -82,13 +83,14 @@ enum TileKind {
     AnimalCareDepot,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Position {
     x: u32,
     y: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ConcessionKind {
     Food,
@@ -105,7 +107,8 @@ impl ConcessionKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Concession {
     id: u32,
     x: u32,
@@ -118,7 +121,8 @@ struct Concession {
     condition: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Keeper {
     id: u32,
     /// The keeper's work zone; `None` leaves the keeper idle and flagged as needing one.
@@ -134,7 +138,8 @@ struct Keeper {
     exit: Option<Position>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Janitor {
     id: u32,
     x: u32,
@@ -143,7 +148,8 @@ struct Janitor {
     tasks_completed: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LitterTask {
     id: u32,
     x: u32,
@@ -152,7 +158,8 @@ struct LitterTask {
     assigned_janitor_id: Option<u32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Mechanic {
     id: u32,
     x: u32,
@@ -161,7 +168,8 @@ struct Mechanic {
     repairs_completed: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MaintenanceTask {
     id: u32,
     concession_id: u32,
@@ -191,7 +199,8 @@ enum ExpenseCategory {
     MechanicWages,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FinanceLedger {
     admissions_income_cents: i64,
     concession_income_cents: i64,
@@ -276,7 +285,7 @@ impl FinanceLedger {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HabitatOrientation {
     Horizontal,
@@ -307,7 +316,7 @@ impl HabitatOrientation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum FenceSide {
     North,
@@ -328,7 +337,8 @@ impl FenceSide {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FenceSegment {
     x: u32,
     y: u32,
@@ -391,7 +401,8 @@ impl Species {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Habitat {
     id: u32,
     x: u32,
@@ -552,7 +563,7 @@ impl Habitat {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum GuestState {
     Arriving,
@@ -561,7 +572,8 @@ enum GuestState {
     WalkingToExit,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Guest {
     id: u32,
     x: u32,
@@ -719,8 +731,11 @@ fn fence_segments(x: u32, y: u32, width: u32, height: u32) -> Vec<FenceSegment> 
     segments
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GameState {
+    /// Saved beside the park in the envelope, not inside it.
+    #[serde(skip, default = "default_catalog")]
     catalog: Arc<Catalog>,
     width: u32,
     height: u32,
@@ -753,6 +768,7 @@ struct GameState {
     /// Simulated minutes since this park session started (the diagnostics clock).
     elapsed_minutes: u64,
     /// Domain events produced by the latest command or advance, drained by the recorder.
+    #[serde(skip)]
     pending_events: Vec<session::DomainEvent>,
     care_jobs: Vec<care::CareJob>,
     next_care_job_id: u32,
@@ -760,6 +776,7 @@ struct GameState {
     next_work_zone_id: u32,
     /// Onboarding progress; it observes the park and never changes simulation rules.
     tutorial: tutorial::Tutorial,
+    #[serde(skip)]
     work: WorkCounters,
 }
 
@@ -777,12 +794,14 @@ impl std::fmt::Debug for WorkCounters {
     }
 }
 
+fn default_catalog() -> Arc<Catalog> {
+    Arc::new(Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog"))
+}
+
 impl Default for GameState {
     fn default() -> Self {
         let mut state = Self {
-            catalog: Arc::new(
-                Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog"),
-            ),
+            catalog: default_catalog(),
             width: WIDTH,
             height: HEIGHT,
             tiles: vec![TileKind::Grass; (WIDTH * HEIGHT) as usize],
@@ -4115,6 +4134,37 @@ impl ZooGame {
             }
         }
         Ok(game)
+    }
+
+    /// The complete authoritative park as a versioned `zoo-save` document (#88).
+    pub fn save_json(&self) -> String {
+        save::encode(&self.state)
+    }
+
+    /// Replaces the active park with a validated save and starts a fresh session at the saved
+    /// simulation time. Returns `{ok, message}`, plus a stable `code` on failure; a failed load
+    /// leaves the current park and session untouched.
+    pub fn load_save(&mut self, document: &str) -> String {
+        match save::decode(document) {
+            Ok(state) => {
+                let (day, minute) = (state.day, state.minute_of_day);
+                let mut game = Self::with_state(state);
+                game.session.mark_save_start(document);
+                *self = game;
+                ActionResult::ok(format!(
+                    "Park loaded at day {day}, {:02}:{:02}",
+                    minute / 60,
+                    minute % 60
+                ))
+                .json()
+            }
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "code": error.code,
+                "message": error.message,
+            })
+            .to_string(),
+        }
     }
 
     pub fn reset(&mut self) {
