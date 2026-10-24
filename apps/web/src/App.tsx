@@ -1,6 +1,12 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
+import {
+  EFFECT_PIECES,
+  loadEffectsManifest,
+  type EffectPiece,
+  type EffectsManifest,
+} from "./effects-kit"
 import type {
   ActionResult,
   CareCategory,
@@ -2095,18 +2101,32 @@ export default function App() {
 const SCENERY_LABELS: Record<SceneryPiece, string> = {
   "tree-round": "Round tree",
   "tree-pine": "Pine tree",
+  "tree-acacia": "Acacia",
   "bush-round": "Berry bush",
-  "rock-round": "Boulder",
+  "grass-tuft": "Grass tuft",
+  "rock-round": "Rock",
+  "rock-boulder": "Boulder",
+}
+
+const EFFECT_LABELS: Record<EffectPiece, string> = {
+  dust: "Keeper dust",
+  leaf: "Leaf flutter",
+  splash: "Pond splash",
 }
 
 /** Lineage of the asset-tooling scenery around the park, as pinned and verified at build time. */
 function SceneryCredits() {
   const [manifest, setManifest] = useState<SceneryManifest | null>(null)
+  const [effects, setEffects] = useState<EffectsManifest | null>(null)
   useEffect(() => {
     let cancelled = false
     // A failed load is reported by the park view, which cannot render without the scenery.
     loadSceneryManifest().then(
       (loaded) => !cancelled && setManifest(loaded),
+      () => undefined,
+    )
+    loadEffectsManifest().then(
+      (loaded) => !cancelled && setEffects(loaded),
       () => undefined,
     )
     return () => {
@@ -2121,7 +2141,7 @@ function SceneryCredits() {
     <details className="scenery-credits" aria-label="Scenery credits">
       <summary>Scenery credits</summary>
       <p>
-        Trees, bushes and rocks outside the fence come from the asset-tooling{" "}
+        Trees, bushes, grass and rocks around and inside the park come from the asset-tooling{" "}
         <a
           href={`https://github.com/moritzbrantner/asset-tooling/releases/tag/${manifest.release}`}
           target="_blank"
@@ -2158,6 +2178,48 @@ function SceneryCredits() {
           </Fragment>
         ))}
       </div>
+      {effects && (
+        <>
+          <p>
+            Dust, leaf and splash particles come from the asset-tooling{" "}
+            <a
+              href={`https://github.com/moritzbrantner/asset-tooling/releases/tag/${effects.release}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {effects.release}
+            </a>{" "}
+            release, baked by{" "}
+            <a
+              href={`https://github.com/moritzbrantner/asset-tooling/blob/${effects.assetToolingCommit}/${effects.recipe.source}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {effects.recipe.source}
+            </a>{" "}
+            at asset-tooling <code>{effects.assetToolingCommit.slice(0, 7)}</code>. They are
+            cosmetic and off under reduced motion.
+          </p>
+          <p>Provenance: {effects.provenance}.</p>
+          <div className="finance-grid">
+            <span>Release tar</span>
+            <code title={effects.tarSha256}>{effects.tarSha256.slice(0, 12)}</code>
+            <span>Recipe</span>
+            <code title={effects.recipe.sha256}>{effects.recipe.sha256.slice(0, 12)}</code>
+            {EFFECT_PIECES.map((piece) => (
+              <Fragment key={piece}>
+                <span>
+                  {EFFECT_LABELS[piece]} · {effects.pieces[piece].key}/
+                  {effects.pieces[piece].variant}
+                </span>
+                <code title={effects.pieces[piece].sha256}>
+                  {effects.pieces[piece].sha256.slice(0, 12)}
+                </code>
+              </Fragment>
+            ))}
+          </div>
+        </>
+      )}
     </details>
   )
 }

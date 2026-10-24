@@ -1,13 +1,16 @@
 {
   "release": "zoo-scenery",
   "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-scenery/zoo-scenery.tar",
-  "tarSha256": "19f1648ce933eee72d3c3b0deb33fabc958269f737d3cf5eceda5eccb2dc1980",
-  "assetToolingCommit": "84c051dc93d78a17d9a88647e8fb0a9e36576c64",
+  "tarSha256": "378593ca603a315ae5fa77d03d9a2840b59ef28cac74e75955bb4cbf26953189",
+  "assetToolingCommit": "570ce3109bcd86e63ab68189b8d9b319e01623f2",
   "profile": "static-glb-png-v1",
   "pieces": {
     "tree-round": { "key": "tree.mesh", "variant": "round" },
     "tree-pine": { "key": "tree.mesh", "variant": "pine" },
+    "tree-acacia": { "key": "tree.mesh", "variant": "acacia" },
     "bush-round": { "key": "bush.mesh", "variant": "round" },
-    "rock-round": { "key": "rock.mesh", "variant": "round" }
+    "grass-tuft": { "key": "grass.mesh", "variant": "tuft" },
+    "rock-round": { "key": "rock.mesh", "variant": "round" },
+    "rock-boulder": { "key": "rock.mesh", "variant": "boulder" }
   }
 }

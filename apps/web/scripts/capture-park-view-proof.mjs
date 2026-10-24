@@ -390,6 +390,21 @@ try {
     return Boolean(button)
   })()`), "No care priority control was enabled")
   await waitFor("the priority edit to tick", `document.querySelector('.tutorial-card [data-step="edit_schedule"]')?.classList.contains('done') ?? false`)
+  // #86: a keeper working in the habitat kicks up asset-tooling dust particles (cosmetic only).
+  await waitFor("keeper dust particles", `(window.__zooParkView.effects()?.live.dust ?? 0) > 0`, 900)
+  const habitatCentre = await project([8.5, 0, 3.5])
+  for (let step = 0; step < 6; step += 1) await wheel(habitatCentre, -240)
+  await sleep(400)
+  await waitFor("dust particles in the close-up", `window.__zooParkView.effects().live.dust > 0 && window.__zooParkView.effects().liveAtlases > 0`, 300)
+  await screenshot("test-results/park-view-keeper-dust.png")
+  // Reduced motion switches the effects off (`enabled: false`) and releases their atlases.
+  await cdp.send("Emulation.setEmulatedMedia", {features: [{name: "prefers-reduced-motion", value: "reduce"}]})
+  await waitFor("reduced motion to release the particle atlases", `(() => {
+    const effects = window.__zooParkView.effects()
+    return effects.reducedMotion && effects.liveAtlases === 0 && effects.live.dust === 0
+  })()`)
+  await cdp.send("Emulation.setEmulatedMedia", {features: []})
+  assert(await clickButton("Reset view"), "Reset view button missing after the dust close-up")
   await waitFor("a keeper to finish care and complete training", `document.querySelector('.tutorial-card') === null`, 900)
   assert(await closeInspector(), "Habitat inspector close missing")
   await waitFor("the training restart control", `[...document.querySelectorAll('button')].some((button) => button.textContent === 'Restart keeper training')`)
