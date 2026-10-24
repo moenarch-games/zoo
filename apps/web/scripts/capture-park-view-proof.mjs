@@ -1,6 +1,7 @@
 import {spawn} from "node:child_process"
 import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
+import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
 
@@ -264,6 +265,8 @@ try {
     process.exitCode = 0
   } else {
   // --- Desktop ---------------------------------------------------------------------------------
+  // #89: the page opens on the start screen; the journey plays a new park.
+  assert(await enterNewPark({evaluate, sleep}) === "started", "Start screen did not start a new park")
   await waitFor("the shared 3D park renderer", `Boolean(
     window.__zooParkView?.ready &&
     window.__zooParkView.nodeCount() > 500 &&
@@ -497,6 +500,11 @@ try {
 
   // #59 S1: bounded renderer load/dispose and the incompatible-contract failure screen.
   await runRendererLifetimeAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, screenshot})
+
+  // #89: park library, save → reload → resume, autosave recovery, import/export, competing tabs.
+  await runParkLibraryAcceptance({
+    cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, drag, screenshot, connectCdp, debuggingPort,
+  })
   }
 } finally {
   cdp?.close()

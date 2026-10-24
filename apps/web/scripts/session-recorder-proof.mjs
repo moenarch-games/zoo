@@ -9,6 +9,7 @@
 // document that the Download/Copy controls export.
 import {mkdirSync, readdirSync, readFileSync, rmSync} from "node:fs"
 import {join, resolve} from "node:path"
+import {enterNewPark} from "./park-library-proof.mjs"
 
 const MAX_EXPORT_BYTES = 1_048_576
 const MAX_SCREENSHOT_CHARS = 262_144
@@ -81,6 +82,7 @@ export async function runSessionRecorderAcceptance(context) {
     const url = new URL(previewUrl)
     url.search = query
     await cdp.send("Page.navigate", {url: url.href})
+    await enterNewPark({evaluate, sleep})
     await waitFor("the shared 3D park renderer", `Boolean(
       window.__zooParkView?.ready && window.__zooParkView.nodeCount() > 500 &&
       document.querySelector('.park-view[data-renderer="ready"] canvas.park-canvas'))`)
