@@ -2,6 +2,7 @@ mod care;
 mod content;
 mod gate;
 mod session;
+mod tutorial;
 mod zone;
 
 use content::{Catalog, Facility, Species};
@@ -757,6 +758,8 @@ struct GameState {
     next_care_job_id: u32,
     work_zones: Vec<zone::WorkZone>,
     next_work_zone_id: u32,
+    /// Onboarding progress; it observes the park and never changes simulation rules.
+    tutorial: tutorial::Tutorial,
     work: WorkCounters,
 }
 
@@ -814,6 +817,7 @@ impl Default for GameState {
             next_care_job_id: 1,
             work_zones: Vec::new(),
             next_work_zone_id: 1,
+            tutorial: tutorial::Tutorial::default(),
             work: WorkCounters::default(),
         };
 
@@ -3553,6 +3557,7 @@ impl GameState {
             species_catalog: self.species_catalog(),
             complaints: self.complaint_summary(),
             finance: FinanceView::new(self.day, self.finance_today, self.finance_previous),
+            tutorial: self.tutorial_view(),
         }
     }
 }
@@ -3868,6 +3873,7 @@ struct Snapshot {
     species_catalog: Vec<SpeciesOfferView>,
     complaints: ComplaintSummary,
     finance: FinanceView,
+    tutorial: tutorial::TutorialView,
 }
 
 #[derive(Serialize)]
@@ -3934,7 +3940,9 @@ impl ZooGame {
         let result = if self.session.frozen {
             ActionResult::error(session::FROZEN_MESSAGE)
         } else {
-            run(&mut self.state)
+            let result = run(&mut self.state);
+            self.state.update_tutorial();
+            result
         };
         self.session
             .record(tick, kind, args, result.ok, &result.message);
@@ -3979,6 +3987,7 @@ impl ZooGame {
             return None;
         }
         self.state.tick(minutes);
+        self.state.update_tutorial();
         self.session.record_advance(tick, u64::from(minutes));
         self.drain_events();
         Some(ActionResult::ok(session::advance_message(u64::from(
@@ -4052,6 +4061,8 @@ impl ZooGame {
             "assign_keeper_zone" => {
                 self.assign_keeper_zone(number("keeper_id")?, number("zone_id")?)
             }
+            "skip_tutorial" => self.skip_tutorial(),
+            "restart_tutorial" => self.restart_tutorial(),
             "inject_fault" => self.inject_fault(&text("kind")?),
             "advance" => self
                 .advance(number("minutes")?)
@@ -4381,6 +4392,24 @@ impl ZooGame {
         self.command("assign_keeper_zone", args, |state| {
             state.assign_keeper_zone(keeper_id, zone_id)
         })
+    }
+
+    /// Hides the keeper-training checklist; it never changes park state.
+    pub fn skip_tutorial(&mut self) -> String {
+        self.command(
+            "skip_tutorial",
+            serde_json::json!({}),
+            GameState::skip_tutorial,
+        )
+    }
+
+    /// Restarts the keeper-training checklist from the current park.
+    pub fn restart_tutorial(&mut self) -> String {
+        self.command(
+            "restart_tutorial",
+            serde_json::json!({}),
+            GameState::restart_tutorial,
+        )
     }
 
     pub fn tick(&mut self, minutes: u32) {

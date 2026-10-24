@@ -252,3 +252,25 @@
     display: none;
   }
 }
+
+@media (max-width: 900px) {
+  /* With nothing selected the sheet shows only the training card, collapsed to one line. */
+  .side-panel:has(.manager-card > h2):has(.tutorial-card) {
+    display: block;
+  }
+
+  .side-panel:has(.manager-card > h2) > :not(.tutorial-card) {
+    display: none;
+  }
+
+  .side-panel.gate-mode .tutorial-card,
+  .side-panel.zone-edit-mode .tutorial-card {
+    display: none;
+  }
+
+  .tutorial-card summary,
+  .tutorial-actions button {
+    min-height: 44px;
+    line-height: 44px;
+  }
+}
