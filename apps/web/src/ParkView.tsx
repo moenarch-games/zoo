@@ -2,8 +2,9 @@ import {
   createThreeSceneRenderer,
   createWorldProjector,
   type RendererCamera,
-  type ThreeSceneRenderer,
   type RendererInstanceBatch,
+  type RendererWorkObservations,
+  type ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 
@@ -101,12 +102,43 @@ type ViewDebugHook = {
   nodeCount: () => number
   /** Renderer objects submitted: individual nodes plus one per instance batch. */
   drawCount: () => number
+  /** Live shared-renderer caches and the GPU resources Three.js holds for this mount. */
+  resources: () => RendererResources | null
 }
+
+type RendererResources = {
+  objects: number
+  geometries: number
+  materials: number
+  gpuGeometries: number
+  gpuTextures: number
+  gpuPrograms: number
+}
+
+/** The slice of Three.js' WebGLRenderer that the park view reads for resource accounting. */
+type GpuRenderer = {
+  info: {
+    memory: { geometries: number; textures: number }
+    programs: readonly unknown[] | null
+  }
+  getContext(): { isContextLost(): boolean }
+  forceContextLoss(): void
+}
+
+/** Renderer mounts and releases across park-view remounts, and what the last release left. */
+type RendererLifetime = {
+  mounts: number
+  releases: number
+  lastRelease: { gpuGeometries: number; gpuTextures: number } | null
+}
+
+const lifetime: RendererLifetime = { mounts: 0, releases: 0, lastRelease: null }
 
 declare global {
   // oxlint-disable-next-line typescript/consistent-type-definitions -- global augmentation requires interface merging.
   interface Window {
     __zooParkView?: ViewDebugHook
+    __zooRendererLifetime?: Readonly<RendererLifetime>
   }
 }
 
@@ -137,6 +169,8 @@ export default function ParkView(props: Props) {
 
     let disposed = false
     let renderer: ThreeSceneRenderer | null = null
+    let gpu: GpuRenderer | null = null
+    let work: RendererWorkObservations | null = null
     let bridge: ParkCameraBridge | null = null
     let camera: CameraFrame | null = null
     let frameHandle = 0
@@ -234,6 +268,26 @@ export default function ParkView(props: Props) {
       return [current.x, current.z]
     }
 
+    // Disposes the shared renderer and releases this mount's WebGL context rather than waiting for
+    // the detached canvas to be collected, so repeated mounts never accumulate live contexts.
+    const release = () => {
+      if (!renderer) {
+        return
+      }
+      renderer.dispose()
+      renderer = null
+      work = null
+      if (gpu) {
+        const { memory } = gpu.info
+        lifetime.lastRelease = { gpuGeometries: memory.geometries, gpuTextures: memory.textures }
+        if (!gpu.getContext().isContextLost()) {
+          gpu.forceContextLoss()
+        }
+        gpu = null
+      }
+      lifetime.releases += 1
+    }
+
     let failed = false
     const failClosed = (error: unknown) => {
       if (failed) {
@@ -242,8 +296,7 @@ export default function ParkView(props: Props) {
       failed = true
       console.error("Shared 3d-lab park renderer failed; failing closed", error)
       propsRef.current.onRendererFailure?.(error instanceof Error ? error.message : String(error))
-      renderer?.dispose()
-      renderer = null
+      release()
       if (!disposed) {
         setStatus("failed")
       }
@@ -305,9 +358,9 @@ export default function ParkView(props: Props) {
             frame.nodes.length +
             instanceBatches.reduce((sum, batch) => sum + batch.instances.length, 0)
           drawCount = frame.nodes.length + instanceBatches.length
-          renderer.render({ camera, nodes: frame.nodes, instanceBatches })
+          work = renderer.render({ camera, nodes: frame.nodes, instanceBatches })
         } else if (cameraChanged) {
-          renderer.renderCamera(camera)
+          work = renderer.renderCamera(camera)
         }
 
         if (hoverClient && gesture === null) {
@@ -736,6 +789,17 @@ export default function ParkView(props: Props) {
         },
         nodeCount: () => nodeCount,
         drawCount: () => drawCount,
+        resources: () =>
+          work && gpu
+            ? {
+                objects: work.liveObjectCount,
+                geometries: work.liveGeometryCount,
+                materials: work.liveMaterialCount,
+                gpuGeometries: gpu.info.memory.geometries,
+                gpuTextures: gpu.info.memory.textures,
+                gpuPrograms: gpu.info.programs?.length ?? 0,
+              }
+            : null,
       }
     }
 
@@ -752,6 +816,14 @@ export default function ParkView(props: Props) {
         bridge = new ParkCameraBridge(parkWidth, parkHeight)
         bridgeRef.current = bridge
         renderer = createThreeSceneRenderer(canvas, { background: BACKGROUND, antialias: true })
+        // The loader hook is the shared renderer's public route to its Three.js WebGLRenderer.
+        renderer.configureTextureLoader({
+          detectSupport: (webgl: GpuRenderer) => {
+            gpu = webgl
+          },
+        })
+        lifetime.mounts += 1
+        window.__zooRendererLifetime = lifetime
         resizeObserver.observe(container)
         resize()
         canvas.addEventListener("pointerdown", onPointerDown)
@@ -783,7 +855,7 @@ export default function ParkView(props: Props) {
       canvas.removeEventListener("webglcontextlost", onContextLost)
       window.removeEventListener("keydown", onKeyDown)
       delete window.__zooParkView
-      renderer?.dispose()
+      release()
       bridge?.free()
       bridgeRef.current = null
     }
