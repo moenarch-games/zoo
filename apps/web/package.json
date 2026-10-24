@@ -5,18 +5,18 @@
   "type": "module",
   "scripts": {
     "wasm": "cd ../../crates/zoo-core && wasm-pack build --target web --out-dir ../../apps/web/src/wasm --out-name zoo_core --locked && cd ../zoo-scene && wasm-pack build --target web --out-dir ../../apps/web/src/scene-wasm --out-name zoo_scene --locked",
-    "dev": "bun run wasm && bun run scenery && vite",
+    "dev": "bun run wasm && bun run assets && vite",
     "typecheck": "tsc --noEmit",
     "build": "bun run wasm && bun run build:web",
     "preview": "vite preview",
-    "scenery": "bun scripts/stage-zoo-scenery.ts",
+    "assets": "bun scripts/stage-asset-releases.ts",
     "format": "oxfmt src vite.config.ts package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
     "format:check": "oxfmt --check src vite.config.ts package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
     "lint": "oxlint --type-aware --deny-warnings src vite.config.ts",
-    "build:web": "bun run scenery && tsc --noEmit && vite build"
+    "build:web": "bun run assets && tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#77122d13dbd06789dcce05473b0528e61ad69a44",
+    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#231a70c9e8a4cc6575117d734507eaf81371f423",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

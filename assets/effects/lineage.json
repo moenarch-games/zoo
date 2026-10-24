@@ -1,0 +1,38 @@
+{
+    "recipe": {
+        "source": "src/zoo-effect-flipbooks.ts",
+        "sha256": "3163df7288e592553aeabaae70fbf6b8958e27dccf046c08eca9d7a9f43f9a04"
+    },
+    "provenance": "procedural: original deterministic 2D rasterization of flat-colour shapes, no third-party art, no models, no Blender",
+    "release": "zoo-effects",
+    "tar": {
+        "sha256": "c80955de8bde3ccdf4f83e04664310cfa8f9095e87f4f440e08d1d8ec5f86bcf",
+        "byteLength": 36352
+    },
+    "parts": {
+        "dust": {
+            "schemaVersion": 1,
+            "kind": "image",
+            "mediaType": "image/png",
+            "sha256": "0fecee8ea836c9d0e6fc749b604e5f281760ccf6446a392ed39366f19d4bb1ad",
+            "byteLength": 16224,
+            "metadata": {}
+        },
+        "leaf": {
+            "schemaVersion": 1,
+            "kind": "image",
+            "mediaType": "image/png",
+            "sha256": "4f979e918589a33fa2248ffdba5a9cc898f5b4de4722cd4609614424af777963",
+            "byteLength": 8026,
+            "metadata": {}
+        },
+        "splash": {
+            "schemaVersion": 1,
+            "kind": "image",
+            "mediaType": "image/png",
+            "sha256": "4e398b721add508167e263027bbf7e7a3457184d72e12508579ab4c2f6c673d5",
+            "byteLength": 6405,
+            "metadata": {}
+        }
+    }
+}

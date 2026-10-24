@@ -1,0 +1,12 @@
+{
+  "release": "zoo-effects",
+  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-effects/zoo-effects.tar",
+  "tarSha256": "c80955de8bde3ccdf4f83e04664310cfa8f9095e87f4f440e08d1d8ec5f86bcf",
+  "assetToolingCommit": "570ce3109bcd86e63ab68189b8d9b319e01623f2",
+  "profile": "static-glb-png-v1",
+  "pieces": {
+    "dust": { "key": "dust.flipbook", "variant": "toy" },
+    "leaf": { "key": "leaf.flipbook", "variant": "toy" },
+    "splash": { "key": "splash.flipbook", "variant": "toy" }
+  }
+}
