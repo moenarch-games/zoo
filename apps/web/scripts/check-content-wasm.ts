@@ -12,7 +12,6 @@ for (const row of nativeOracle) {
   accepted(game.hire_keeper())
   accepted(game.create_work_zone(0, 0, 19, 13))
   accepted(game.assign_keeper_zone(1, 1))
-  accepted(game.schedule_keeper(1))
   accepted(game.buy_animal_feed())
   accepted(game.adopt(1, row.species))
   accepted(game.place_concession(1, 6, "food"))

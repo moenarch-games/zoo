@@ -250,11 +250,7 @@ impl GameState {
             return ActionResult::error(message);
         }
         self.habitats[index].service_gate = segment;
-        let released = self.release_out_of_zone_schedules();
-        ActionResult::ok(format!(
-            "Habitat #{habitat_id} service gate moved{}",
-            crate::zone::released_suffix(released)
-        ))
+        ActionResult::ok(format!("Habitat #{habitat_id} service gate moved"))
     }
 }
 

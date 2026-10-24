@@ -23,10 +23,8 @@ fn replay_preserves_schedule_overrides_due_and_missed_work() {
     ok(game.create_work_zone(0, 0, 19, 13));
     ok(game.hire_keeper());
     ok(game.assign_keeper_zone(1, 1));
-    ok(game.schedule_keeper(1));
     ok(game.hire_keeper());
     ok(game.assign_keeper_zone(2, 1));
-    ok(game.schedule_keeper(2));
     ok(game.adopt(1, "zebra".to_owned()));
     ok(game.adopt(2, "zebra".to_owned()));
     // No feed stock: feeding jobs stay due and are then missed.
@@ -88,7 +86,6 @@ fn replay_rebuilds_service_gates_and_walking_keepers() {
     ok(game.hire_keeper());
     ok(game.create_work_zone(0, 0, 19, 13));
     ok(game.assign_keeper_zone(1, 1));
-    ok(game.schedule_keeper(1));
     ok(game.adopt(1, "capybara".to_owned()));
     let preview: Value = serde_json::from_str(&game.evaluate_service_gate(1, 7, 10)).unwrap();
     assert_eq!(preview["ok"], true, "{preview}");

@@ -3,9 +3,11 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import type {
   ActionResult,
+  CareCategory,
   CareTask,
   GateEvaluation,
   Guest,
+  Keeper,
   PlacementEvaluation,
   Point,
   Snapshot,
@@ -40,6 +42,10 @@ function money(cents: number) {
     maximumFractionDigits: 0,
   }).format(cents / 100)
 }
+
+const CARE_CATEGORIES: CareCategory[] = ["feeding", "cleaning", "inspection", "enrichment"]
+/** Whole hours 00:00–24:00 for keeper shift boundaries, in minutes of day. */
+const SHIFT_HOURS = Array.from({ length: 25 }, (_, hour) => hour * 60)
 
 function clock(minutes: number) {
   const hours = Math.floor(minutes / 60)
@@ -828,12 +834,23 @@ export default function App() {
     perform(() => game.assign_keeper_zone(keeperId, selectedZone.id))
   }
 
-  const scheduleKeeper = () => {
+  const setKeeperSchedule = (
+    keeper: Keeper,
+    change: { categories?: CareCategory[]; start?: number; end?: number },
+  ) => {
     const game = gameRef.current
-    if (!game || selectedHabitatId === null) {
+    if (!game) {
       return
     }
-    perform(() => game.schedule_keeper(selectedHabitatId))
+    const categories = change.categories ?? keeper.categories
+    perform(() =>
+      game.set_keeper_schedule(
+        keeper.id,
+        categories.join(","),
+        change.start ?? keeper.shift_start_minute,
+        change.end ?? keeper.shift_end_minute,
+      ),
+    )
   }
 
   const buyAnimalFeed = () => {
@@ -1177,7 +1194,7 @@ export default function App() {
                 <button className="shop-row" onClick={hireKeeper}>
                   <span>
                     <b>Hire keeper</b>
-                    <small>Assign new keepers to a work zone; one serves one habitat</small>
+                    <small>Assign new keepers to a work zone; they take its due care work</small>
                   </span>
                   <strong>{money(snapshot.animal_care_depot.keeper_hire_cost_cents)}</strong>
                 </button>
@@ -1209,6 +1226,63 @@ export default function App() {
                         <dt>Work zone</dt>
                         <dd>
                           {keeper.zone_id === null ? "Needs a zone" : `Zone #${keeper.zone_id}`}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Accepts</dt>
+                        <dd className="keeper-categories">
+                          {CARE_CATEGORIES.map((category) => {
+                            const accepted = keeper.categories.includes(category)
+                            return (
+                              <label key={category}>
+                                <input
+                                  type="checkbox"
+                                  checked={accepted}
+                                  disabled={accepted && keeper.categories.length === 1}
+                                  onChange={() =>
+                                    setKeeperSchedule(keeper, {
+                                      categories: accepted
+                                        ? keeper.categories.filter((item) => item !== category)
+                                        : [...keeper.categories, category],
+                                    })
+                                  }
+                                />{" "}
+                                {category}
+                              </label>
+                            )
+                          })}
+                        </dd>
+                      </div>
+                      <div className={keeper.on_shift ? "" : "zone-warning"}>
+                        <dt>Shift</dt>
+                        <dd>
+                          <select
+                            aria-label={`Keeper #${keeper.id} shift start`}
+                            value={keeper.shift_start_minute}
+                            onChange={(event) =>
+                              setKeeperSchedule(keeper, { start: Number(event.target.value) })
+                            }
+                          >
+                            {SHIFT_HOURS.slice(0, 24).map((minute) => (
+                              <option key={minute} value={minute}>
+                                {clock(minute)}
+                              </option>
+                            ))}
+                          </select>
+                          {" – "}
+                          <select
+                            aria-label={`Keeper #${keeper.id} shift end`}
+                            value={keeper.shift_end_minute}
+                            onChange={(event) =>
+                              setKeeperSchedule(keeper, { end: Number(event.target.value) })
+                            }
+                          >
+                            {SHIFT_HOURS.slice(1).map((minute) => (
+                              <option key={minute} value={minute}>
+                                {clock(minute)}
+                              </option>
+                            ))}
+                          </select>
                         </dd>
                       </div>
                       <div>
@@ -1556,12 +1630,12 @@ export default function App() {
                 <h3>Care</h3>
                 <div className="guest-thought">{selectedHabitat.care_status}</div>
                 <dl>
-                  <div>
-                    <dt>Food keeper</dt>
+                  <div className={selectedHabitat.zone_keeper_count === 0 ? "zone-warning" : ""}>
+                    <dt>Zone keepers</dt>
                     <dd>
-                      {selectedHabitat.keeper_id === null
-                        ? "Not scheduled"
-                        : `Keeper #${selectedHabitat.keeper_id}`}
+                      {selectedHabitat.work_zone_id === null
+                        ? "No zone"
+                        : `${selectedHabitat.zone_keeper_count} in zone #${selectedHabitat.work_zone_id}`}
                     </dd>
                   </div>
                   {selectedHabitat.care_required_keepers !== null &&
@@ -1597,6 +1671,9 @@ export default function App() {
                         progress = `keeper #${active.keeper_id ?? "?"} on the job`
                       } else if (due) {
                         progress = `due, ${due.expires_in_minutes} min left`
+                        if (due.waiting_reason !== null) {
+                          progress += ` (${due.waiting_reason})`
+                        }
                       }
                       return (
                         <div key={task.category}>
@@ -1629,14 +1706,6 @@ export default function App() {
                     })}
                   </dl>
                 )}
-                {selectedHabitat.keeper_id === null && (
-                  <button className="shop-row" onClick={scheduleKeeper}>
-                    <span>
-                      <b>Schedule available keeper</b>
-                      <small>Picks a free keeper assigned to this gate's work zone</small>
-                    </span>
-                  </button>
-                )}
                 <NeedBar label="Food" value={selectedHabitat.food} />
                 <NeedBar label="Water" value={selectedHabitat.water} />
                 <NeedBar label="Cleanliness" value={selectedHabitat.cleanliness} />
@@ -1666,16 +1735,16 @@ export default function App() {
                 </button>
 
                 <h3>Adopt animal</h3>
-                {selectedHabitat.keeper_id === null && (
+                {selectedHabitat.zone_keeper_count === 0 && (
                   <div className="guest-thought">
-                    Schedule a keeper before animals can move into this habitat.
+                    Assign a keeper to this habitat's work zone before animals can move in.
                   </div>
                 )}
                 {snapshot.species_catalog.map((offer) => {
                   const wrongSpecies =
                     selectedHabitat.species !== null && selectedHabitat.species !== offer.key
                   const full = selectedHabitat.animals >= selectedHabitat.capacity
-                  const unstaffed = selectedHabitat.keeper_id === null
+                  const unstaffed = selectedHabitat.zone_keeper_count === 0
                   return (
                     <button
                       className="shop-row species-row"

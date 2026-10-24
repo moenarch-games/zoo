@@ -60,7 +60,6 @@ fn operated_park() -> ZooGame {
     ok(game.hire_keeper());
     ok(game.create_work_zone(0, 0, 19, 13));
     ok(game.assign_keeper_zone(1, 1));
-    ok(game.schedule_keeper(1));
     ok(game.add_shelter(1));
     ok(game.adopt(1, "capybara".to_owned()));
     ok(game.adopt(1, "capybara".to_owned()));

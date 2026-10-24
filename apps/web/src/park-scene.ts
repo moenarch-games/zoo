@@ -1419,7 +1419,7 @@ function staffNodes(snapshot: Snapshot, input: SceneFrameInput): RendererSceneNo
       }),
       node(`${key}:marker`, [x, 0.62, z], sphereGeometry(0.05), "#ffb347"),
     )
-    if (keeper.assigned_habitat_id === input.overlay.selectedHabitatId) {
+    if (keeper.habitat_id !== null && keeper.habitat_id === input.overlay.selectedHabitatId) {
       for (const [index, step] of keeper.route.slice(1).entries()) {
         nodes.push(
           node(

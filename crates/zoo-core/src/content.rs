@@ -48,6 +48,22 @@ pub(crate) enum CareCategory {
 }
 
 impl CareCategory {
+    pub const ALL: [Self; 4] = [
+        Self::Feeding,
+        Self::Cleaning,
+        Self::Inspection,
+        Self::Enrichment,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Feeding => "feeding",
+            Self::Cleaning => "cleaning",
+            Self::Inspection => "inspection",
+            Self::Enrichment => "enrichment",
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "feeding" => Some(Self::Feeding),

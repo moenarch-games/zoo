@@ -32,7 +32,6 @@ fn populate(game: &mut ZooGame, rect: (u32, u32, u32, u32)) -> u32 {
         .unwrap() as u32;
     accepted(game.hire_keeper());
     zone_newest_keeper(game);
-    accepted(game.schedule_keeper(id));
     accepted(game.adopt(id, "capybara".to_owned()));
     id
 }

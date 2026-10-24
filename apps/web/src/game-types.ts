@@ -59,6 +59,8 @@ export type CareJob = {
   work_minutes: number
   state: "due" | "in_progress" | "completed" | "missed"
   keeper_id: number | null
+  /** Why a due job has no keeper yet. */
+  waiting_reason: string | null
   expires_in_minutes: number
 }
 
@@ -122,9 +124,10 @@ export type Habitat = Point & {
   water: number
   cleanliness: number
   has_shelter: boolean
-  keeper_id: number | null
   /** The work zone containing the service gate; null means "No zone". */
   work_zone_id: number | null
+  /** Keepers in that zone; only they take this habitat's jobs. */
+  zone_keeper_count: number
   care_required_keepers: number | null
   care_schedule: CareTask[]
   care_jobs: CareJob[]
@@ -156,13 +159,20 @@ export type Concession = Point & {
 
 export type Keeper = Point & {
   id: number
-  assigned_habitat_id: number | null
   zone_id: number | null
   /** Idle until assigned a work zone. */
   needs_zone: boolean
+  /** Care categories the scheduler may give this keeper. */
+  categories: CareCategory[]
+  /** Daily availability window in minutes of day; an end at or before the start wraps. */
+  shift_start_minute: number
+  shift_end_minute: number
+  on_shift: boolean
   deliveries_completed: number
   activity: "at_depot" | "to_gate" | "working" | "to_depot"
   job_id: number | null
+  /** The habitat of the current job. */
+  habitat_id: number | null
   /** Rust-owned remaining walk from the keeper's tile to its destination. */
   route: Point[]
   status: string

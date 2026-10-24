@@ -14,7 +14,6 @@ fn configured_game() -> ZooGame {
     require_ok(game.hire_keeper());
     require_ok(game.create_work_zone(0, 0, 19, 13));
     require_ok(game.assign_keeper_zone(1, 1));
-    require_ok(game.schedule_keeper(1));
     for _ in 0..4 {
         require_ok(game.adopt(1, "capybara".to_owned()));
     }
