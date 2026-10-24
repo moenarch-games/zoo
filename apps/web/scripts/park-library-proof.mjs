@@ -52,7 +52,7 @@ export async function frameWholePark({ evaluate, sleep }) {
  * Waits for the start screen (or a startup failure), opens New park, starts `scenario` and,
  * unless `wholePark` is false, resets the scenario's opening focus to the whole-park view.
  */
-export async function enterNewPark(context, { scenario = "empty-starter", wholePark = true } = {}) {
+export async function enterNewPark(context, { scenario = "first-zoo", wholePark = true } = {}) {
   const { evaluate, sleep } = context
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const state = await evaluate(`(() => {
@@ -209,7 +209,7 @@ export async function runParkLibraryAcceptance(context) {
   // Canceling New park on unsaved progress keeps the park.
   await openMenu()
   await pressIn(MENU, "New park")
-  assert(await startPickedScenario(context, "empty-starter"), "#91: New park picker missing")
+  assert(await startPickedScenario(context, "first-zoo"), "#91: New park picker missing")
   await sleep(150)
   assert(
     (await panelText()).includes("not saved yet"),
@@ -229,7 +229,7 @@ export async function runParkLibraryAcceptance(context) {
 
   await openMenu()
   await pressIn(MENU, "New park")
-  assert(await startPickedScenario(context, "empty-starter"), "#91: New park picker missing")
+  assert(await startPickedScenario(context, "first-zoo"), "#91: New park picker missing")
   await sleep(150)
   await ready()
   await frameWholePark(context)

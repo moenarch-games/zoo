@@ -284,24 +284,30 @@ export type FinanceDay = {
   breakdown: FinanceBreakdown
 }
 
-export type TutorialStepKey =
-  | "build_habitat"
-  | "zone_gate"
-  | "assign_keeper"
-  | "stock_habitat"
-  | "job_generated"
-  | "edit_schedule"
-  | "job_completed"
+/** What a guided objective's hint points at; the HUD maps it to a tool or inspector. */
+export type GuideTool =
+  | "path"
+  | "habitat"
+  | "gate"
+  | "zone"
+  | "depot"
+  | "habitat_inspector"
+  | "concession"
+  | "speed"
 
-/** Rust-owned keeper-training checklist; progress is read from park state, not the DOM. */
+/**
+ * Rust-owned guide over a guided scenario's objectives (#93); progress is read from park
+ * state, not the DOM. `off` means the scenario's objectives are plain goals.
+ */
 export type Tutorial = {
-  status: "active" | "skipped" | "completed"
+  status: "off" | "active" | "skipped" | "completed"
   /** The habitat being taught. */
   habitat_id: number | null
-  steps: { key: TutorialStepKey; title: string; done: boolean }[]
-  next: TutorialStepKey | null
-  lesson: string | null
-  /** The park's own blocker for the next step, such as a habitat's waiting reason. */
+  /** The objective the guide points at next. */
+  next: string | null
+  hint: string | null
+  tool: GuideTool | null
+  /** The park's own blocker for the next step, or how to recover from a refused command. */
   problem: string | null
 }
 
@@ -313,7 +319,8 @@ export type ScenarioSummary = {
   width: number
   height: number
   starting_cash_cents: number
-  keeper_training: boolean
+  /** The objectives are a guided introduction with hints. */
+  guided: boolean
   objectives: string[]
 }
 
@@ -322,6 +329,8 @@ export type Objective = {
   title: string
   done: boolean
   focus: Point
+  hint: string | null
+  tool: GuideTool | null
 }
 
 /** The active park's scenario source and its state-backed objectives. */

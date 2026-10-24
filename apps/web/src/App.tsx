@@ -16,6 +16,7 @@ import type {
   GateEvaluation,
   Guest,
   Keeper,
+  Objective,
   PlacementEvaluation,
   Point,
   ScenarioState,
@@ -886,35 +887,62 @@ export default function App() {
     }
   }
 
-  /** The one object or tool the next training step needs, if the park has it. */
+  /** The one tool or object the guide's next step points at, if the park has it. */
   const tutorialFocus = (): { label: string; run: () => void } | null => {
     const tutorial = snapshot?.tutorial
-    if (!snapshot || !tutorial || tutorial.status !== "active") {
+    if (!snapshot || !tutorial || tutorial.status !== "active" || tutorial.tool === null) {
       return null
     }
     const habitat = snapshot.habitats.find((entry) => entry.id === tutorial.habitat_id)
-    switch (tutorial.next) {
-      case "build_habitat":
+    switch (tutorial.tool) {
+      case "path":
+        return { label: "Choose Path", run: () => setTool("path") }
+      case "habitat":
         return { label: "Draw habitat", run: () => setTool("habitat") }
-      case "zone_gate":
+      case "gate":
+        if (!habitat) {
+          return { label: "Choose Path", run: () => setTool("path") }
+        }
+        // Selecting another habitat ends a gate move, so open the habitat first.
+        if (selectedHabitatId !== habitat.id) {
+          return {
+            label: `Show habitat #${habitat.id}`,
+            run: () => {
+              setTool("select")
+              selectHabitat(habitat.id)
+            },
+          }
+        }
+        return tool === "gate"
+          ? null
+          : { label: `Move habitat #${habitat.id}'s gate`, run: startGateMove }
+      case "zone":
         return { label: "Choose Zones", run: () => setTool("zone") }
-      case "assign_keeper":
-        if (snapshot.animal_care_depot.keepers.length === 0 || habitat?.work_zone_id == null) {
-          return { label: "Open depot", run: selectDepot }
+      case "depot": {
+        // Staffing: once a keeper is hired and the gate is zoned, the zone inspector assigns.
+        const zoneId = habitat?.work_zone_id ?? null
+        if (
+          tutorial.next === "staff-zone" &&
+          zoneId !== null &&
+          snapshot.animal_care_depot.keepers.length > 0
+        ) {
+          return {
+            label: `Open zone #${zoneId}`,
+            run: () => {
+              setTool("select")
+              selectZone(zoneId)
+            },
+          }
         }
         return {
-          label: `Open zone #${habitat.work_zone_id}`,
+          label: "Open depot",
           run: () => {
             setTool("select")
-            selectZone(habitat.work_zone_id)
+            selectDepot()
           },
         }
-      case null:
-        return null
-      case "stock_habitat":
-      case "job_generated":
-      case "edit_schedule":
-      case "job_completed":
+      }
+      case "habitat_inspector":
         return habitat
           ? {
               label: `Show habitat #${habitat.id}`,
@@ -923,6 +951,16 @@ export default function App() {
                 selectHabitat(habitat.id)
               },
             }
+          : { label: "Draw habitat", run: () => setTool("habitat") }
+      case "concession": {
+        const offer = snapshot.facility_catalog[0]
+        return offer
+          ? { label: `Choose ${offer.label} stand`, run: () => setTool(`facility:${offer.key}`) }
+          : null
+      }
+      case "speed":
+        return speed === 0 || speed === 1
+          ? { label: "Speed up time", run: () => setSpeed(4) }
           : null
     }
   }
@@ -1612,19 +1650,19 @@ export default function App() {
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
           }`}
         >
-          {snapshot.tutorial.status === "active" && (
-            <TutorialChecklist
-              tutorial={snapshot.tutorial}
-              open={tutorialOpen}
-              onToggle={setTutorialOpen}
-              focusLabel={focus?.label ?? null}
-              onFocus={() => focus?.run()}
-              onSkip={skipTutorial}
-            />
-          )}
-          {snapshot.scenario.objectives.length > 0 && (
-            <ObjectiveChecklist scenario={snapshot.scenario} onShow={requestCamera} />
-          )}
+          {snapshot.scenario.objectives.length > 0 &&
+            (snapshot.tutorial.status === "active" || snapshot.tutorial.status === "off") && (
+              <ObjectiveChecklist
+                scenario={snapshot.scenario}
+                tutorial={snapshot.tutorial}
+                open={tutorialOpen}
+                onToggle={setTutorialOpen}
+                focusLabel={focus?.label ?? null}
+                onFocus={() => focus?.run()}
+                onShow={requestCamera}
+                onSkip={skipTutorial}
+              />
+            )}
           {selectedDepot && (
             <>
               <div className="window-title">
@@ -2296,9 +2334,7 @@ export default function App() {
                   <li>Open the operations depot, buy animal feed, and hire a keeper.</li>
                   <li>Hire a janitor so path litter has a visible service response.</li>
                   <li>Hire a mechanic before concession wear turns into closures.</li>
-                  <li>
-                    Follow the keeper training checklist to zone, staff and stock the first habitat.
-                  </li>
+                  <li>Follow the guide checklist to zone, staff and stock the first habitat.</li>
                   <li>Place guest food and drink stands on clear grass beside busy paths.</li>
                   <li>Watch staff respond as guests create animal-care and cleanup work.</li>
                 </ol>
@@ -2420,9 +2456,10 @@ export default function App() {
                   <span>Poor value</span>
                   <strong>{snapshot.complaints.poor_value}</strong>
                 </div>
-                {snapshot.tutorial.status !== "active" && (
+                {(snapshot.tutorial.status === "skipped" ||
+                  snapshot.tutorial.status === "completed") && (
                   <button className="secondary" onClick={restartTutorial}>
-                    Restart keeper training
+                    Restart guide
                   </button>
                 )}
                 <button
@@ -2739,95 +2776,73 @@ function NeedBar({
   )
 }
 
-/** The compact keeper-training checklist; every tick comes from Rust park state. */
-function TutorialChecklist({
+/**
+ * The scenario's state-backed goals (#91). In a guided scenario (#93) it is the guide: the
+ * next step shows its hint, the park's own blocker and a pointer to the tool it needs. Every
+ * tick comes from Rust park state.
+ */
+function ObjectiveChecklist({
+  scenario,
   tutorial,
   open,
   onToggle,
   focusLabel,
   onFocus,
+  onShow,
   onSkip,
 }: {
+  scenario: ScenarioState
   tutorial: Tutorial
   open: boolean
   onToggle: (open: boolean) => void
   focusLabel: string | null
   onFocus: () => void
+  onShow: (focus: Point) => void
   onSkip: () => void
 }) {
-  const doneCount = tutorial.steps.filter((step) => step.done).length
+  const guided = tutorial.status === "active"
+  const next = guided
+    ? scenario.objectives.find((objective) => objective.id === tutorial.next)
+    : scenario.objectives.find((objective) => !objective.done)
+  const doneCount = scenario.objectives.filter((objective) => objective.done).length
+  // A step whose structure was undone is next again; show it open, not ticked.
+  const ticked = (objective: Objective) => objective.done && objective !== next
   return (
     <details
       className="tutorial-card bevel"
       open={open}
       onToggle={(event) => onToggle(event.currentTarget.open)}
-      aria-label="Keeper training checklist"
+      aria-label={guided ? "Park guide" : "Scenario objectives"}
     >
       <summary>
-        Keeper training · {doneCount}/{tutorial.steps.length}
-      </summary>
-      <ol>
-        {tutorial.steps.map((step) => (
-          <li
-            key={step.key}
-            data-step={step.key}
-            className={[step.done && "done", step.key === tutorial.next && "next"]
-              .filter(Boolean)
-              .join(" ")}
-            aria-current={step.key === tutorial.next ? "step" : undefined}
-          >
-            <span aria-hidden="true">{step.done ? "✓" : "○"}</span> {step.title}
-          </li>
-        ))}
-      </ol>
-      {tutorial.lesson !== null && <p>{tutorial.lesson}</p>}
-      {tutorial.problem !== null && (
-        <p className="tutorial-problem" role="status">
-          {tutorial.problem}
-        </p>
-      )}
-      <div className="tutorial-actions">
-        {focusLabel !== null && <button onClick={onFocus}>{focusLabel}</button>}
-        <button onClick={onSkip}>Skip training</button>
-      </div>
-    </details>
-  )
-}
-
-/** The scenario's state-backed goals (#91); each can frame its tile in the 3D view. */
-function ObjectiveChecklist({
-  scenario,
-  onShow,
-}: {
-  scenario: ScenarioState
-  onShow: (focus: Point) => void
-}) {
-  const next = scenario.objectives.find((objective) => !objective.done)
-  const doneCount = scenario.objectives.filter((objective) => objective.done).length
-  return (
-    <details className="tutorial-card bevel" open aria-label="Scenario objectives">
-      <summary>
         {scenario.title} · {doneCount}/{scenario.objectives.length}
+        {!open && next ? ` · ${next.title}` : ""}
       </summary>
       <ol>
         {scenario.objectives.map((objective) => (
           <li
             key={objective.id}
             data-objective={objective.id}
-            className={[objective.done && "done", objective === next && "next"]
+            className={[ticked(objective) && "done", objective === next && "next"]
               .filter(Boolean)
               .join(" ")}
             aria-current={objective === next ? "step" : undefined}
           >
-            <span aria-hidden="true">{objective.done ? "✓" : "○"}</span> {objective.title}
+            <span aria-hidden="true">{ticked(objective) ? "✓" : "○"}</span> {objective.title}
           </li>
         ))}
       </ol>
-      {next && (
-        <div className="tutorial-actions">
-          <button onClick={() => onShow(next.focus)}>Show next goal</button>
-        </div>
+      {next?.hint != null && <p className="tutorial-hint">{next.hint}</p>}
+      {guided && tutorial.problem !== null && (
+        <p className="tutorial-problem" role="status">
+          {tutorial.problem}
+        </p>
       )}
+      <div className="tutorial-actions">
+        {guided && focusLabel !== null && <button onClick={onFocus}>{focusLabel}</button>}
+        {next && <button onClick={() => onShow(next.focus)}>Show next goal</button>}
+        {guided && <button onClick={onSkip}>Skip guide</button>}
+      </div>
     </details>
   )
 }

@@ -140,7 +140,7 @@ export function ParkLibraryPanel({
               <small>
                 {scenario.width}×{scenario.height} tiles · $
                 {(scenario.starting_cash_cents / 100).toLocaleString()}
-                {scenario.keeper_training ? " · Keeper training" : ""}
+                {scenario.guided ? " · Guided" : ""}
               </small>
               <span>{scenario.summary}</span>
               {scenario.objectives.length > 0 && (

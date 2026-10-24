@@ -134,7 +134,7 @@ fn bundle_declares_build_start_identity_clock_limits_and_only_declared_fields() 
             "content_digest"
         ])
     );
-    assert_eq!(bundle["start"]["scenario"], "empty-starter");
+    assert_eq!(bundle["start"]["scenario"], "first-zoo");
     assert_eq!(bundle["start"]["ruleset_id"], content["ruleset_id"]);
     assert_eq!(bundle["start"]["schema_version"], content["schema_version"]);
     assert_eq!(bundle["status"], "running");
@@ -607,7 +607,7 @@ fn fault_injection_rejects_unknown_kinds_and_explicit_reset_starts_a_new_session
     assert_eq!(game.session_status(), "frozen");
 
     // Only an explicit player reset leaves the frozen session; it begins a fresh recording.
-    ok(game.start_scenario("empty-starter"));
+    ok(game.start_scenario("first-zoo"));
     assert_eq!(game.session_status(), "running");
     let fresh = bundle(&game);
     assert_eq!(fresh["status"], "running");
