@@ -674,3 +674,65 @@ dd {
   min-height: 36px;
   font: inherit;
 }
+
+/* Keeper training heads the side panel, so it never covers park tiles or the inspector's
+   controls below it. */
+.tutorial-card {
+  margin: 8px;
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: #f3edcc;
+  font-size: 13px;
+}
+
+.tutorial-card summary {
+  min-height: 28px;
+  cursor: pointer;
+  font-weight: 800;
+  line-height: 28px;
+}
+
+.tutorial-card ol {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tutorial-card li {
+  margin: 3px 0;
+  color: #4f4b39;
+}
+
+.tutorial-card li.done {
+  color: #1b4c40;
+  text-decoration: line-through;
+}
+
+.tutorial-card li.next {
+  color: #10322d;
+  font-weight: 800;
+}
+
+.tutorial-card p {
+  margin: 6px 0;
+  line-height: 1.35;
+}
+
+.tutorial-card .tutorial-problem {
+  padding: 6px;
+  border: 1px solid #b0623c;
+  border-radius: 4px;
+  background: #f7d9c4;
+  font-weight: 700;
+}
+
+.tutorial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tutorial-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+}

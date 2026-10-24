@@ -15,6 +15,7 @@ import type {
   SpeciesOffer,
   Speed,
   Tool,
+  Tutorial,
   WorkZoneEvaluation,
 } from "./game-types"
 import type { SceneOverlay } from "./park-scene"
@@ -156,6 +157,10 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [tool, setTool] = useState<Tool>("select")
   const [speed, setSpeed] = useState<Speed>(1)
+  // The checklist starts collapsed to one line on phones so the map stays tappable.
+  const [tutorialOpen, setTutorialOpen] = useState(
+    () => !window.matchMedia("(max-width: 900px)").matches,
+  )
   const [message, setMessage] = useState(
     "Extend the entrance path, draw a habitat, then stock and staff it through the care depot.",
   )
@@ -642,6 +647,62 @@ export default function App() {
     inform("Central operations depot selected · stock animal feed and hire park staff here.")
   }
 
+  const skipTutorial = () => {
+    const game = gameRef.current
+    if (game) {
+      perform(() => game.skip_tutorial())
+    }
+  }
+
+  const restartTutorial = () => {
+    const game = gameRef.current
+    if (game) {
+      perform(() => game.restart_tutorial())
+      setTutorialOpen(true)
+    }
+  }
+
+  /** The one object or tool the next training step needs, if the park has it. */
+  const tutorialFocus = (): { label: string; run: () => void } | null => {
+    const tutorial = snapshot?.tutorial
+    if (!snapshot || !tutorial || tutorial.status !== "active") {
+      return null
+    }
+    const habitat = snapshot.habitats.find((entry) => entry.id === tutorial.habitat_id)
+    switch (tutorial.next) {
+      case "build_habitat":
+        return { label: "Draw habitat", run: () => setTool("habitat") }
+      case "zone_gate":
+        return { label: "Choose Zones", run: () => setTool("zone") }
+      case "assign_keeper":
+        if (snapshot.animal_care_depot.keepers.length === 0 || habitat?.work_zone_id == null) {
+          return { label: "Open depot", run: selectDepot }
+        }
+        return {
+          label: `Open zone #${habitat.work_zone_id}`,
+          run: () => {
+            setTool("select")
+            selectZone(habitat.work_zone_id)
+          },
+        }
+      case null:
+        return null
+      case "stock_habitat":
+      case "job_generated":
+      case "edit_schedule":
+      case "job_completed":
+        return habitat
+          ? {
+              label: `Show habitat #${habitat.id}`,
+              run: () => {
+                setTool("select")
+                selectHabitat(habitat.id)
+              },
+            }
+          : null
+    }
+  }
+
   const describeStand = (standId: number) => {
     const stand = snapshot?.concessions.find((candidate) => candidate.id === standId)
     if (!stand) {
@@ -1004,6 +1065,7 @@ export default function App() {
       </div>
     ) : undefined)
 
+  const focus = tutorialFocus()
   const uncoveredHabitats = snapshot.habitats.filter((habitat) => habitat.work_zone_id === null)
   const keeperChoice =
     selectedZone === null
@@ -1124,6 +1186,16 @@ export default function App() {
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
           }`}
         >
+          {snapshot.tutorial.status === "active" && (
+            <TutorialChecklist
+              tutorial={snapshot.tutorial}
+              open={tutorialOpen}
+              onToggle={setTutorialOpen}
+              focusLabel={focus?.label ?? null}
+              onFocus={() => focus?.run()}
+              onSkip={skipTutorial}
+            />
+          )}
           {selectedDepot && (
             <>
               <div className="window-title">
@@ -1796,11 +1868,8 @@ export default function App() {
                   <li>Hire a janitor so path litter has a visible service response.</li>
                   <li>Hire a mechanic before concession wear turns into closures.</li>
                   <li>
-                    Choose Zones, drag a work zone around the habitat's service gate, and assign the
-                    keeper to it.
+                    Follow the keeper training checklist to zone, staff and stock the first habitat.
                   </li>
-                  <li>Select the enclosure and schedule an available keeper.</li>
-                  <li>Adopt animals after the habitat has a food-delivery schedule.</li>
                   <li>Place guest food and drink stands on clear grass beside busy paths.</li>
                   <li>Watch staff respond as guests create animal-care and cleanup work.</li>
                 </ol>
@@ -1922,6 +1991,11 @@ export default function App() {
                   <span>Poor value</span>
                   <strong>{snapshot.complaints.poor_value}</strong>
                 </div>
+                {snapshot.tutorial.status !== "active" && (
+                  <button className="secondary" onClick={restartTutorial}>
+                    Restart keeper training
+                  </button>
+                )}
                 <button className="secondary" onClick={reset}>
                   Start new park
                 </button>
@@ -2023,5 +2097,60 @@ function NeedBar({
         <span style={{ width: `${value}%` }} />
       </div>
     </div>
+  )
+}
+
+/** The compact keeper-training checklist; every tick comes from Rust park state. */
+function TutorialChecklist({
+  tutorial,
+  open,
+  onToggle,
+  focusLabel,
+  onFocus,
+  onSkip,
+}: {
+  tutorial: Tutorial
+  open: boolean
+  onToggle: (open: boolean) => void
+  focusLabel: string | null
+  onFocus: () => void
+  onSkip: () => void
+}) {
+  const doneCount = tutorial.steps.filter((step) => step.done).length
+  return (
+    <details
+      className="tutorial-card bevel"
+      open={open}
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+      aria-label="Keeper training checklist"
+    >
+      <summary>
+        Keeper training · {doneCount}/{tutorial.steps.length}
+      </summary>
+      <ol>
+        {tutorial.steps.map((step) => (
+          <li
+            key={step.key}
+            data-step={step.key}
+            className={[step.done && "done", step.key === tutorial.next && "next"]
+              .filter(Boolean)
+              .join(" ")}
+            aria-current={step.key === tutorial.next ? "step" : undefined}
+          >
+            <span aria-hidden="true">{step.done ? "✓" : "○"}</span> {step.title}
+          </li>
+        ))}
+      </ol>
+      {tutorial.lesson !== null && <p>{tutorial.lesson}</p>}
+      {tutorial.problem !== null && (
+        <p className="tutorial-problem" role="status">
+          {tutorial.problem}
+        </p>
+      )}
+      <div className="tutorial-actions">
+        {focusLabel !== null && <button onClick={onFocus}>{focusLabel}</button>}
+        <button onClick={onSkip}>Skip training</button>
+      </div>
+    </details>
   )
 }

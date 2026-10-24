@@ -284,6 +284,27 @@ export type FinanceDay = {
   breakdown: FinanceBreakdown
 }
 
+export type TutorialStepKey =
+  | "build_habitat"
+  | "zone_gate"
+  | "assign_keeper"
+  | "stock_habitat"
+  | "job_generated"
+  | "edit_schedule"
+  | "job_completed"
+
+/** Rust-owned keeper-training checklist; progress is read from park state, not the DOM. */
+export type Tutorial = {
+  status: "active" | "skipped" | "completed"
+  /** The habitat being taught. */
+  habitat_id: number | null
+  steps: { key: TutorialStepKey; title: string; done: boolean }[]
+  next: TutorialStepKey | null
+  lesson: string | null
+  /** The park's own blocker for the next step, such as a habitat's waiting reason. */
+  problem: string | null
+}
+
 export type Snapshot = {
   ruleset_id: string
   facility_catalog: FacilityOffer[]
@@ -331,6 +352,7 @@ export type Snapshot = {
     profit_change_cents: number | null
     profit_trend: "up" | "down" | "flat" | "no_previous_day"
   }
+  tutorial: Tutorial
 }
 
 export type ActionResult = {

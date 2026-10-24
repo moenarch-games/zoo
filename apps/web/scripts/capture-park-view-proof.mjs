@@ -295,6 +295,12 @@ try {
   assert(await clickButton("Draw habitat"), "Habitat tool missing")
   await drag(await tile(6, 1), await tile(11, 5))
   assert((await message()).includes("Habitat #1 fenced"), "Habitat drag did not fence", await message())
+  // #137: the keeper-training checklist ticks from Rust state and shows the park's own
+  // staffing problem: the new habitat's service gate has no work zone yet.
+  const stepDone = (key) => evaluate(`document.querySelector('.tutorial-card [data-step="${key}"]')?.classList.contains('done') ?? false`)
+  assert(await stepDone("build_habitat"), "Keeper training did not tick the built habitat")
+  assert(await evaluate(`document.querySelector('.tutorial-problem')?.textContent.startsWith('No work zone') ?? false`),
+    "Keeper training did not show the unzoned service gate")
   // A rejected fence keeps its candidate footprint in red, and releasing it builds nothing.
   assert(await clickButton("Ⅱ"), "Pause control missing")
   await frame()
@@ -367,6 +373,19 @@ try {
   await waitFor("guests to arrive", `Number(document.querySelectorAll('.stat strong')[1]?.textContent) > 0`, 200)
   await sleep(1500)
   await screenshot("test-results/park-view-desktop.png")
+  assert(await stepDone("zone_gate") && await stepDone("assign_keeper") && await stepDone("stock_habitat"),
+    "Keeper training did not tick the zone, keeper and adoption steps")
+  await waitFor("the habitat to create care work", `document.querySelector('.tutorial-card [data-step="job_generated"]')?.classList.contains('done') ?? false`, 300)
+  // One small priority edit in the habitat's Care list, whichever direction is allowed.
+  assert(await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button[aria-label$=" priority"]')].find((candidate) => !candidate.disabled)
+    button?.click()
+    return Boolean(button)
+  })()`), "No care priority control was enabled")
+  await waitFor("the priority edit to tick", `document.querySelector('.tutorial-card [data-step="edit_schedule"]')?.classList.contains('done') ?? false`)
+  await waitFor("a keeper to finish care and complete training", `document.querySelector('.tutorial-card') === null`, 900)
+  assert(await closeInspector(), "Habitat inspector close missing")
+  await waitFor("the training restart control", `[...document.querySelectorAll('button')].some((button) => button.textContent === 'Restart keeper training')`)
 
   // --- Phone-sized touch viewport ----------------------------------------------------------------
   await cdp.send("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 2, mobile: true})
