@@ -72,6 +72,11 @@ export async function runRendererLifetimeAcceptance(context) {
   await waitFor("the first park-view mount", mounted(1))
   assert(await context.clickButton("Ⅱ"), "#59: pause control missing")
   await sleep(500)
+  // #86: paused, no new particle bursts start; live ones finish and release their atlases.
+  await waitFor(
+    "particle bursts to finish",
+    `(window.__zooParkView.effects()?.liveAtlases ?? 0) === 0`,
+  )
   const baseline = await resources()
   assert(
     baseline.gpuGeometries > 0 && baseline.objects > 0,

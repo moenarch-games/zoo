@@ -1,6 +1,14 @@
-// Provenance of the asset-tooling scenery staged by scripts/stage-zoo-scenery.ts (#59 S2).
+// Provenance of the asset-tooling scenery staged by scripts/stage-asset-releases.ts (#59 S2).
 
-export const SCENERY_PIECES = ["tree-round", "tree-pine", "bush-round", "rock-round"] as const
+export const SCENERY_PIECES = [
+  "tree-round",
+  "tree-pine",
+  "tree-acacia",
+  "bush-round",
+  "grass-tuft",
+  "rock-round",
+  "rock-boulder",
+] as const
 export type SceneryPiece = (typeof SCENERY_PIECES)[number]
 
 export type SceneryManifest = {

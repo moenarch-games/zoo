@@ -1,0 +1,233 @@
+{
+  "effects": [
+    {
+      "atlas": {
+        "alpha": "straight",
+        "cell": 64,
+        "colorSpace": "srgb",
+        "columns": 4,
+        "filter": "linear",
+        "frameCount": 16,
+        "height": 256,
+        "rowOrder": "top-first",
+        "rows": 4,
+        "transparentRgb": [
+          194,
+          169,
+          121
+        ],
+        "width": 256
+      },
+      "description": "a cream dust puff of overlapping round blobs that swells, then thins and fades out by the last frame",
+      "key": "dust.flipbook",
+      "png": {
+        "byteLength": 16224,
+        "sha256": "0fecee8ea836c9d0e6fc749b604e5f281760ccf6446a392ed39366f19d4bb1ad"
+      },
+      "presets": {
+        "standard": {
+          "count": 10,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.15,
+          "endScale": 1.8,
+          "fadeOut": false,
+          "gravity": [
+            0,
+            -0.3,
+            0
+          ],
+          "lifetime": 0.7,
+          "speed": [
+            0.25,
+            0.6
+          ],
+          "spread": 1.3
+        },
+        "subtle": {
+          "count": 5,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.1,
+          "endScale": 1.5,
+          "fadeOut": false,
+          "gravity": [
+            0,
+            -0.3,
+            0
+          ],
+          "lifetime": 0.6,
+          "speed": [
+            0.2,
+            0.45
+          ],
+          "spread": 1.3
+        }
+      },
+      "role": "dust",
+      "scale": 0.35,
+      "variant": "toy"
+    },
+    {
+      "atlas": {
+        "alpha": "straight",
+        "cell": 64,
+        "colorSpace": "srgb",
+        "columns": 4,
+        "filter": "linear",
+        "frameCount": 16,
+        "height": 256,
+        "rowOrder": "top-first",
+        "rows": 4,
+        "transparentRgb": [
+          52,
+          110,
+          44
+        ],
+        "width": 256
+      },
+      "description": "an opaque two-tone green leaf with a midrib that turns once and flips over, showing its lighter back",
+      "key": "leaf.flipbook",
+      "png": {
+        "byteLength": 8026,
+        "sha256": "4f979e918589a33fa2248ffdba5a9cc898f5b4de4722cd4609614424af777963"
+      },
+      "presets": {
+        "standard": {
+          "count": 6,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.2,
+          "endScale": 1,
+          "fadeOut": true,
+          "gravity": [
+            0,
+            -1.2,
+            0
+          ],
+          "lifetime": 1.2,
+          "speed": [
+            0.6,
+            1.1
+          ],
+          "spread": 0.9
+        },
+        "subtle": {
+          "count": 3,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.15,
+          "endScale": 1,
+          "fadeOut": true,
+          "gravity": [
+            0,
+            -1.2,
+            0
+          ],
+          "lifetime": 1,
+          "speed": [
+            0.5,
+            0.9
+          ],
+          "spread": 0.8
+        }
+      },
+      "role": "leaf",
+      "scale": 0.18,
+      "variant": "toy"
+    },
+    {
+      "atlas": {
+        "alpha": "straight",
+        "cell": 64,
+        "colorSpace": "srgb",
+        "columns": 4,
+        "filter": "linear",
+        "frameCount": 16,
+        "height": 256,
+        "rowOrder": "top-first",
+        "rows": 4,
+        "transparentRgb": [
+          63,
+          143,
+          176
+        ],
+        "width": 256
+      },
+      "description": "a blue water drop that starts stretched, rounds out with a white shine, then breaks into three droplets and fades",
+      "key": "splash.flipbook",
+      "png": {
+        "byteLength": 6405,
+        "sha256": "4e398b721add508167e263027bbf7e7a3457184d72e12508579ab4c2f6c673d5"
+      },
+      "presets": {
+        "standard": {
+          "count": 14,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.05,
+          "endScale": 0.6,
+          "fadeOut": false,
+          "gravity": [
+            0,
+            -6,
+            0
+          ],
+          "lifetime": 0.6,
+          "speed": [
+            1.2,
+            2
+          ],
+          "spread": 0.5
+        },
+        "subtle": {
+          "count": 7,
+          "direction": [
+            0,
+            1,
+            0
+          ],
+          "emitDuration": 0.05,
+          "endScale": 0.6,
+          "fadeOut": false,
+          "gravity": [
+            0,
+            -6,
+            0
+          ],
+          "lifetime": 0.5,
+          "speed": [
+            1,
+            1.6
+          ],
+          "spread": 0.45
+        }
+      },
+      "role": "splash",
+      "scale": 0.12,
+      "variant": "toy"
+    }
+  ],
+  "renderer": "three-d-renderer frame.effects.bursts",
+  "schema": "zoo-effects-descriptor-v1",
+  "units": {
+    "distance": "metre",
+    "time": "second"
+  },
+  "up": "+Y"
+}
