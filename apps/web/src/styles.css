@@ -426,6 +426,44 @@ dd {
   color: #24302b;
 }
 
+/* #98: one row for access, width and plaza, then Rust's preview on the same line. */
+.path-brush {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 4px 0;
+}
+
+.path-brush button {
+  flex: none;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.path-brush button.active {
+  background: #f6d36f;
+  color: #24302b;
+}
+
+.path-brush button[data-path-access="staff"].active {
+  background: #9a9d93;
+}
+
+.path-preview {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 10px;
+  color: #e7f2ee;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-preview.invalid {
+  color: #ffb4a8;
+}
+
 .outline-status {
   display: flex;
   flex: 1;

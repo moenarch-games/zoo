@@ -6,7 +6,7 @@
 //! lasts: it keeps its first occurrence and refreshes its last occurrence and message while the
 //! condition holds, and it disappears as soon as the condition is resolved or its object is
 //! gone. Alerts are saved with the park so their first occurrence survives a reload.
-use super::{FenceSide, GameState, Habitat, Position, care::CareJobState, shape};
+use super::{FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, shape};
 use serde::{Deserialize, Serialize};
 
 /// Welfare below this raises an alert; below the critical line it is critical.
@@ -98,11 +98,11 @@ impl Reach {
 
 impl GameState {
     /// A flood over walkable tiles from every walkable start tile.
-    pub(crate) fn reach_from(&self, starts: &[Position]) -> Reach {
+    pub(crate) fn reach_from(&self, mover: Mover, starts: &[Position]) -> Reach {
         let mut reached = vec![false; self.tiles.len()];
         let mut queue = std::collections::VecDeque::new();
         for start in starts {
-            if self.is_walkable(*start)
+            if self.walkable(mover, *start)
                 && let Some(index) = self.index(start.x, start.y)
                 && !reached[index]
             {
@@ -114,7 +114,7 @@ impl GameState {
             for next in self.neighbors(current) {
                 if let Some(index) = self.index(next.x, next.y)
                     && !reached[index]
-                    && self.is_walkable(next)
+                    && self.walkable(mover, next)
                 {
                     reached[index] = true;
                     queue.push_back(next);
@@ -125,11 +125,11 @@ impl GameState {
     }
 
     pub(crate) fn guest_reach(&self) -> Reach {
-        self.reach_from(&[self.entrance])
+        self.reach_from(Mover::Guest, &[self.entrance])
     }
 
     pub(crate) fn staff_reach(&self) -> Reach {
-        self.reach_from(&self.depot_access_tiles())
+        self.reach_from(Mover::Staff, &self.depot_access_tiles())
     }
 
     /// The habitat's bounding-box centre, or a middle tile when that lies outside its fence.
@@ -417,7 +417,7 @@ impl GameState {
                 );
             }
             if !self
-                .concession_service_tiles(stand.id)
+                .concession_customer_tiles(stand.id)
                 .into_iter()
                 .any(|tile| guests.contains(self, tile))
             {

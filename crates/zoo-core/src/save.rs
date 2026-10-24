@@ -30,7 +30,7 @@
 //! `GameState` only ever reads the current schema. Documents newer than this build are
 //! rejected as `unsupported_version`.
 use super::{
-    GameState, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind, animal,
+    GameState, GuestState, MAX_GUEST_HABITATS_PER_VISIT, PathAccess, Position, TileKind, animal,
     care::CareJobState,
     content::{self, Catalog},
     environment, scenario, shape,
@@ -52,6 +52,7 @@ const MIGRATIONS: &[Migration] = &[
     v6_to_v7,
     drop_content_schema_version,
     v8_add_habitat_environments,
+    v9_classify_paths,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -162,6 +163,20 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 10 (#98) gives every path tile an access class. Earlier parks had only one kind of
+/// path, which guests and staff both walked, so every `"path"` tile becomes a public path.
+fn v9_classify_paths(mut value: Value) -> Result<Value, SaveError> {
+    let tiles = value
+        .get_mut("park")
+        .and_then(|park| park.get_mut("tiles"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "park/tiles: missing or not an array"))?;
+    for tile in tiles.iter_mut().filter(|tile| *tile == "path") {
+        *tile = json!({ "path": "public" });
+    }
     Ok(value)
 }
 
@@ -849,6 +864,22 @@ impl GameState {
                 .find(|step| step.x >= self.width || step.y >= self.height)
             {
                 return Err(format!("guest {id} routes outside the park at {x},{y}"));
+            }
+            // Guests never use staff-only paths (#98): not where they stand, not ahead of them.
+            let staff_only =
+                |x: u32, y: u32| self.tile(x, y) == Some(TileKind::Path(PathAccess::Staff));
+            if staff_only(guest.x, guest.y) {
+                return Err(format!("guest {id} stands on a staff-only path"));
+            }
+            if guest.state != GuestState::Viewing
+                && guest
+                    .route
+                    .get(guest.route_index..)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|step| staff_only(step.x, step.y))
+            {
+                return Err(format!("guest {id} routes over a staff-only path"));
             }
             if guest.visited_habitats.len() > MAX_GUEST_HABITATS_PER_VISIT {
                 return Err(format!("guest {id} visited too many habitats"));

@@ -99,13 +99,55 @@ const GATE_UNREACHABLE: &str =
 #[serde(rename_all = "snake_case")]
 enum TileKind {
     Grass,
-    Path,
+    /// A path tile. Every occupied path tile is its own route-graph node (#98).
+    Path(PathAccess),
     Entrance,
     Habitat(u32),
     Concession(u32),
     AnimalCareDepot,
     /// Authored scenario terrain: never buildable, walkable or demolishable.
     Water,
+}
+
+/// Who may walk a path tile (#98). Guests keep to public paths; every staff job may also use
+/// staff-only service routes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PathAccess {
+    Public,
+    Staff,
+}
+
+impl PathAccess {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "public" => Some(Self::Public),
+            "staff" => Some(Self::Staff),
+            _ => None,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Staff => "staff",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Staff => "staff-only",
+        }
+    }
+}
+
+/// Whose route permissions a path search follows (#98). Guests walk public paths and the
+/// entrance; keepers, janitors and mechanics may also walk staff-only paths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mover {
+    Guest,
+    Staff,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -701,6 +743,10 @@ struct GameState {
 struct WorkCounters {
     guest_updates: u64,
     path_searches: Cell<u64>,
+    /// Path-graph edits this session (#98): building, widening, reclassifying or removing path.
+    topology_revision: u64,
+    /// Guest routes and staff assignments a topology edit invalidated and re-planned.
+    route_invalidations: u64,
 }
 
 impl std::fmt::Debug for WorkCounters {
@@ -953,6 +999,7 @@ impl GameState {
             y: self.depot.y,
         });
         self.path_to_any(
+            Mover::Staff,
             Position {
                 x: self.entrance.x,
                 y: self.entrance.y,
@@ -1399,6 +1446,21 @@ impl GameState {
         })
     }
 
+    /// Every path-graph edit (building, widening, reclassifying or removing path, and the
+    /// buildings that change which tiles are walkable) ends here (#98). It advances the
+    /// topology revision and re-plans exactly the routes and staff assignments the edit broke;
+    /// valid routes are kept so unrelated construction never restarts a journey.
+    fn topology_changed(&mut self) {
+        self.work.topology_revision = self.work.topology_revision.saturating_add(1);
+        self.refresh_guest_routes();
+        self.release_unreachable_janitor_assignments();
+        self.release_unreachable_mechanic_assignments();
+    }
+
+    fn note_route_invalidated(&mut self) {
+        self.work.route_invalidations = self.work.route_invalidations.saturating_add(1);
+    }
+
     fn refresh_guest_routes(&mut self) {
         // Topology edits, not simulation ticks, retry blocked routes. Preserve valid
         // cached routes so unrelated construction does not restart guest journeys.
@@ -1408,16 +1470,18 @@ impl GameState {
             if guest.state == GuestState::Viewing {
                 continue;
             }
-            let still_walkable = guest
-                .route
-                .get(guest.route_index..)
-                .is_some_and(|remaining| {
-                    !remaining.is_empty()
-                        && remaining.iter().all(|position| self.is_walkable(*position))
-                });
+            let remaining = guest.route.get(guest.route_index..).unwrap_or_default();
+            let still_walkable = !remaining.is_empty()
+                && remaining
+                    .iter()
+                    .all(|position| self.walkable(Mover::Guest, *position));
             if still_walkable {
                 continue;
             }
+            if !remaining.is_empty() {
+                self.note_route_invalidated();
+            }
+            let guest = &self.guests[index];
             let start = Position {
                 x: guest.x,
                 y: guest.y,
@@ -1431,6 +1495,7 @@ impl GameState {
                         self.viewing_route_with_occupancy(habitat, start, &viewing_occupancy)
                     }),
                 GuestState::WalkingToExit => self.path_between(
+                    Mover::Guest,
                     start,
                     Position {
                         x: self.entrance.x,
@@ -1469,7 +1534,7 @@ impl GameState {
             let next_index = self.guests[index].route_index + 1;
             if next_index < self.guests[index].route.len() {
                 let position = self.guests[index].route[next_index];
-                if !self.is_walkable(position) {
+                if !self.walkable(Mover::Guest, position) {
                     self.guests[index].route.clear();
                     self.guests[index].route_index = 0;
                     continue;
@@ -1686,7 +1751,7 @@ impl GameState {
                 x: self.entrance.x,
                 y: self.entrance.y,
             };
-            if let Some(route) = self.path_between(start, exit) {
+            if let Some(route) = self.path_between(Mover::Guest, start, exit) {
                 let guest = &mut self.guests[index];
                 guest.state = GuestState::WalkingToExit;
                 guest.route = route;
@@ -1696,7 +1761,7 @@ impl GameState {
     }
 
     fn add_litter(&mut self, position: Position) -> bool {
-        if !self.is_walkable(position)
+        if !self.walkable(Mover::Guest, position)
             || self
                 .litter
                 .iter()
@@ -1759,11 +1824,14 @@ impl GameState {
                     x: task.x,
                     y: task.y,
                 });
-            let reachable =
-                target.is_some_and(|target| self.path_between(janitor_position, target).is_some());
+            let reachable = target.is_some_and(|target| {
+                self.path_between(Mover::Staff, janitor_position, target)
+                    .is_some()
+            });
             if reachable {
                 continue;
             }
+            self.note_route_invalidated();
             let janitor_id = self.janitors[janitor_index].id;
             self.janitors[janitor_index].target_litter_id = None;
             if let Some(task) = self.litter.iter_mut().find(|task| task.id == litter_id)
@@ -1789,6 +1857,7 @@ impl GameState {
                 .filter(|task| task.assigned_janitor_id.is_none())
                 .filter(|task| {
                     self.path_between(
+                        Mover::Staff,
                         janitor_position,
                         Position {
                             x: task.x,
@@ -1842,7 +1911,7 @@ impl GameState {
                 x: self.janitors[janitor_index].x,
                 y: self.janitors[janitor_index].y,
             };
-            let Some(route) = self.path_between(current, target) else {
+            let Some(route) = self.path_between(Mover::Staff, current, target) else {
                 continue;
             };
             if route.len() <= 1 {
@@ -1870,7 +1939,18 @@ impl GameState {
         }
     }
 
+    /// The stand's service points (#98): every adjacent path tile a mechanic may work from,
+    /// public or staff-only, in neighbour order.
     fn concession_service_tiles(&self, concession_id: u32) -> Vec<Position> {
+        self.concession_adjacent(concession_id, Mover::Staff)
+    }
+
+    /// The adjacent public tiles guests buy from.
+    fn concession_customer_tiles(&self, concession_id: u32) -> Vec<Position> {
+        self.concession_adjacent(concession_id, Mover::Guest)
+    }
+
+    fn concession_adjacent(&self, concession_id: u32, mover: Mover) -> Vec<Position> {
         let Some(stand) = self
             .concessions
             .iter()
@@ -1883,7 +1963,7 @@ impl GameState {
             y: stand.y,
         })
         .into_iter()
-        .filter(|position| self.is_walkable(*position))
+        .filter(|position| self.walkable(mover, *position))
         .collect()
     }
 
@@ -1895,11 +1975,37 @@ impl GameState {
         self.concession_service_tiles(concession_id)
             .into_iter()
             .filter_map(|target| {
-                self.path_between(start, target)
+                self.path_between(Mover::Staff, start, target)
                     .map(|route| (route.len(), target))
             })
             .min_by_key(|(route_len, target)| (*route_len, target.y, target.x))
             .map(|(_, target)| target)
+    }
+
+    /// Presentation of a stand's service points; uncounted, so snapshots never add route work.
+    fn concession_service_view(&self, stand_id: u32) -> (Vec<ServicePointView>, Option<Position>) {
+        let depot_access = self.depot_access_tiles();
+        let mut active: Option<(usize, Position)> = None;
+        let points = self
+            .concession_service_tiles(stand_id)
+            .into_iter()
+            .map(|point| {
+                let route = self.search_path(Mover::Staff, point, &depot_access);
+                if let Some(route) = &route {
+                    let key = (route.len(), point.y, point.x);
+                    if active.is_none_or(|(len, best)| key < (len, best.y, best.x)) {
+                        active = Some((route.len(), point));
+                    }
+                }
+                ServicePointView {
+                    x: point.x,
+                    y: point.y,
+                    access: self.path_access(point).map_or("public", PathAccess::key),
+                    reachable: route.is_some(),
+                }
+            })
+            .collect();
+        (points, active.map(|(_, point)| point))
     }
 
     fn ensure_maintenance_task(&mut self, concession_id: u32) -> bool {
@@ -1980,6 +2086,7 @@ impl GameState {
             if reachable {
                 continue;
             }
+            self.note_route_invalidated();
             let mechanic_id = self.mechanics[mechanic_index].id;
             self.mechanics[mechanic_index].target_maintenance_id = None;
             if let Some(task) = self.maintenance.iter_mut().find(|task| task.id == task_id)
@@ -2089,7 +2196,7 @@ impl GameState {
                 self.mechanics[mechanic_index].target_maintenance_id = None;
                 continue;
             };
-            let Some(route) = self.path_between(current, target) else {
+            let Some(route) = self.path_between(Mover::Staff, current, target) else {
                 continue;
             };
             if route.len() <= 1 {
@@ -2220,11 +2327,32 @@ impl GameState {
         neighbors
     }
 
+    /// Whether `position` is a path surface anyone walks on (public or staff-only path, or the
+    /// entrance). Physical questions use this; routes use [`Self::walkable`].
     fn is_walkable(&self, position: Position) -> bool {
         matches!(
             self.tile(position.x, position.y),
-            Some(TileKind::Path | TileKind::Entrance)
+            Some(TileKind::Path(_) | TileKind::Entrance)
         )
+    }
+
+    /// The route permission table (#98): guests walk public paths and the entrance, every staff
+    /// job also walks staff-only paths.
+    fn walkable(&self, mover: Mover, position: Position) -> bool {
+        match self.tile(position.x, position.y) {
+            Some(TileKind::Entrance | TileKind::Path(PathAccess::Public)) => true,
+            Some(TileKind::Path(PathAccess::Staff)) => mover == Mover::Staff,
+            _ => false,
+        }
+    }
+
+    /// The access class of a path tile; the entrance counts as public.
+    fn path_access(&self, position: Position) -> Option<PathAccess> {
+        match self.tile(position.x, position.y) {
+            Some(TileKind::Entrance) => Some(PathAccess::Public),
+            Some(TileKind::Path(access)) => Some(access),
+            _ => None,
+        }
     }
 
     /// Whether a guest at `viewpoint`, looking over the fence on its `side`, sees `target`:
@@ -2376,7 +2504,7 @@ impl GameState {
     ) -> Vec<ViewingSpot> {
         self.fence_outside_tiles(habitat)
             .into_iter()
-            .filter(|(position, _)| self.is_walkable(*position))
+            .filter(|(position, _)| self.walkable(Mover::Guest, *position))
             .map(|(position, side)| {
                 let occupancy = viewing_occupancy
                     .get(&(position.x, position.y))
@@ -2400,7 +2528,7 @@ impl GameState {
             x: guest.x,
             y: guest.y,
         };
-        if !self.is_walkable(position) {
+        if !self.walkable(Mover::Guest, position) {
             return None;
         }
         let side = self.viewing_side_for_position(habitat, position)?;
@@ -2492,7 +2620,7 @@ impl GameState {
             .into_iter()
             .filter(|spot| spot.capacity > 0)
             .filter_map(|spot| {
-                self.path_between(start, spot.position)
+                self.path_between(Mover::Guest, start, spot.position)
                     .map(|route| (spot, route))
             })
             .collect();
@@ -2521,19 +2649,24 @@ impl GameState {
         self.viewing_route_with_occupancy(habitat, start, &viewing_occupancy)
     }
 
-    fn path_between(&self, start: Position, goal: Position) -> Option<Vec<Position>> {
-        if !self.is_walkable(goal) {
+    fn path_between(&self, mover: Mover, start: Position, goal: Position) -> Option<Vec<Position>> {
+        if !self.walkable(mover, goal) {
             return None;
         }
-        self.path_to_any(start, &[goal])
+        self.path_to_any(mover, start, &[goal])
     }
 
-    fn path_to_any(&self, start: Position, goals: &[Position]) -> Option<Vec<Position>> {
-        if !self.is_walkable(start) || goals.is_empty() {
+    fn path_to_any(
+        &self,
+        mover: Mover,
+        start: Position,
+        goals: &[Position],
+    ) -> Option<Vec<Position>> {
+        if !self.walkable(mover, start) || goals.is_empty() {
             return None;
         }
         self.count_path_search();
-        self.search_path(start, goals)
+        self.search_path(mover, start, goals)
     }
 
     fn count_path_search(&self) {
@@ -2543,8 +2676,13 @@ impl GameState {
 
     /// The breadth-first walk shared by every staff and guest route. Presentation queries call
     /// it directly so rendering a snapshot never changes the simulation work counters.
-    fn search_path(&self, start: Position, goals: &[Position]) -> Option<Vec<Position>> {
-        if !self.is_walkable(start) || goals.is_empty() {
+    fn search_path(
+        &self,
+        mover: Mover,
+        start: Position,
+        goals: &[Position],
+    ) -> Option<Vec<Position>> {
+        if !self.walkable(mover, start) || goals.is_empty() {
             return None;
         }
 
@@ -2567,7 +2705,7 @@ impl GameState {
             }
 
             for next in self.neighbors(current) {
-                if !self.is_walkable(next) || previous.contains_key(&(next.x, next.y)) {
+                if !self.walkable(mover, next) || previous.contains_key(&(next.x, next.y)) {
                     continue;
                 }
                 previous.insert((next.x, next.y), Some(current));
@@ -2691,6 +2829,7 @@ impl GameState {
             task.assigned_janitor_id.is_none()
                 && self
                     .path_between(
+                        Mover::Staff,
                         position,
                         Position {
                             x: task.x,
@@ -2704,6 +2843,7 @@ impl GameState {
         }
         let reachable = self.litter.iter().any(|task| {
             self.path_between(
+                Mover::Staff,
                 position,
                 Position {
                     x: task.x,
@@ -2732,6 +2872,7 @@ impl GameState {
         {
             let reachable = self
                 .path_between(
+                    Mover::Staff,
                     Position {
                         x: janitor.x,
                         y: janitor.y,
@@ -2750,6 +2891,7 @@ impl GameState {
         }
         if self.janitors.iter().any(|janitor| {
             self.path_between(
+                Mover::Staff,
                 Position {
                     x: janitor.x,
                     y: janitor.y,
@@ -2911,7 +3053,7 @@ impl GameState {
             for x in 0..self.width {
                 let kind = match self.tile(x, y).unwrap_or(TileKind::Grass) {
                     TileKind::Grass => "grass",
-                    TileKind::Path => "path",
+                    TileKind::Path(_) => "path",
                     TileKind::Entrance => "entrance",
                     TileKind::Habitat(_) => "habitat",
                     TileKind::Concession(_) => "concession",
@@ -2932,6 +3074,10 @@ impl GameState {
                     kind: kind.to_owned(),
                     habitat_id,
                     concession_id,
+                    access: match self.tile(x, y) {
+                        Some(TileKind::Path(access)) => Some(access.key()),
+                        _ => None,
+                    },
                 });
             }
         }
@@ -3028,20 +3174,29 @@ impl GameState {
         let concessions = self
             .concessions
             .iter()
-            .map(|stand| ConcessionView {
-                id: stand.id,
-                x: stand.x,
-                y: stand.y,
-                kind: stand.definition.key.clone(),
-                build_cost_cents: stand.definition.build_cost_cents,
-                price_cents: stand.definition.price_cents,
-                sales_today: stand.sales_today,
-                total_sales: stand.total_sales,
-                total_revenue_cents: stand.total_revenue_cents,
-                condition: stand.condition,
-                service_state: self.concession_service_state(stand).to_owned(),
-                maintenance_status: self.concession_maintenance_status(stand),
+            .map(|stand| {
+                let (service_points, active_service_point) = self.concession_service_view(stand.id);
+                (stand, service_points, active_service_point)
             })
+            .map(
+                |(stand, service_points, active_service_point)| ConcessionView {
+                    customer_tiles: self.concession_customer_tiles(stand.id),
+                    service_points,
+                    active_service_point,
+                    id: stand.id,
+                    x: stand.x,
+                    y: stand.y,
+                    kind: stand.definition.key.clone(),
+                    build_cost_cents: stand.definition.build_cost_cents,
+                    price_cents: stand.definition.price_cents,
+                    sales_today: stand.sales_today,
+                    total_sales: stand.total_sales,
+                    total_revenue_cents: stand.total_revenue_cents,
+                    condition: stand.condition,
+                    service_state: self.concession_service_state(stand).to_owned(),
+                    maintenance_status: self.concession_maintenance_status(stand),
+                },
+            )
             .collect();
 
         let guests = self
@@ -3171,6 +3326,8 @@ struct TileView {
     kind: String,
     habitat_id: Option<u32>,
     concession_id: Option<u32>,
+    /// `"public"` or `"staff"` on path tiles (#98).
+    access: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -3187,6 +3344,22 @@ struct ConcessionView {
     condition: u32,
     service_state: String,
     maintenance_status: String,
+    /// The adjacent public tiles guests buy from (#98).
+    customer_tiles: Vec<Position>,
+    /// Every adjacent path tile a mechanic may work from, with its access class.
+    service_points: Vec<ServicePointView>,
+    /// The service point a mechanic leaving the depot actually uses: the nearest reachable
+    /// one by staff route, ties broken by row then column. `None` when none is reachable.
+    active_service_point: Option<Position>,
+}
+
+#[derive(Serialize)]
+struct ServicePointView {
+    x: u32,
+    y: u32,
+    access: &'static str,
+    /// Whether staff can walk there from the depot.
+    reachable: bool,
 }
 
 #[derive(Serialize)]
@@ -3661,7 +3834,16 @@ impl ZooGame {
                 .ok_or_else(|| format!("{kind}: points must be grid coordinates"))
         };
         Ok(match kind {
-            "build_path_stroke" => self.build_path_stroke(points()?),
+            "build_path_stroke" => {
+                self.build_path_stroke(points()?, number("width")?, text("access")?)
+            }
+            "build_plaza" => self.build_plaza(
+                number("ax")?,
+                number("ay")?,
+                number("bx")?,
+                number("by")?,
+                text("access")?,
+            ),
             "place_habitat_outline" => self.place_habitat_outline(points()?),
             "reshape_habitat" => self.reshape_habitat(number("habitat_id")?, points()?),
             "upgrade_fence" => self.upgrade_fence(number("habitat_id")?, text("fence")?),
@@ -3749,7 +3931,7 @@ impl ZooGame {
 impl ZooGame {
     /// A one-tile path stroke.
     pub fn place_path(&mut self, x: u32, y: u32) -> String {
-        self.build_path_stroke(vec![x, y])
+        self.build_path_stroke(vec![x, y], 1, "public".to_owned())
     }
 }
 
@@ -3896,6 +4078,8 @@ impl ZooGame {
             "simulated_minutes": state.elapsed_minutes,
             "guest_updates": state.work.guest_updates,
             "path_searches": state.work.path_searches.get(),
+            "topology_revision": state.work.topology_revision,
+            "route_invalidations": state.work.route_invalidations,
         });
         self.session.bundle(clock, entities, work)
     }
@@ -3934,18 +4118,33 @@ impl ZooGame {
         result
     }
 
-    /// Previews a path stroke through `points` (flat `x, y` tile pairs) exactly as
+    /// Previews a path stroke through `points` (flat `x, y` tile pairs) with a brush `width`
+    /// tiles wide (1 to 3) and `access` `"public"` or `"staff"`, exactly as
     /// `build_path_stroke` would commit it now.
-    pub fn evaluate_path_stroke(&self, points: Vec<u32>) -> String {
-        serde_json::to_string(&self.state.evaluate_path_stroke(&points))
+    pub fn evaluate_path_stroke(&self, points: Vec<u32>, width: u32, access: String) -> String {
+        serde_json::to_string(&self.state.evaluate_path_stroke(&points, width, &access))
             .expect("construction preview serialization is infallible")
     }
 
     /// Builds one path stroke as a single all-or-nothing transaction.
-    pub fn build_path_stroke(&mut self, points: Vec<u32>) -> String {
-        let args = serde_json::json!({ "points": points });
+    pub fn build_path_stroke(&mut self, points: Vec<u32>, width: u32, access: String) -> String {
+        let args = serde_json::json!({ "points": points, "width": width, "access": access });
         self.command("build_path_stroke", args, |state| {
-            state.build_path_stroke(&points)
+            state.build_path_stroke(&points, width, &access)
+        })
+    }
+
+    /// Previews a rectangular plaza between two corner tiles (#98).
+    pub fn evaluate_plaza(&self, ax: u32, ay: u32, bx: u32, by: u32, access: String) -> String {
+        serde_json::to_string(&self.state.evaluate_plaza(ax, ay, bx, by, &access))
+            .expect("construction preview serialization is infallible")
+    }
+
+    /// Builds a rectangular plaza as a single all-or-nothing transaction.
+    pub fn build_plaza(&mut self, ax: u32, ay: u32, bx: u32, by: u32, access: String) -> String {
+        let args = serde_json::json!({ "ax": ax, "ay": ay, "bx": bx, "by": by, "access": access });
+        self.command("build_plaza", args, |state| {
+            state.build_plaza(ax, ay, bx, by, &access)
         })
     }
 
@@ -4672,7 +4871,7 @@ mod tests {
             ],
             ..GameState::default()
         };
-        state.set_tile(5, ENTRANCE_Y, TileKind::Path);
+        state.set_tile(5, ENTRANCE_Y, TileKind::Path(PathAccess::Public));
 
         let mut guest = Guest {
             id: 1,
@@ -4905,7 +5104,7 @@ mod tests {
         assert!(!disconnected.ok);
         assert_eq!(
             disconnected.message,
-            "Concession stands must touch a guest path"
+            "Concession stands must touch a public guest path"
         );
     }
 
@@ -5012,7 +5211,7 @@ mod tests {
     fn unreachable_litter_remains_backlogged_and_reports_blocked() {
         let mut state = GameState::default();
         assert!(state.hire_janitor().ok);
-        state.set_tile(10, 10, TileKind::Path);
+        state.set_tile(10, 10, TileKind::Path(PathAccess::Public));
         assert!(state.add_litter(Position { x: 10, y: 10 }));
 
         state.advance_janitor_work();
@@ -5153,7 +5352,7 @@ mod tests {
 
         // The north service tile is an isolated path component and appears before the
         // reachable south tile in neighbor order. Mechanics must consider both.
-        state.set_tile(6, ENTRANCE_Y - 2, TileKind::Path);
+        state.set_tile(6, ENTRANCE_Y - 2, TileKind::Path(PathAccess::Public));
         state.concessions[0].condition = 50;
         let concession_id = state.concessions[0].id;
         assert!(state.ensure_maintenance_task(concession_id));
@@ -5185,7 +5384,7 @@ mod tests {
     fn unreachable_maintenance_remains_backlogged_and_reports_blocked() {
         let mut state = GameState::default();
         assert!(state.hire_mechanic().ok);
-        state.set_tile(10, 10, TileKind::Path);
+        state.set_tile(10, 10, TileKind::Path(PathAccess::Public));
         assert!(state.place_concession(10, 9, "drink").ok);
         state.concessions[0].condition = 50;
         assert!(state.ensure_maintenance_task(state.concessions[0].id));
@@ -6309,5 +6508,8 @@ mod tests {
     }
     mod economic_boundary_acceptance {
         include!("economic_boundary_acceptance_tests.rs");
+    }
+    mod circulation {
+        include!("circulation_tests.rs");
     }
 }

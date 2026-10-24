@@ -59,7 +59,7 @@ fn row(x0: u32, x1: u32, y: u32) -> Vec<u32> {
 /// y 8..=12, staffed and fed. Their service gates face the path on the north row.
 fn two_habitats() -> ZooGame {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![1, 7, 15, 7]));
+    ok(game.build_path_stroke(vec![1, 7, 15, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(3, 8, 7, 12));
     ok(game.place_habitat_rect(9, 8, 13, 12));
     ok(game.hire_keeper());

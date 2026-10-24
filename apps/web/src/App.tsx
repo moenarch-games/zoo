@@ -23,6 +23,7 @@ import type {
   Objective,
   OverlayKind,
   OverlayView,
+  PathAccess,
   PlacementEvaluation,
   Point,
   ScenarioState,
@@ -153,7 +154,7 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
   }
   switch (tool) {
     case "path":
-      return "Drag across tiles to paint one path stroke; release to build it all or nothing · Esc cancels · Ctrl+Z undoes."
+      return "Drag to paint a path stroke (or drag a plaza rectangle) · public paths are for guests, staff-only paths for keepers, janitors and mechanics · painting over the other kind reclassifies it · Esc cancels · Ctrl+Z undoes."
     case "habitat":
       return "Rectangle: drag corner to corner, or tap to place the size below · Outline: drag or tap along grid corners and close back at the first · Esc cancels · Ctrl+Z undoes."
     case "reshape":
@@ -231,6 +232,13 @@ export default function App() {
   const strokeRef = useRef<Point[]>([])
   const [stroke, setStroke] = useState<Point[]>([])
   const [habitatSize, setHabitatSize] = useState({ width: 4, height: 3 })
+  // The path brush (#98): a stroke 1–3 tiles wide or a dragged plaza rectangle, public or
+  // staff-only. Rust plans the footprint, price and reclassification.
+  const [pathBrush, setPathBrush] = useState<{
+    shape: "stroke" | "plaza"
+    width: number
+    access: PathAccess
+  }>({ shape: "stroke", width: 1, access: "public" })
   // A fence outline in progress: grid corners in drawing order, kept across taps and drags
   // until it closes on its first corner; Rust joins, closes and plans it (#95).
   const [habitatShape, setHabitatShape] = useState<"rect" | "outline">("rect")
@@ -544,7 +552,9 @@ export default function App() {
     if (tool !== "zone") {
       setZoneEdit(null)
     }
-  }, [clearFenceGesture, clearOutline, clearStroke, habitatShape, tool])
+  }, [clearFenceGesture, clearOutline, clearStroke, habitatShape, pathBrush.shape, tool])
+
+  const plazaMode = tool === "path" && pathBrush.shape === "plaza"
 
   useEffect(() => {
     setZoneEdit(null)
@@ -713,20 +723,38 @@ export default function App() {
       return null
     }
     let text: string | undefined
-    if (tool === "path") {
+    if (plazaMode) {
+      const a = fenceStart ?? hoveredTile
+      const b = fenceEnd ?? hoveredTile
+      if (!a || !b) {
+        return null
+      }
+      text = callGame(() => game.evaluate_plaza(a.x, a.y, b.x, b.y, pathBrush.access))
+    } else if (tool === "path") {
       const tiles = stroke.length > 0 || !hoveredTile ? stroke : [hoveredTile]
       if (tiles.length === 0) {
         return null
       }
       const points = Uint32Array.from(tiles.flatMap((tile) => [tile.x, tile.y]))
-      text = callGame(() => game.evaluate_path_stroke(points))
+      text = callGame(() => game.evaluate_path_stroke(points, pathBrush.width, pathBrush.access))
     } else if (tool.startsWith("facility:") && hoveredTile) {
       text = callGame(() => game.evaluate_concession(hoveredTile.x, hoveredTile.y, tool.slice(9)))
     } else if (tool === "bulldoze" && hoveredTile) {
       text = callGame(() => game.evaluate_demolition(hoveredTile.x, hoveredTile.y))
     }
     return text === undefined ? null : (JSON.parse(text) as ConstructionPreview)
-  }, [callGame, hoveredTile, snapshot, stroke, tool])
+  }, [
+    callGame,
+    fenceEnd,
+    fenceStart,
+    hoveredTile,
+    pathBrush.access,
+    pathBrush.width,
+    plazaMode,
+    snapshot,
+    stroke,
+    tool,
+  ])
 
   // Habitat design (#97): the stroke (or hovered tile) previewed through the same Rust plan
   // the terrain, elevation or furnishing command runs on release.
@@ -897,10 +925,10 @@ export default function App() {
   const onTileDown = (tile: Point) => {
     if (outlineMode) {
       extendOutline(tile)
-    } else if (tool === "path" || tool === "terrain") {
+    } else if ((tool === "path" && !plazaMode) || tool === "terrain") {
       strokeRef.current = []
       extendStroke(tile)
-    } else if (tool === "habitat" || tool === "zone") {
+    } else if (tool === "habitat" || tool === "zone" || plazaMode) {
       fenceStartRef.current = tile
       fenceEndRef.current = tile
       setFenceStart(tile)
@@ -911,6 +939,9 @@ export default function App() {
   const onTileDrag = (tile: Point) => {
     if (outlineMode) {
       extendOutline(tile)
+    } else if (plazaMode && fenceStartRef.current) {
+      fenceEndRef.current = tile
+      setFenceEnd(tile)
     } else if (tool === "path") {
       extendStroke(tile)
     } else if (tool === "terrain") {
@@ -1007,11 +1038,22 @@ export default function App() {
       finishZoneGesture(commit)
       return
     }
+    if (plazaMode) {
+      const start = fenceStartRef.current
+      const end = fenceEndRef.current
+      clearFenceGesture()
+      if (commit && game && start && end) {
+        perform(() => game.build_plaza(start.x, start.y, end.x, end.y, pathBrush.access))
+      } else if (!commit) {
+        inform("Plaza cancelled · nothing was built.")
+      }
+      return
+    }
     if (tool === "path") {
       const points = Uint32Array.from(strokeRef.current.flatMap((tile) => [tile.x, tile.y]))
       clearStroke()
       if (commit && game && points.length > 0) {
-        perform(() => game.build_path_stroke(points))
+        perform(() => game.build_path_stroke(points, pathBrush.width, pathBrush.access))
       } else if (!commit) {
         inform("Path stroke cancelled · nothing was built.")
       }
@@ -2953,6 +2995,33 @@ export default function App() {
                       <dt>Maintenance</dt>
                       <dd>{selectedConcession.maintenance_status}</dd>
                     </div>
+                    <div
+                      className={selectedConcession.customer_tiles.length > 0 ? "" : "zone-warning"}
+                    >
+                      <dt>Customers</dt>
+                      <dd data-stand-customers>
+                        {selectedConcession.customer_tiles.length > 0
+                          ? `Public side ${selectedConcession.customer_tiles
+                              .map((tile) => `${tile.x},${tile.y}`)
+                              .join(" · ")}`
+                          : "No public path: guests cannot buy here"}
+                      </dd>
+                    </div>
+                    <div className={selectedConcession.active_service_point ? "" : "zone-warning"}>
+                      <dt>Service entrance</dt>
+                      <dd data-stand-service>
+                        {selectedConcession.active_service_point
+                          ? (() => {
+                              const used = selectedConcession.active_service_point
+                              const point = selectedConcession.service_points.find(
+                                (candidate) => candidate.x === used.x && candidate.y === used.y,
+                              )
+                              const others = selectedConcession.service_points.length - 1
+                              return `${used.x},${used.y} via ${point?.access === "staff" ? "staff-only path" : "public path"}${others > 0 ? ` · ${others} alternative${others === 1 ? "" : "s"}` : ""}`
+                            })()
+                          : "No service point reachable from the depot"}
+                      </dd>
+                    </div>
                     <div>
                       <dt>Price</dt>
                       <dd>{money(selectedConcession.price_cents)}</dd>
@@ -3030,6 +3099,53 @@ export default function App() {
           <div className="tool-hint">{toolHint(tool, snapshot)}</div>
           {/* One row: the shape toggle, then the outline status or the rectangle size. */}
           <div className="habitat-tools">
+            {tool === "path" && (
+              <div className="path-brush" role="group" aria-label="Path brush">
+                {(["public", "staff"] as const).map((access) => (
+                  <button
+                    key={access}
+                    data-path-access={access}
+                    className={pathBrush.access === access ? "active" : ""}
+                    aria-pressed={pathBrush.access === access}
+                    onClick={() => setPathBrush((current) => ({ ...current, access }))}
+                  >
+                    {access === "public" ? "Public" : "Staff only"}
+                  </button>
+                ))}
+                {([1, 2, 3] as const).map((width) => (
+                  <button
+                    key={width}
+                    data-path-width={width}
+                    className={
+                      pathBrush.shape === "stroke" && pathBrush.width === width ? "active" : ""
+                    }
+                    aria-pressed={pathBrush.shape === "stroke" && pathBrush.width === width}
+                    aria-label={`Path width ${width}`}
+                    onClick={() =>
+                      setPathBrush((current) => ({ ...current, shape: "stroke", width }))
+                    }
+                  >
+                    {width}×
+                  </button>
+                ))}
+                <button
+                  data-path-shape="plaza"
+                  className={pathBrush.shape === "plaza" ? "active" : ""}
+                  aria-pressed={pathBrush.shape === "plaza"}
+                  onClick={() => setPathBrush((current) => ({ ...current, shape: "plaza" }))}
+                >
+                  ▭ Plaza
+                </button>
+                {constructionPreview && (
+                  <span
+                    className={`path-preview ${constructionPreview.ok ? "valid" : "invalid"}`}
+                    role="status"
+                  >
+                    {constructionPreview.message}
+                  </span>
+                )}
+              </div>
+            )}
             {tool === "habitat" && (
               <div className="habitat-shape" role="group" aria-label="Fence shape">
                 {(["rect", "outline"] as const).map((shape) => (

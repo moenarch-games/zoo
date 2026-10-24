@@ -108,13 +108,13 @@ export async function runConstructionAcceptance(context) {
   await moveHeld(from, to)
   await waitFor(
     "the path stroke preview",
-    `document.querySelector('.park-tooltip')?.textContent.includes('5 new path tiles') ?? false`,
+    `document.querySelector('.park-tooltip')?.textContent.includes('5 new public path tiles') ?? false`,
   )
   const quoted = await tooltipCents()
   await screenshot("test-results/construction-path-preview.png")
   await release(to)
   assert(
-    (await message()).includes("Path built · 5 new tiles"),
+    (await message()).includes("Path built · 5 new public path tiles"),
     "#92: stroke did not build as one transaction",
     await message(),
   )
@@ -163,7 +163,7 @@ export async function runConstructionAcceptance(context) {
     if (cycle === 0) assert(await clickButton("Undo"), "#92: undo button missing")
     else await chord("z", CTRL)
     assert(
-      (await message()).startsWith("Undid 5 path tiles"),
+      (await message()).startsWith("Undid 5 public path tiles"),
       "#92: undo did not reverse the stroke",
       await message(),
     )
@@ -174,7 +174,7 @@ export async function runConstructionAcceptance(context) {
     if (cycle === 0) await chord("z", CTRL | SHIFT)
     else assert(await clickButton("Redo"), "#92: redo button missing")
     assert(
-      (await message()).startsWith("Redid 5 path tiles"),
+      (await message()).startsWith("Redid 5 public path tiles"),
       "#92: redo did not rebuild the stroke",
       await message(),
     )
@@ -270,7 +270,7 @@ export async function runConstructionAcceptance(context) {
   const phoneCash = await cashCents()
   await swipe(await tile(10, 7), await tile(13, 7))
   assert(
-    (await message()).includes("Path built · 4 new tiles"),
+    (await message()).includes("Path built · 4 new public path tiles"),
     "#92: touch stroke did not build",
     await message(),
   )
