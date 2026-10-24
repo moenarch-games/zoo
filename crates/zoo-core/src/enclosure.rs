@@ -311,7 +311,7 @@ impl GameState {
             self.neighbors(*tile).into_iter().any(|neighbor| {
                 matches!(
                     self.tile(neighbor.x, neighbor.y),
-                    Some(TileKind::Path | TileKind::Entrance)
+                    Some(TileKind::Path(_) | TileKind::Entrance)
                 )
             })
         });
@@ -412,7 +412,7 @@ impl GameState {
     ) -> bool {
         self.gate_access_tile(segment)
             .is_some_and(|access| match self.tile(access.x, access.y) {
-                Some(TileKind::Grass | TileKind::Path | TileKind::Entrance) => true,
+                Some(TileKind::Grass | TileKind::Path(_) | TileKind::Entrance) => true,
                 Some(TileKind::Habitat(id)) => id == habitat_id && !shape::contains(tiles, access),
                 _ => false,
             })

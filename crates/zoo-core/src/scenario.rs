@@ -695,7 +695,9 @@ fn rating(value: Option<u32>) -> Result<Option<u32>, ActionResult> {
 impl GameState {
     fn apply_setup_step(&mut self, step: &SetupStep) -> ActionResult {
         match step {
-            SetupStep::Path { from, to } => self.build_path_stroke(&[from.x, from.y, to.x, to.y]),
+            SetupStep::Path { from, to } => {
+                self.build_path_stroke(&[from.x, from.y, to.x, to.y], 1, "public")
+            }
             SetupStep::Habitat { from, to } => self.place_habitat_rect(from.x, from.y, to.x, to.y),
             SetupStep::ServiceGate {
                 habitat,

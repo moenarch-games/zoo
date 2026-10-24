@@ -4,7 +4,7 @@
 //! segment whose outside tile is nearest the animal-care depot by path, falling back to the
 //! first usable segment clockwise from the north-west corner. The tile outside the gate stays
 //! unbuildable; losing the path to it is allowed and only blocks care ("Gate unreachable").
-use super::{ActionResult, FenceSegment, FenceSide, GameState, Habitat, Position, TileKind};
+use super::{ActionResult, FenceSegment, FenceSide, GameState, Habitat, Mover, Position, TileKind};
 use serde::Serialize;
 
 pub(crate) fn gate_access_message(habitat_id: u32) -> String {
@@ -55,7 +55,7 @@ impl GameState {
         self.gate_access_tile(segment).is_some_and(|access| {
             matches!(
                 self.tile(access.x, access.y),
-                Some(TileKind::Grass | TileKind::Path | TileKind::Entrance)
+                Some(TileKind::Grass | TileKind::Path(_) | TileKind::Entrance)
             )
         })
     }
@@ -81,7 +81,7 @@ impl GameState {
     pub(crate) fn service_gate_reachable(&self, habitat: &Habitat) -> bool {
         self.gate_access_tile(habitat.service_gate)
             .is_some_and(|access| {
-                self.search_path(access, &self.depot_access_tiles())
+                self.search_path(Mover::Staff, access, &self.depot_access_tiles())
                     .is_some()
             })
     }
@@ -96,7 +96,7 @@ impl GameState {
             .filter(|(_, segment)| self.gate_segment_usable(**segment))
             .filter_map(|(order, segment)| {
                 let access = self.gate_access_tile(*segment)?;
-                let route = self.path_to_any(access, &depot_access)?;
+                let route = self.path_to_any(Mover::Staff, access, &depot_access)?;
                 Some((route.len(), order, *segment))
             })
             .min_by_key(|(length, order, _)| (*length, *order))

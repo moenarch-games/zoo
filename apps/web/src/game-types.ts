@@ -36,6 +36,17 @@ export type Tile = Point & {
   kind: "grass" | "path" | "entrance" | "habitat" | "concession" | "water"
   habitat_id: number | null
   concession_id: number | null
+  /** Who may walk a path tile (#98); null on every other tile. */
+  access: PathAccess | null
+}
+
+/** Guests keep to public paths; every staff job may also use staff-only paths (#98). */
+export type PathAccess = "public" | "staff"
+
+export type ServicePoint = Point & {
+  access: PathAccess
+  /** Whether staff can walk there from the depot. */
+  reachable: boolean
 }
 
 export type CareCategory = "feeding" | "cleaning" | "inspection" | "enrichment"
@@ -176,6 +187,12 @@ export type Concession = Point & {
   condition: number
   service_state: "healthy" | "degraded" | "failed"
   maintenance_status: string
+  /** The adjacent public tiles guests buy from. */
+  customer_tiles: Point[]
+  /** Every adjacent path tile a mechanic may work from. */
+  service_points: ServicePoint[]
+  /** The service point a mechanic from the depot actually uses. */
+  active_service_point: Point | null
 }
 
 export type Keeper = Point & {

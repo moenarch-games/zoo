@@ -6,7 +6,7 @@
 //! never changes the park. The daily summary rolls up today's headline numbers together with
 //! the entities and ledger lines each number is made of, so a drill-down always reconciles.
 use super::{
-    GameState, Habitat, Position, TileKind, alerts::Subject, care::CareJobState,
+    GameState, Habitat, PathAccess, Position, TileKind, alerts::Subject, care::CareJobState,
     construction::dollars,
 };
 use serde::Serialize;
@@ -144,9 +144,9 @@ impl GameState {
                 (
                     "Access",
                     legend([
-                        "Connected to the entrance",
+                        "Connected (public to the entrance, staff-only to the depot)",
                         "Service gate cut off from the depot",
-                        "Guests cannot reach",
+                        "Not connected",
                     ]),
                 )
             }
@@ -273,40 +273,60 @@ impl GameState {
         }
     }
 
+    /// Public paths are graded by guest reach from the entrance, staff-only paths by staff
+    /// reach from the depot (#98); the cell value is 1 on staff-only tiles so the map can tell
+    /// the two networks apart.
     fn access_overlay(&self, out: &mut Builder) {
         let guests = self.guest_reach();
+        let staff = self.staff_reach();
+        let mut public_cut_off = Vec::new();
+        let mut staff_cut_off = Vec::new();
         for y in 0..self.height {
             for x in 0..self.width {
                 let position = Position { x, y };
-                if self.is_walkable(position) {
-                    let level = if guests.contains(self, position) {
-                        Level::Good
-                    } else {
-                        Level::Bad
-                    };
-                    out.cell(position, level, None);
+                match self.path_access(position) {
+                    Some(PathAccess::Public) => {
+                        let reached = guests.contains(self, position);
+                        if !reached && self.tile(x, y) != Some(TileKind::Entrance) {
+                            public_cut_off.push(position);
+                        }
+                        out.cell(
+                            position,
+                            if reached { Level::Good } else { Level::Bad },
+                            None,
+                        );
+                    }
+                    Some(PathAccess::Staff) => {
+                        let reached = staff.contains(self, position);
+                        if !reached {
+                            staff_cut_off.push(position);
+                        }
+                        let level = if reached { Level::Good } else { Level::Bad };
+                        out.cell(position, level, Some(1));
+                    }
+                    None => {}
                 }
             }
         }
-        let cut_off: Vec<Position> = self
-            .tiles
-            .iter()
-            .enumerate()
-            .filter(|(_, tile)| matches!(tile, TileKind::Path))
-            .map(|(index, _)| Position {
-                x: index as u32 % self.width,
-                y: index as u32 / self.width,
-            })
-            .filter(|position| !guests.contains(self, *position))
-            .collect();
-        if let Some(first) = cut_off.first() {
+        if let Some(first) = public_cut_off.first() {
             out.item(
                 Level::Bad,
                 Subject::Paths,
                 *first,
                 format!(
-                    "{} path tile(s) are not connected to the entrance",
-                    cut_off.len()
+                    "{} public path tile(s) are not connected to the entrance",
+                    public_cut_off.len()
+                ),
+            );
+        }
+        if let Some(first) = staff_cut_off.first() {
+            out.item(
+                Level::Bad,
+                Subject::Paths,
+                *first,
+                format!(
+                    "{} staff-only path tile(s) are not connected to the depot",
+                    staff_cut_off.len()
                 ),
             );
         }
@@ -345,7 +365,7 @@ impl GameState {
                 y: stand.y,
             };
             let reachable = self
-                .concession_service_tiles(stand.id)
+                .concession_customer_tiles(stand.id)
                 .into_iter()
                 .any(|tile| guests.contains(self, tile));
             let level = if reachable { Level::Good } else { Level::Bad };
@@ -367,7 +387,7 @@ impl GameState {
         let staff = self.staff_reach();
         for y in 0..self.height {
             for x in 0..self.width {
-                if matches!(self.tile(x, y), Some(TileKind::Path)) {
+                if matches!(self.tile(x, y), Some(TileKind::Path(_))) {
                     out.cell(Position { x, y }, Level::Good, None);
                 }
             }

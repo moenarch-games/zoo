@@ -22,16 +22,18 @@
 //!   are recorded commands, so session replay reproduces them exactly.
 use super::{
     ActionResult, Concession, ConcessionKind, ExpenseCategory, FenceSegment, GameState, Habitat,
-    HabitatOrientation, PlacementEvaluation, Position, TileKind, content, content::FenceType,
-    gate::gate_access_message, shape,
+    HabitatOrientation, Mover, PathAccess, PlacementEvaluation, Position, TileKind, content,
+    content::FenceType, gate::gate_access_message, normalized_rect, shape,
 };
 use serde::Serialize;
 use std::collections::HashSet;
 
 /// Undoable transactions kept per session.
 pub(crate) const HISTORY_LIMIT: usize = 16;
-/// The largest path stroke one gesture may build.
+/// The largest path stroke or plaza one gesture may build.
 pub(crate) const MAX_STROKE_TILES: usize = 256;
+/// The widest path brush (#98).
+pub(crate) const MAX_PATH_WIDTH: u32 = 3;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct History {
@@ -63,7 +65,12 @@ struct Transaction {
 
 #[derive(Clone, Debug)]
 enum Change {
-    BuildPaths(Vec<Position>),
+    /// New path on former grass plus path of the other class reclassified to `access`.
+    BuildPaths {
+        built: Vec<Position>,
+        reclassified: Vec<Position>,
+        access: PathAccess,
+    },
     BuildConcession {
         id: u32,
         x: u32,
@@ -84,7 +91,7 @@ enum Change {
         before: Box<FenceType>,
         after: Box<FenceType>,
     },
-    RemovePath(Position),
+    RemovePath(Position, PathAccess),
     RemoveConcession(Box<Concession>),
     RemoveHabitat(Box<Habitat>),
 }
@@ -99,23 +106,23 @@ struct Enclosure {
 /// What committing a construction action would do, computed by the same plan the commit uses.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ConstructionPreview {
-    ok: bool,
+    pub(crate) ok: bool,
     /// False when committing would leave the park as it is (an existing path, an empty tile).
-    changes: bool,
-    message: String,
+    pub(crate) changes: bool,
+    pub(crate) message: String,
     action: &'static str,
-    cost_cents: i64,
+    pub(crate) cost_cents: i64,
     /// The tiles the action builds on or clears.
-    tiles: Vec<Position>,
+    pub(crate) tiles: Vec<Position>,
     /// The tiles that make a rejected action fail.
     blocked_tiles: Vec<Position>,
-    affected: Vec<Affected>,
+    pub(crate) affected: Vec<Affected>,
     /// Whether the committed action enters the undo history.
     undoable: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct Affected {
+pub(crate) struct Affected {
     kind: &'static str,
     id: Option<u32>,
     effect: String,
@@ -184,7 +191,7 @@ struct StepView {
 
 #[derive(Clone, Copy, Debug)]
 enum Target {
-    Path(Position),
+    Path(Position, PathAccess),
     Concession(u32),
     Habitat(u32),
 }
@@ -197,6 +204,84 @@ pub(crate) fn dollars(cents: i64) -> String {
     } else {
         format!("{sign}${}.{:02}", cents / 100, cents % 100)
     }
+}
+
+/// What a path transaction changes, split so undo restores each tile's previous state.
+struct PathPlan {
+    built: Vec<Position>,
+    reclassified: Vec<Position>,
+    access: PathAccess,
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+impl PathAccess {
+    fn other(self) -> Self {
+        match self {
+            Self::Public => Self::Staff,
+            Self::Staff => Self::Public,
+        }
+    }
+}
+
+/// The tiles a `width`-wide brush covers along a stroke (#98): a `width`×`width` square on
+/// every stroke tile, extending right and down for even widths, clipped at the park edge.
+/// Ordered by stroke, then row, then column, without repeats.
+fn brush_footprint(points: &[u32], width: u32, park: &GameState) -> Result<Vec<Position>, String> {
+    if !(1..=MAX_PATH_WIDTH).contains(&width) {
+        return Err(format!("Path width must be 1 to {MAX_PATH_WIDTH} tiles"));
+    }
+    let stroke = stroke_tiles(points)?;
+    if width == 1 {
+        return Ok(stroke);
+    }
+    let before = i64::from((width - 1) / 2);
+    let after = i64::from(width / 2);
+    let mut seen = HashSet::new();
+    let mut tiles = Vec::new();
+    for centre in stroke {
+        if park.tile(centre.x, centre.y).is_none() {
+            // The centre line leaving the park still rejects the stroke.
+            if seen.insert((centre.x, centre.y)) {
+                tiles.push(centre);
+            }
+            continue;
+        }
+        for dy in -before..=after {
+            for dx in -before..=after {
+                let (Ok(x), Ok(y)) = (
+                    u32::try_from(i64::from(centre.x) + dx),
+                    u32::try_from(i64::from(centre.y) + dy),
+                ) else {
+                    continue;
+                };
+                if park.tile(x, y).is_some() && seen.insert((x, y)) {
+                    tiles.push(Position { x, y });
+                }
+            }
+        }
+    }
+    if tiles.len() > MAX_STROKE_TILES {
+        return Err(format!(
+            "A path stroke may cover at most {MAX_STROKE_TILES} tiles"
+        ));
+    }
+    Ok(tiles)
+}
+
+/// The row-major tiles of a plaza rectangle between two corner tiles (#98).
+fn plaza_footprint(ax: u32, ay: u32, bx: u32, by: u32) -> Result<Vec<Position>, String> {
+    let (x, y, width, height) = normalized_rect(ax, ay, bx, by);
+    if u64::from(width) * u64::from(height) > MAX_STROKE_TILES as u64 {
+        return Err(format!(
+            "A plaza may cover at most {MAX_STROKE_TILES} tiles"
+        ));
+    }
+    Ok((y..y + height)
+        .flat_map(|row| (x..x + width).map(move |column| Position { x: column, y: row }))
+        .collect())
 }
 
 /// The 4-connected tiles a stroke through `points` (flat `x, y` pairs) covers, in order and
@@ -318,33 +403,107 @@ impl GameState {
 
     // --- Paths -----------------------------------------------------------------------------
 
-    pub(crate) fn evaluate_path_stroke(&self, points: &[u32]) -> ConstructionPreview {
-        self.plan_path_stroke(points)
+    /// Previews a path stroke `width` tiles wide (#98) exactly as the commit would build it.
+    pub(crate) fn evaluate_path_stroke(
+        &self,
+        points: &[u32],
+        width: u32,
+        access: &str,
+    ) -> ConstructionPreview {
+        self.plan_paths("stroke", brush_footprint(points, width, self), access)
+            .0
     }
 
-    fn plan_path_stroke(&self, points: &[u32]) -> ConstructionPreview {
-        let stroke = match stroke_tiles(points) {
-            Ok(stroke) => stroke,
-            Err(message) => {
-                return ConstructionPreview::rejected("path", message, Vec::new(), Vec::new());
-            }
+    /// Previews a rectangular plaza between two corner tiles (#98).
+    pub(crate) fn evaluate_plaza(
+        &self,
+        ax: u32,
+        ay: u32,
+        bx: u32,
+        by: u32,
+        access: &str,
+    ) -> ConstructionPreview {
+        self.plan_paths("plaza", plaza_footprint(ax, ay, bx, by), access)
+            .0
+    }
+
+    pub(crate) fn build_path_stroke(
+        &mut self,
+        points: &[u32],
+        width: u32,
+        access: &str,
+    ) -> ActionResult {
+        let planned = self.plan_paths("stroke", brush_footprint(points, width, self), access);
+        self.commit_paths(planned)
+    }
+
+    pub(crate) fn build_plaza(
+        &mut self,
+        ax: u32,
+        ay: u32,
+        bx: u32,
+        by: u32,
+        access: &str,
+    ) -> ActionResult {
+        let planned = self.plan_paths("plaza", plaza_footprint(ax, ay, bx, by), access);
+        self.commit_paths(planned)
+    }
+
+    /// One path transaction over a whole footprint (a widened stroke or a plaza): grass becomes
+    /// new path at the catalog tile price, path of the other access class is reclassified for
+    /// free, and anything else rejects the whole footprint. Every new tile is its own route
+    /// node, so width adds real traversable tiles and never multiplies a tile's capacity.
+    fn plan_paths(
+        &self,
+        shape: &'static str,
+        footprint: Result<Vec<Position>, String>,
+        access: &str,
+    ) -> (ConstructionPreview, Option<PathPlan>) {
+        let reject = |message: String, tiles: Vec<Position>, blocked: Vec<Position>| {
+            (
+                ConstructionPreview::rejected("path", message, tiles, blocked),
+                None,
+            )
         };
-        let mut new_tiles = Vec::new();
+        let Some(access) = PathAccess::parse(access) else {
+            return reject(
+                "Path access must be public or staff".to_owned(),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+        let footprint = match footprint {
+            Ok(footprint) => footprint,
+            Err(message) => return reject(message, Vec::new(), Vec::new()),
+        };
+        let mut built = Vec::new();
+        let mut reclassified = Vec::new();
         let mut blocked = Vec::new();
         let mut reason = None;
-        for &tile in &stroke {
+        for &tile in &footprint {
             let problem = match self.tile(tile.x, tile.y) {
-                None => Some("The stroke leaves the park"),
-                Some(TileKind::Path | TileKind::Entrance) => None,
+                None => Some(if shape == "plaza" {
+                    "The plaza leaves the park"
+                } else {
+                    "The stroke leaves the park"
+                }),
+                Some(TileKind::Entrance) => None,
+                Some(TileKind::Path(current)) if current == access => None,
+                Some(TileKind::Path(_)) => {
+                    reclassified.push(tile);
+                    (access == PathAccess::Staff
+                        && self.guests.iter().any(|g| g.x == tile.x && g.y == tile.y))
+                    .then_some("A guest is standing on that path tile")
+                }
                 Some(TileKind::Grass) => {
-                    new_tiles.push(tile);
+                    built.push(tile);
                     None
                 }
-                Some(TileKind::Water) => Some("Water blocks the stroke"),
-                Some(TileKind::Habitat(_)) => Some("A habitat blocks the stroke"),
-                Some(TileKind::Concession(_)) => Some("A concession stand blocks the stroke"),
+                Some(TileKind::Water) => Some("Water blocks the path"),
+                Some(TileKind::Habitat(_)) => Some("A habitat blocks the path"),
+                Some(TileKind::Concession(_)) => Some("A concession stand blocks the path"),
                 Some(TileKind::AnimalCareDepot) => {
-                    Some("The central animal-care depot blocks the stroke")
+                    Some("The central animal-care depot blocks the path")
                 }
             };
             if let Some(problem) = problem {
@@ -353,75 +512,121 @@ impl GameState {
             }
         }
         if let Some(reason) = reason {
-            return ConstructionPreview::rejected(
-                "path",
-                format!("{reason} · nothing is built"),
-                new_tiles,
-                blocked,
+            return reject(format!("{reason} · nothing is built"), built, blocked);
+        }
+        if built.is_empty() && reclassified.is_empty() {
+            return (
+                ConstructionPreview::unchanged("path", "Path already exists"),
+                None,
             );
         }
-        if new_tiles.is_empty() {
-            return ConstructionPreview::unchanged("path", "Path already exists");
-        }
-        let cost = self.path_tiles_cost(new_tiles.len());
+        let cost = self.path_tiles_cost(built.len());
         if self.cash_cents < cost {
-            return ConstructionPreview::rejected(
-                "path",
-                format!("Not enough cash: this stroke costs {}", dollars(cost)),
-                new_tiles,
+            return reject(
+                format!("Not enough cash: this {shape} costs {}", dollars(cost)),
+                built,
                 Vec::new(),
             );
         }
-        let count = new_tiles.len();
-        ConstructionPreview::planned(
-            "path",
-            format!(
-                "{count} new path tile{} · {}",
-                if count == 1 { "" } else { "s" },
+        let mut message = Vec::new();
+        if !built.is_empty() {
+            message.push(format!(
+                "{} new {} path tile{} · {}",
+                built.len(),
+                access.label(),
+                plural(built.len()),
                 dollars(cost)
-            ),
-            cost,
-            new_tiles,
+            ));
+        }
+        if !reclassified.is_empty() {
+            message.push(format!(
+                "{} tile{} become{} {} (free)",
+                reclassified.len(),
+                plural(reclassified.len()),
+                if reclassified.len() == 1 { "s" } else { "" },
+                access.label()
+            ));
+        }
+        let mut tiles = built.clone();
+        tiles.extend(&reclassified);
+        let mut plan = ConstructionPreview::planned("path", message.join(" · "), cost, tiles);
+        if access == PathAccess::Staff {
+            plan.affected = self.public_access_lost(&reclassified);
+        }
+        (
+            plan,
+            Some(PathPlan {
+                built,
+                reclassified,
+                access,
+            }),
         )
     }
 
-    pub(crate) fn build_path_stroke(&mut self, points: &[u32]) -> ActionResult {
-        let plan = self.plan_path_stroke(points);
-        if !plan.ok {
-            return ActionResult::error(plan.message);
+    /// Stands that would lose their last public customer tile when `tiles` become staff-only.
+    fn public_access_lost(&self, tiles: &[Position]) -> Vec<Affected> {
+        self.concessions
+            .iter()
+            .filter(|stand| {
+                let customers = self.concession_customer_tiles(stand.id);
+                !customers.is_empty() && customers.iter().all(|tile| tiles.contains(tile))
+            })
+            .map(|stand| Affected {
+                kind: "concession",
+                id: Some(stand.id),
+                effect: format!(
+                    "{} #{} loses its public customer side",
+                    stand.definition.label, stand.id
+                ),
+            })
+            .collect()
+    }
+
+    fn commit_paths(
+        &mut self,
+        (preview, plan): (ConstructionPreview, Option<PathPlan>),
+    ) -> ActionResult {
+        if !preview.ok {
+            return ActionResult::error(preview.message);
         }
-        if !plan.changes {
-            return ActionResult::ok(plan.message);
-        }
-        if let Err(message) = self.spend(plan.cost_cents, ExpenseCategory::Construction) {
+        let Some(plan) = plan else {
+            return ActionResult::ok(preview.message);
+        };
+        if let Err(message) = self.spend(preview.cost_cents, ExpenseCategory::Construction) {
             return ActionResult::error(message);
         }
-        self.lay_paths(&plan.tiles);
-        let count = plan.tiles.len();
-        let label = format!("{count} path tile{}", if count == 1 { "" } else { "s" });
+        self.lay_paths(
+            &[&plan.built[..], &plan.reclassified[..]].concat(),
+            plan.access,
+        );
+        let count = plan.built.len() + plan.reclassified.len();
+        let label = format!("{count} {} path tile{}", plan.access.label(), plural(count));
         self.record_construction(
             label,
-            plan.cost_cents,
-            Change::BuildPaths(plan.tiles.clone()),
+            preview.cost_cents,
+            Change::BuildPaths {
+                built: plan.built,
+                reclassified: plan.reclassified,
+                access: plan.access,
+            },
         );
-        ActionResult::ok(format!(
-            "Path built · {count} new tile{} · {}",
-            if count == 1 { "" } else { "s" },
-            dollars(plan.cost_cents)
-        ))
+        ActionResult::ok(format!("Path built · {}", preview.message))
     }
 
-    fn lay_paths(&mut self, tiles: &[Position]) {
-        for tile in tiles {
-            self.set_tile(tile.x, tile.y, TileKind::Path);
+    fn lay_paths(&mut self, tiles: &[Position], access: PathAccess) {
+        if tiles.is_empty() {
+            return;
         }
-        self.refresh_guest_routes();
+        for tile in tiles {
+            self.set_tile(tile.x, tile.y, TileKind::Path(access));
+        }
+        self.topology_changed();
     }
 
-    /// A one-tile stroke, for focused tests.
+    /// A one-tile public stroke, for focused tests.
     #[cfg(test)]
     pub(crate) fn place_path(&mut self, x: u32, y: u32) -> ActionResult {
-        self.build_path_stroke(&[x, y])
+        self.build_path_stroke(&[x, y], 1, "public")
     }
 
     // --- Concessions -----------------------------------------------------------------------
@@ -469,7 +674,7 @@ impl GameState {
                     "A different concession stand already occupies that tile".to_owned(),
                 );
             }
-            Some(TileKind::Path | TileKind::Entrance) => {
+            Some(TileKind::Path(_) | TileKind::Entrance) => {
                 return reject("Build the stand on grass beside the path".to_owned());
             }
             Some(TileKind::Water) => return reject("Water covers that tile".to_owned()),
@@ -483,8 +688,8 @@ impl GameState {
         if let Some(habitat_id) = self.service_gate_owner(position) {
             return reject(gate_access_message(habitat_id));
         }
-        if !self.touches_walkable(position) {
-            return reject("Concession stands must touch a guest path".to_owned());
+        if !self.touches_public_path(position) {
+            return reject("Concession stands must touch a public guest path".to_owned());
         }
         let cost = definition.build_cost_cents;
         if self.cash_cents < cost {
@@ -502,10 +707,10 @@ impl GameState {
         )
     }
 
-    fn touches_walkable(&self, position: Position) -> bool {
+    fn touches_public_path(&self, position: Position) -> bool {
         self.neighbors(position)
             .into_iter()
-            .any(|neighbor| self.is_walkable(neighbor))
+            .any(|neighbor| self.walkable(Mover::Guest, neighbor))
     }
 
     pub(crate) fn place_concession(&mut self, x: u32, y: u32, kind_name: &str) -> ActionResult {
@@ -886,7 +1091,7 @@ impl GameState {
             Some(TileKind::AnimalCareDepot) => {
                 reject("The central animal-care depot cannot be demolished")
             }
-            Some(TileKind::Path) => {
+            Some(TileKind::Path(access)) => {
                 if let Some(occupant) = self.path_occupant(position) {
                     return reject(occupant);
                 }
@@ -905,7 +1110,7 @@ impl GameState {
                     });
                     plan.undoable = false;
                 }
-                (plan, Some(Target::Path(position)))
+                (plan, Some(Target::Path(position, access)))
             }
             Some(TileKind::Concession(id)) => {
                 let Some(stand) = self.concessions.iter().find(|stand| stand.id == id) else {
@@ -990,11 +1195,11 @@ impl GameState {
             return ActionResult::ok(plan.message);
         };
         let (label, change, message) = match target {
-            Target::Path(position) => {
+            Target::Path(position, access) => {
                 self.remove_path(position);
                 (
                     "path tile removal".to_owned(),
-                    Change::RemovePath(position),
+                    Change::RemovePath(position, access),
                     "Path removed".to_owned(),
                 )
             }
@@ -1039,8 +1244,7 @@ impl GameState {
             }
         }
         self.set_tile(position.x, position.y, TileKind::Grass);
-        self.refresh_guest_routes();
-        self.release_unreachable_mechanic_assignments();
+        self.topology_changed();
     }
 
     fn remove_concession(&mut self, id: u32) -> Concession {
@@ -1115,9 +1319,25 @@ impl GameState {
     fn check_undo(&self, transaction: &Transaction) -> Result<(), String> {
         let used = |reason: String| Err(format!("{reason}; demolish it instead"));
         match &transaction.change {
-            Change::BuildPaths(tiles) => {
-                for tile in tiles {
-                    if self.tile(tile.x, tile.y) != Some(TileKind::Path) {
+            Change::BuildPaths {
+                built,
+                reclassified,
+                access,
+            } => {
+                for tile in reclassified {
+                    if self.tile(tile.x, tile.y) != Some(TileKind::Path(*access)) {
+                        return Err("the park changed where that path was reclassified".to_owned());
+                    }
+                    if access.other() == PathAccess::Staff
+                        && self.guests.iter().any(|g| g.x == tile.x && g.y == tile.y)
+                    {
+                        return Err(
+                            "a guest is standing on a tile that would become staff-only".to_owned()
+                        );
+                    }
+                }
+                for tile in built {
+                    if self.tile(tile.x, tile.y) != Some(TileKind::Path(*access)) {
                         return Err("the park changed where that path was built".to_owned());
                     }
                     if let Some(occupant) = self.path_occupant(*tile) {
@@ -1193,7 +1413,7 @@ impl GameState {
                     return Err(problem.to_lowercase());
                 }
             }
-            Change::RemovePath(tile) => {
+            Change::RemovePath(tile, _) => {
                 if self.tile(tile.x, tile.y) != Some(TileKind::Grass) {
                     return Err("something else now stands on that tile".to_owned());
                 }
@@ -1209,7 +1429,7 @@ impl GameState {
                 if let Some(habitat_id) = self.service_gate_owner(position) {
                     return Err(gate_access_message(habitat_id));
                 }
-                if !self.touches_walkable(position) {
+                if !self.touches_public_path(position) {
                     return Err("the stand would no longer touch a guest path".to_owned());
                 }
             }
@@ -1232,12 +1452,18 @@ impl GameState {
 
     fn apply_undo(&mut self, transaction: &Transaction) {
         match &transaction.change {
-            Change::BuildPaths(tiles) => {
-                for tile in tiles {
+            Change::BuildPaths {
+                built,
+                reclassified,
+                access,
+            } => {
+                for tile in built {
                     self.set_tile(tile.x, tile.y, TileKind::Grass);
                 }
-                self.refresh_guest_routes();
-                self.release_unreachable_mechanic_assignments();
+                for tile in reclassified {
+                    self.set_tile(tile.x, tile.y, TileKind::Path(access.other()));
+                }
+                self.topology_changed();
             }
             Change::BuildConcession { id, .. } => {
                 self.remove_concession(*id);
@@ -1249,7 +1475,7 @@ impl GameState {
                 self.apply_enclosure(*id, before.tiles.clone(), before.gate);
             }
             Change::Refence { id, before, .. } => self.set_fence(*id, before),
-            Change::RemovePath(tile) => self.lay_paths(&[*tile]),
+            Change::RemovePath(tile, access) => self.lay_paths(&[*tile], *access),
             Change::RemoveConcession(stand) => self.restore_concession(stand.as_ref().clone()),
             Change::RemoveHabitat(habitat) => self.restore_habitat(habitat.as_ref().clone()),
         }
@@ -1258,14 +1484,30 @@ impl GameState {
 
     fn check_redo(&self, transaction: &Transaction) -> Result<(), String> {
         let cost = match &transaction.change {
-            Change::BuildPaths(tiles) => {
-                if tiles
+            Change::BuildPaths {
+                built,
+                reclassified,
+                access,
+            } => {
+                if built
                     .iter()
                     .any(|tile| self.tile(tile.x, tile.y) != Some(TileKind::Grass))
                 {
                     return Err("those tiles are no longer clear grass".to_owned());
                 }
-                self.path_tiles_cost(tiles.len())
+                for tile in reclassified {
+                    if self.tile(tile.x, tile.y) != Some(TileKind::Path(access.other())) {
+                        return Err("the park changed where that path was reclassified".to_owned());
+                    }
+                    if *access == PathAccess::Staff
+                        && self.guests.iter().any(|g| g.x == tile.x && g.y == tile.y)
+                    {
+                        return Err(
+                            "a guest is standing on a tile that would become staff-only".to_owned()
+                        );
+                    }
+                }
+                self.path_tiles_cost(built.len())
             }
             Change::BuildConcession { x, y, key, .. } => {
                 let plan = self.evaluate_concession(*x, *y, key);
@@ -1306,9 +1548,9 @@ impl GameState {
                 }
                 Self::fence_rebuild_cost(habitat, after)
             }
-            Change::RemovePath(tile) => {
+            Change::RemovePath(tile, _) => {
                 self.check_redo_demolition(tile.x, tile.y, |target| {
-                    matches!(target, Target::Path(_))
+                    matches!(target, Target::Path(..))
                 })?;
                 0
             }
@@ -1367,7 +1609,11 @@ impl GameState {
     fn apply_redo(&mut self, transaction: &Transaction) -> Result<(), &'static str> {
         self.spend(transaction.cost_cents, ExpenseCategory::Construction)?;
         match &transaction.change {
-            Change::BuildPaths(tiles) => self.lay_paths(tiles),
+            Change::BuildPaths {
+                built,
+                reclassified,
+                access,
+            } => self.lay_paths(&[&built[..], &reclassified[..]].concat(), *access),
             Change::BuildConcession { id, x, y, key } => {
                 self.insert_concession(*id, *x, *y, key);
             }
@@ -1382,7 +1628,7 @@ impl GameState {
                 self.apply_enclosure(*id, after.clone(), gate);
             }
             Change::Refence { id, after, .. } => self.set_fence(*id, after),
-            Change::RemovePath(tile) => self.remove_path(*tile),
+            Change::RemovePath(tile, _) => self.remove_path(*tile),
             Change::RemoveConcession(stand) => {
                 self.remove_concession(stand.id);
             }

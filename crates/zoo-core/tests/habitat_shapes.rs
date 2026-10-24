@@ -107,7 +107,7 @@ fn l_shaped_outlines_build_the_same_enclosure_in_either_direction() {
 #[test]
 fn broken_or_blocked_outlines_reject_without_spending() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 15, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 15, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(10, 8, 12, 10));
     let before = cash(&game);
     let cases: [(&[u32], &str); 7] = [
@@ -273,7 +273,7 @@ fn shrinking_away_from_the_gate_moves_it_onto_the_new_fence() {
 #[test]
 fn reshapes_replay_exactly_from_the_session_log() {
     let mut game = populated(2);
-    ok(game.build_path_stroke(vec![5, 7, 15, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 15, 7], 1, "public".to_owned()));
     ok(game.place_habitat_outline(vec![10, 8, 14, 8, 14, 10, 12, 10, 12, 12, 10, 12, 10, 8]));
     ok(game.reshape_habitat(1, EXPANDED.to_vec()));
     game.tick(30);

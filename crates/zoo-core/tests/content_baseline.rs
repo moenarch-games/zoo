@@ -19,7 +19,14 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
     accepted(game.place_concession(1, 6, "food".to_owned()));
     accepted(game.place_concession(3, 6, "drink".to_owned()));
     game.tick(137);
-    let snapshot: Value = serde_json::from_str(&game.snapshot_json()).unwrap();
+    let mut snapshot: Value = serde_json::from_str(&game.snapshot_json()).unwrap();
+    // #98 adds service-access presentation; the protected behaviour is everything else.
+    for stand in snapshot["concessions"].as_array_mut().unwrap() {
+        let stand = stand.as_object_mut().unwrap();
+        for key in ["customer_tiles", "service_points", "active_service_point"] {
+            stand.remove(key);
+        }
+    }
     json!({
         "cash_cents": snapshot["cash_cents"],
         "habitats": snapshot["habitats"],

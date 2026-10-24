@@ -308,6 +308,7 @@ const GRASS_B: Hex = "#78b456"
 const OUTER_GRASS: Hex = "#6aa650"
 const SOIL: Hex = "#8a6a45"
 const PATH: Hex = "#dcc59a"
+const STAFF_PATH: Hex = "#9a9d93"
 const PATH_EDGE: Hex = "#c2a979"
 const ENTRANCE_PLAZA: Hex = "#d4b98a"
 const WATER: Hex = "#4f8fb8"
@@ -407,7 +408,8 @@ function habitatObjectNodes(
 function tileColor(tile: Tile, habitatSpecies: Map<number, SpeciesKey | null>): Hex {
   switch (tile.kind) {
     case "path":
-      return PATH
+      // Staff-only service routes read as grey service tarmac beside the sandy public paths.
+      return tile.access === "staff" ? STAFF_PATH : PATH
     case "entrance":
       return ENTRANCE_PLAZA
     case "concession":
@@ -1268,7 +1270,8 @@ function facingNearestPath(snapshot: Snapshot, x: number, y: number) {
   ]
   for (const [side, tx, ty] of candidates) {
     const tile = tileAt(snapshot, tx, ty)
-    if (tile && (tile.kind === "path" || tile.kind === "entrance")) {
+    // A stand faces its public customer side, never its staff-only service back (#98).
+    if (tile && ((tile.kind === "path" && tile.access === "public") || tile.kind === "entrance")) {
       return yawFacing(side)
     }
   }

@@ -12,6 +12,7 @@ const FIXTURE_V6: &str = "tests/fixtures/save-v6.json";
 const FIXTURE_V7: &str = "tests/fixtures/save-v7.json";
 const FIXTURE_V8: &str = "tests/fixtures/save-v8.json";
 const FIXTURE_V9: &str = "tests/fixtures/save-v9.json";
+const FIXTURE_V10: &str = "tests/fixtures/save-v10.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -36,9 +37,26 @@ fn content_without_environment(content: &mut Value) {
     }
 }
 
+/// Undoes the schema 9 → 10 migration (#98) on a document without staff-only paths: every
+/// public path tile is a plain `"path"` again.
+fn paths_unclassified(value: &mut Value) {
+    for tile in value["park"]["tiles"].as_array_mut().unwrap() {
+        assert_ne!(
+            *tile,
+            serde_json::json!({ "path": "staff" }),
+            "staff path in an old park"
+        );
+        if *tile == serde_json::json!({ "path": "public" }) {
+            *tile = "path".into();
+        }
+    }
+    value["schema_version"] = 9.into();
+}
+
 /// Undoes the schema 8 → 9 migration (#97) on a saved document made without terrain edits:
 /// a habitat with a shelter object has a shelter again and environments disappear.
 fn environments_as_shelters(value: &mut Value) {
+    paths_unclassified(value);
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
         if habitat["species"].is_object() {
             habitat["species"]
@@ -166,6 +184,9 @@ fn park() -> ZooGame {
     }
     ok(game.place_habitat_rect(3, 8, 5, 10));
     ok(game.place_habitat_rect(7, 8, 9, 10));
+    // Circulation (#98): a staff-only service lane between the habitats and a public plaza.
+    ok(game.build_path_stroke(vec![6, 8, 6, 11], 1, "staff".to_owned()));
+    ok(game.build_plaza(10, 8, 11, 9, "public".to_owned()));
     ok(game.place_concession(6, 6, "food".to_owned()));
     ok(game.place_concession(8, 6, "drink".to_owned()));
     ok(game.create_work_zone(0, 0, 19, 13));
@@ -285,7 +306,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 10.into()),
+            mutate(&|v| v["schema_version"] = 1_000.into()),
         ),
         (
             "invalid_save",
@@ -313,6 +334,13 @@ fn rejected_saves_leave_the_current_park_untouched() {
         (
             "invalid_park",
             mutate(&|v| v["park"]["habitats"][0]["welfare"] = 101.into()),
+        ),
+        (
+            "invalid_park",
+            mutate(&|v| {
+                v["park"]["guests"][0]["x"] = 6.into();
+                v["park"]["guests"][0]["y"] = 9.into();
+            }),
         ),
         (
             "invalid_park",
@@ -428,20 +456,53 @@ fn the_schema_v8_fixture_migrates_shelters_to_habitat_objects() {
     game.tick(60);
 }
 
+/// Schema 9 path tiles all become public paths (#98); nothing else changes.
+#[test]
+fn the_schema_v9_fixture_migrates_every_path_to_public() {
+    let fixture = std::fs::read_to_string(FIXTURE_V9).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    let public = saved["park"]["tiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|tile| **tile == serde_json::json!({ "path": "public" }))
+        .count();
+    assert!(public > 0, "the fixture has paths");
+    paths_unclassified(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    game.tick(60);
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V9,
+            FIXTURE_V10,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V9).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V10).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));
+    // Saved path classifications restore (#98): a staff-only route and a widened plaza.
+    let view = json(&game.snapshot_json());
+    let access = |x: u64, y: u64| {
+        view["tiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tile| tile["x"] == x && tile["y"] == y)
+            .unwrap()["access"]
+            .clone()
+    };
+    assert_eq!(access(6, 9), "staff");
+    assert_eq!(access(11, 9), "public");
     let diagnostics = json(&game.diagnostics_json());
     assert_eq!(diagnostics["start"]["scenario"], "save");
     game.tick(60);

@@ -4,6 +4,7 @@ import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 import {runConstructionAcceptance} from "./construction-proof.mjs"
 import {runAnimalIdentityAcceptance} from "./animal-identity-proof.mjs"
 import {runHabitatDesignAcceptance} from "./habitat-design-proof.mjs"
+import {runCirculationAcceptance} from "./circulation-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -513,6 +514,9 @@ try {
 
   // #97 habitat design: build a suitable habitat, see a bad edit refused, recover, phone tap.
   await runHabitatDesignAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
+
+  // #98 circulation: public loop, wider brush, staff-only route, break and repair, phone tap.
+  await runCirculationAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
 
   // #87 session recorder and failure recovery (docs/acceptance/session-recorder.md). Runs after
   // the existing journey so that journey's evidence stays independent of the new contract.

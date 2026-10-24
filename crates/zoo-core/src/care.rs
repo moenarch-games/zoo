@@ -25,7 +25,8 @@
 //! job or walk back. A dispatched job always runs to completion; supplies (a feed crate or
 //! the cleaning fee) are taken at dispatch. Without a route to the gate, care is blocked.
 use super::{
-    ActionResult, ExpenseCategory, FEED_DELIVERY_THRESHOLD, GameState, Keeper, Position, TileKind,
+    ActionResult, ExpenseCategory, FEED_DELIVERY_THRESHOLD, GameState, Keeper, Mover, Position,
+    TileKind,
     content::{self, CareCategory, CareProfile},
 };
 use serde::{Deserialize, Serialize};
@@ -548,22 +549,22 @@ impl GameState {
         let walk = if here == depot {
             // Leave the depot through whichever access tile is nearest the gate.
             route.push(here);
-            let mut walk = self.search_path(goal?, &access)?;
+            let mut walk = self.search_path(Mover::Staff, goal?, &access)?;
             walk.reverse();
             walk
         } else if self.is_walkable(here) {
-            self.search_path(here, &goals)?
+            self.search_path(Mover::Staff, here, &goals)?
         } else if matches!(self.tile(here.x, here.y), Some(TileKind::Habitat(_))) {
             // Inside a habitat: leave through the gap the keeper came in by.
             route.push(here);
-            self.search_path(keeper.exit?, &goals)?
+            self.search_path(Mover::Staff, keeper.exit?, &goals)?
         } else {
             // The path under the keeper was demolished: step onto the neighbouring path tile
             // with the shortest onward walk.
             route.push(here);
             self.neighbors(here)
                 .into_iter()
-                .filter_map(|next| self.search_path(next, &goals))
+                .filter_map(|next| self.search_path(Mover::Staff, next, &goals))
                 .min_by_key(Vec::len)?
         };
         route.extend(walk);

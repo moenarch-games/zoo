@@ -68,7 +68,7 @@ fn park(game: &ZooGame) -> String {
 fn previews_match_commits_under_unchanged_state() {
     let mut game = ZooGame::new();
     let before = cash(&game);
-    let preview = json(&game.evaluate_path_stroke(vec![3, 7, 8, 7, 8, 5]));
+    let preview = json(&game.evaluate_path_stroke(vec![3, 7, 8, 7, 8, 5], 1, "public".to_owned()));
     assert_eq!(preview["ok"], true, "{preview}");
     // 1..=4 on row 7 already exist; the stroke joins (8,7) to (8,5) without gaps.
     let planned: Vec<(u64, u64)> = preview["tiles"]
@@ -83,7 +83,7 @@ fn previews_match_commits_under_unchanged_state() {
     );
     let cost = preview["cost_cents"].as_i64().unwrap();
     assert_eq!(cost, 6 * 1_000);
-    ok(game.build_path_stroke(vec![3, 7, 8, 7, 8, 5]));
+    ok(game.build_path_stroke(vec![3, 7, 8, 7, 8, 5], 1, "public".to_owned()));
     assert_eq!(before - cash(&game), cost);
     for (x, y) in planned {
         assert_eq!(tile_kind(&game, x as u32, y as u32), "path");
@@ -110,18 +110,18 @@ fn previews_match_commits_under_unchanged_state() {
 #[test]
 fn rejected_actions_leave_the_park_and_cash_exactly_as_they_were() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 9, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 9, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(5, 8, 7, 10));
     let untouched = park(&game);
     let depth = history(&game)["undo_depth"].clone();
 
     // A stroke that crosses a habitat builds none of its grass tiles.
-    let crossing = json(&game.evaluate_path_stroke(vec![4, 9, 9, 9]));
+    let crossing = json(&game.evaluate_path_stroke(vec![4, 9, 9, 9], 1, "public".to_owned()));
     assert_eq!(crossing["ok"], false);
     assert!(!crossing["blocked_tiles"].as_array().unwrap().is_empty());
-    rejected(game.build_path_stroke(vec![4, 9, 9, 9]));
+    rejected(game.build_path_stroke(vec![4, 9, 9, 9], 1, "public".to_owned()));
     // A partly out-of-bounds stroke builds nothing either.
-    let leaving = rejected(game.build_path_stroke(vec![17, 2, 25, 2]));
+    let leaving = rejected(game.build_path_stroke(vec![17, 2, 25, 2], 1, "public".to_owned()));
     assert!(
         leaving["message"]
             .as_str()
@@ -129,7 +129,7 @@ fn rejected_actions_leave_the_park_and_cash_exactly_as_they_were() {
             .contains("leaves the park"),
         "{leaving}"
     );
-    rejected(game.build_path_stroke(vec![]));
+    rejected(game.build_path_stroke(vec![], 1, "public".to_owned()));
     // Overlapping fence, stand on a path, and demolition of the depot.
     rejected(game.place_habitat_rect(6, 9, 9, 12));
     rejected(game.place_concession(6, 7, "food".to_owned()));
@@ -146,7 +146,7 @@ fn rejected_actions_leave_the_park_and_cash_exactly_as_they_were() {
     assert!(tiles <= 7, "{left}");
     let before = park(&poor);
     let stroke = vec![5, 7, 4 + tiles, 7];
-    let preview = json(&poor.evaluate_path_stroke(stroke.clone()));
+    let preview = json(&poor.evaluate_path_stroke(stroke.clone(), 1, "public".to_owned()));
     assert_eq!(preview["ok"], false, "{preview}");
     assert!(
         preview["message"]
@@ -154,21 +154,24 @@ fn rejected_actions_leave_the_park_and_cash_exactly_as_they_were() {
             .unwrap()
             .contains("Not enough cash")
     );
-    rejected(poor.build_path_stroke(stroke));
+    rejected(poor.build_path_stroke(stroke, 1, "public".to_owned()));
     assert_eq!(park(&poor), before);
 }
 
 #[test]
 fn a_stale_preview_is_not_permission_to_build() {
     let mut game = ZooGame::new();
-    let stale = json(&game.evaluate_path_stroke(vec![5, 7, 8, 7]));
+    let stale = json(&game.evaluate_path_stroke(vec![5, 7, 8, 7], 1, "public".to_owned()));
     assert_eq!(stale["cost_cents"], 4_000);
     // The park changes after the quote: two of those tiles are now paths.
-    ok(game.build_path_stroke(vec![5, 7, 6, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 6, 7], 1, "public".to_owned()));
     let before = cash(&game);
-    let built = ok(game.build_path_stroke(vec![5, 7, 8, 7]));
+    let built = ok(game.build_path_stroke(vec![5, 7, 8, 7], 1, "public".to_owned()));
     assert!(
-        built["message"].as_str().unwrap().contains("2 new tiles"),
+        built["message"]
+            .as_str()
+            .unwrap()
+            .contains("2 new public path tiles"),
         "{built}"
     );
     assert_eq!(
@@ -181,7 +184,7 @@ fn a_stale_preview_is_not_permission_to_build() {
 #[test]
 fn undo_and_redo_cycles_neither_mint_money_nor_consume_ids() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 9, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 9, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(5, 8, 7, 10));
     ok(game.place_concession(8, 6, "food".to_owned()));
     let built = park(&game);
@@ -225,7 +228,7 @@ fn undo_and_redo_cycles_neither_mint_money_nor_consume_ids() {
 #[test]
 fn undo_refuses_used_construction_and_offers_demolition() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 9, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 9, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(5, 8, 7, 10));
     ok(game.create_work_zone(0, 0, 19, 13));
     ok(game.buy_animal_feed());
@@ -254,7 +257,7 @@ fn undo_refuses_used_construction_and_offers_demolition() {
 #[test]
 fn demolition_of_empty_construction_undoes_and_redoes_free() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 9, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 9, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(5, 8, 7, 10));
     ok(game.place_concession(8, 6, "food".to_owned()));
     let built = park(&game);
@@ -281,7 +284,7 @@ fn demolition_of_empty_construction_undoes_and_redoes_free() {
 #[test]
 fn undo_never_rewinds_park_time_and_history_ends_with_the_day() {
     let mut game = ZooGame::new();
-    ok(game.build_path_stroke(vec![5, 7, 9, 7]));
+    ok(game.build_path_stroke(vec![5, 7, 9, 7], 1, "public".to_owned()));
     ok(game.place_habitat_rect(5, 8, 7, 10));
     game.tick(30);
     let clock = (
@@ -311,10 +314,10 @@ fn undo_never_rewinds_park_time_and_history_ends_with_the_day() {
 fn history_is_bounded_and_replays_exactly() {
     let mut game = ZooGame::new();
     for x in 5..=19 {
-        ok(game.build_path_stroke(vec![x, 7]));
+        ok(game.build_path_stroke(vec![x, 7], 1, "public".to_owned()));
     }
     for y in 8..=12 {
-        ok(game.build_path_stroke(vec![19, y]));
+        ok(game.build_path_stroke(vec![19, y], 1, "public".to_owned()));
     }
     let view = history(&game);
     assert_eq!(view["undo_depth"], view["limit"]);
