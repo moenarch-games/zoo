@@ -1299,7 +1299,7 @@ impl GameState {
         {
             return ActionResult::error("Each habitat currently keeps one species");
         }
-        if let Some(problem) = self.staffing_problem(habitat) {
+        if let Some(problem) = self.zone_staffing_problem(habitat) {
             return ActionResult::error(format!("Staff this habitat before adopting: {problem}"));
         }
 
@@ -1417,7 +1417,7 @@ impl GameState {
 
     /// Why no keeper can ever serve this habitat's jobs, if so: its gate lies outside every
     /// work zone, or nobody works in that zone. There is no park-wide staffing fallback.
-    fn staffing_problem(&self, habitat: &Habitat) -> Option<String> {
+    fn zone_staffing_problem(&self, habitat: &Habitat) -> Option<String> {
         let Some(zone_id) = self.habitat_zone(habitat) else {
             return Some(
                 "No work zone: the service gate is outside every work zone; draw a zone around it"
@@ -1426,6 +1426,22 @@ impl GameState {
         };
         (self.zone_keeper_count(zone_id) == 0).then(|| {
             format!("No keeper works in zone #{zone_id}; assign one in the zone inspector")
+        })
+    }
+
+    /// The zone staffing problem, or else a dangerous-species crew the zone cannot field:
+    /// fewer keepers work there than each of the habitat's jobs needs at once.
+    fn staffing_problem(&self, habitat: &Habitat) -> Option<String> {
+        if let Some(problem) = self.zone_staffing_problem(habitat) {
+            return Some(problem);
+        }
+        let zone_id = self.habitat_zone(habitat)?;
+        let required = habitat.care_schedule.as_ref()?.required_keepers as usize;
+        let available = self.zone_keeper_count(zone_id);
+        (available < required).then(|| {
+            format!(
+                "Dangerous animals: every job needs {required} keepers together, but only {available} works in zone #{zone_id}"
+            )
         })
     }
 
@@ -5319,7 +5335,7 @@ mod tests {
             required_keepers: 1,
             work_minutes: 10,
             state: care::CareJobState::Due,
-            keeper_id: None,
+            keeper_ids: Vec::new(),
             supplies_reserved: false,
             resolved_minute: None,
         });
@@ -5327,7 +5343,12 @@ mod tests {
     }
 
     fn job(state: &GameState, id: u32) -> care::CareJob {
-        *state.care_jobs.iter().find(|job| job.id == id).unwrap()
+        state
+            .care_jobs
+            .iter()
+            .find(|job| job.id == id)
+            .unwrap()
+            .clone()
     }
 
     fn waiting_reason(state: &GameState, habitat_id: u32, id: u32) -> Option<String> {
@@ -5347,7 +5368,7 @@ mod tests {
 
         state.tick(1);
         assert_eq!(job(&state, high).state, care::CareJobState::InProgress);
-        assert_eq!(job(&state, high).keeper_id, Some(1));
+        assert_eq!(job(&state, high).keeper_ids, [1]);
         assert_eq!(job(&state, low).state, care::CareJobState::Due);
         assert_eq!(
             waiting_reason(&state, 1, low).as_deref(),
@@ -5357,7 +5378,7 @@ mod tests {
         // The only keeper is still walking or working when the low job's grace hour lapses.
         state.tick(10);
         assert_eq!(job(&state, low).state, care::CareJobState::Missed);
-        assert_eq!(job(&state, low).keeper_id, None);
+        assert_eq!(job(&state, low).keeper_ids, Vec::<u32>::new());
         assert_eq!(waiting_reason(&state, 1, low), None);
         state.tick(60);
         assert_eq!(job(&state, high).state, care::CareJobState::Completed);
@@ -5372,7 +5393,7 @@ mod tests {
         let older = push_inspection(&mut state, 2, 3, 20);
 
         state.tick(1);
-        assert_eq!(job(&state, older).keeper_id, Some(1));
+        assert_eq!(job(&state, older).keeper_ids, [1]);
         assert_eq!(job(&state, newer).state, care::CareJobState::Due);
     }
 
@@ -5393,14 +5414,14 @@ mod tests {
         let third = push_inspection(&mut state, 1, 3, 0);
 
         state.tick(1);
-        assert_eq!(job(&state, near).keeper_id, Some(2));
-        assert_eq!(job(&state, other).keeper_id, Some(1));
+        assert_eq!(job(&state, near).keeper_ids, [2]);
+        assert_eq!(job(&state, other).keeper_ids, [1]);
         assert_eq!(job(&state, third).state, care::CareJobState::Due);
         let busy: Vec<u32> = state
             .care_jobs
             .iter()
             .filter(|job| job.state == care::CareJobState::InProgress)
-            .filter_map(|job| job.keeper_id)
+            .flat_map(|job| job.keeper_ids.clone())
             .collect();
         assert_eq!(busy, vec![2, 1]);
     }
@@ -5458,7 +5479,7 @@ mod tests {
 
         assert!(state.set_keeper_schedule(1, "inspection", 540, 1020).ok);
         state.tick(1);
-        assert_eq!(job(&state, id).keeper_id, Some(1));
+        assert_eq!(job(&state, id).keeper_ids, [1]);
     }
 
     #[test]
@@ -5498,14 +5519,14 @@ mod tests {
         assert!(state.assign_keeper_zone(1, 1).ok);
         let first = push_inspection(&mut state, 1, 3, 0);
         state.tick(1);
-        assert_eq!(job(&state, first).keeper_id, Some(1));
+        assert_eq!(job(&state, first).keeper_ids, [1]);
 
         assert!(state.assign_keeper_zone(1, 2).ok);
         assert!(state.set_keeper_schedule(1, "feeding", 0, 1440).ok);
         let second = push_inspection(&mut state, 1, 3, 0);
         state.tick(60);
         assert_eq!(job(&state, first).state, care::CareJobState::Completed);
-        assert_eq!(job(&state, first).keeper_id, Some(1));
+        assert_eq!(job(&state, first).keeper_ids, [1]);
         // Future zone #1 inspection work is no longer this keeper's.
         assert_eq!(job(&state, second).state, care::CareJobState::Missed);
         assert!(state.invariant_violation().is_none());
@@ -5522,11 +5543,12 @@ mod tests {
         let before = state.feed_crates;
 
         let feeding = |state: &GameState| {
-            *state
+            state
                 .care_jobs
                 .iter()
                 .find(|job| job.category == content::CareCategory::Feeding)
                 .expect("feeding job generated")
+                .clone()
         };
 
         // Capybara feeding falls due every two hours from 07:00; the park opens at 09:00. The
@@ -5573,11 +5595,12 @@ mod tests {
         assert!(state.adopt(habitat_id, "capybara").ok);
         state.habitats[0].food = 40;
         let feeding = |state: &GameState| {
-            *state
+            state
                 .care_jobs
                 .iter()
                 .find(|job| job.category == content::CareCategory::Feeding)
                 .expect("feeding job generated")
+                .clone()
         };
 
         state.tick(1);
@@ -5600,12 +5623,13 @@ mod tests {
     }
 
     fn feeding_job(state: &GameState) -> care::CareJob {
-        *state
+        state
             .care_jobs
             .iter()
             .filter(|job| job.category == content::CareCategory::Feeding)
             .min_by_key(|job| job.id)
             .expect("feeding job generated")
+            .clone()
     }
 
     #[test]
@@ -5647,7 +5671,7 @@ mod tests {
         assert!(state.place_path(2, ENTRANCE_Y).ok);
         state.tick(1);
         assert_eq!(feeding_job(&state).state, care::CareJobState::InProgress);
-        assert_eq!(feeding_job(&state).keeper_id, Some(1));
+        assert_eq!(feeding_job(&state).keeper_ids, [1]);
 
         // Walking plus fifteen minutes of work end well after the grace hour.
         state.tick(20);
@@ -5836,35 +5860,229 @@ mod tests {
         assert_eq!(keys.len(), total);
     }
 
-    #[test]
-    fn unstaffed_two_keeper_jobs_are_missed_after_the_grace_hour() {
-        let mut state = two_habitat_park();
-        state.habitats[0]
-            .care_schedule
-            .as_mut()
+    fn habitat_view(state: &GameState, habitat_id: u32) -> serde_json::Value {
+        let view = serde_json::to_value(state.snapshot()).unwrap();
+        view["habitats"]
+            .as_array()
             .unwrap()
-            .required_keepers = 2;
-        state.tick(61);
-        let first: Vec<_> = state
-            .care_jobs
             .iter()
-            .filter(|job| {
-                job.habitat_id == 1
-                    && job.due_minute + care::CARE_GRACE_MINUTES <= state.absolute_minute()
-            })
-            .collect();
-        assert!(!first.is_empty());
-        assert!(
-            first
-                .iter()
-                .all(|job| job.required_keepers == 2 && job.state == care::CareJobState::Missed)
+            .find(|habitat| habitat["id"] == habitat_id)
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn one_keeper_cannot_begin_dangerous_work_which_is_missed_after_the_grace_hour() {
+        let mut state = GameState::default();
+        for x in 5..=11 {
+            assert!(state.place_path(x, ENTRANCE_Y).ok);
+        }
+        let elephants = stocked_habitat(&mut state, 3, "elephant");
+        let zebras = stocked_habitat(&mut state, 7, "zebra");
+        // Two zone keepers, but only keeper #1 is ever on shift.
+        assert!(state.set_keeper_schedule(2, "inspection", 0, 60).ok);
+        let habitat = habitat_view(&state, elephants);
+        assert_eq!(habitat["care_required_keepers"], 2);
+        let id = push_inspection(&mut state, elephants, 5, 0);
+        state.care_jobs.last_mut().unwrap().required_keepers = 2;
+
+        state.tick(1);
+        assert_eq!(job(&state, id).state, care::CareJobState::Due);
+        assert!(job(&state, id).keeper_ids.is_empty());
+        assert_eq!(
+            waiting_reason(&state, elephants, id).as_deref(),
+            Some("Needs 2 keepers together; only 1 zone #1 inspection keeper is on shift")
         );
+        // Ordinary-species care still runs with its single keeper.
+        state.tick(30);
         assert!(
             state
                 .care_jobs
                 .iter()
-                .filter(|job| job.habitat_id == 2)
-                .all(|job| job.state != care::CareJobState::Missed)
+                .any(|job| job.habitat_id == zebras && job.state != care::CareJobState::Due)
+        );
+        state.tick(60);
+        assert_eq!(job(&state, id).state, care::CareJobState::Missed);
+        assert!(
+            state
+                .care_jobs
+                .iter()
+                .filter(|job| job.habitat_id == elephants)
+                .all(|job| job.keeper_ids.is_empty() && job.state != care::CareJobState::Completed)
+        );
+    }
+
+    #[test]
+    fn a_lone_zone_keeper_shows_the_dangerous_crew_shortage() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "elephant").ok);
+        let habitat = habitat_view(&state, habitat_id);
+        assert_eq!(
+            habitat["care_status"],
+            "Dangerous animals: every job needs 2 keepers together, but only 1 works in zone #1"
+        );
+        state.hire_zoned_keeper();
+        let habitat = habitat_view(&state, habitat_id);
+        assert!(
+            !habitat["care_status"]
+                .as_str()
+                .unwrap()
+                .starts_with("Dangerous")
+        );
+    }
+
+    /// An elephant habitat with two zone keepers and one due crew inspection.
+    fn crew_park() -> (GameState, u32, u32) {
+        let mut state = empty_two_habitat_park();
+        state.hire_zoned_keeper();
+        state.hire_zoned_keeper();
+        let habitat_id = state.habitats[0].id;
+        assert!(state.adopt(habitat_id, "elephant").ok);
+        // Only the pushed job runs, so the crew's work is easy to follow.
+        state.habitats[0]
+            .care_schedule
+            .as_mut()
+            .unwrap()
+            .tasks
+            .clear();
+        state.care_jobs.clear();
+        let id = push_inspection(&mut state, habitat_id, 5, 0);
+        state.care_jobs.last_mut().unwrap().required_keepers = 2;
+        (state, habitat_id, id)
+    }
+
+    #[test]
+    fn two_keepers_reserve_synchronize_and_complete_exactly_one_job() {
+        let (mut state, habitat_id, id) = crew_park();
+        state.tick(1);
+        assert_eq!(job(&state, id).state, care::CareJobState::InProgress);
+        assert_eq!(job(&state, id).keeper_ids, [1, 2]);
+        assert!(
+            state
+                .keepers
+                .iter()
+                .all(|k| k.activity == care::KeeperActivity::ToGate { job_id: id })
+        );
+
+        // Keeper #1 gets there first and waits inside the gate for keeper #2.
+        let (inside, outside) = state.service_gate_tiles(&state.habitats[0]).unwrap();
+        state.keepers[0].x = inside.x;
+        state.keepers[0].y = inside.y;
+        state.keepers[0].exit = Some(outside);
+        state.tick(3);
+        assert_eq!(
+            state.keepers[0].activity,
+            care::KeeperActivity::AwaitingCrew { job_id: id }
+        );
+        let view = state.keeper_view(&state.keepers[0]);
+        assert_eq!(
+            view.status,
+            format!("Waiting inside habitat #{habitat_id}'s gate for keeper #2 before inspection")
+        );
+
+        let mut worked_together = false;
+        for _ in 0..120 {
+            state.tick(1);
+            let working: Vec<bool> = state
+                .keepers
+                .iter()
+                .map(|k| matches!(k.activity, care::KeeperActivity::Working { .. }))
+                .collect();
+            // Nobody works alone, and both finish the same minute.
+            assert!(working[0] == working[1], "{:?}", state.keepers);
+            if working[0] {
+                worked_together = true;
+                let handler = state.keeper_view(&state.keepers[1]).status;
+                assert!(
+                    handler.starts_with(&format!(
+                        "Managing the animals in habitat #{habitat_id} while keeper #1 does inspection"
+                    )),
+                    "{handler}"
+                );
+            }
+            if job(&state, id).state == care::CareJobState::Completed {
+                break;
+            }
+        }
+        assert!(worked_together);
+        assert_eq!(job(&state, id).state, care::CareJobState::Completed);
+        assert_eq!(
+            state
+                .care_jobs
+                .iter()
+                .filter(|job| job.habitat_id == habitat_id)
+                .count(),
+            1
+        );
+        assert!(state.keepers.iter().all(|k| k.activity.is_free()));
+    }
+
+    #[test]
+    fn a_crew_feeding_takes_one_crate_and_credits_one_delivery() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        state.hire_zoned_keeper();
+        assert!(state.adopt(habitat_id, "elephant").ok);
+        state.habitats[0].food = 40;
+        let crates = state.feed_crates;
+        state.tick(1);
+        let feeding = feeding_job(&state).id;
+        assert_eq!(job(&state, feeding).keeper_ids.len(), 2);
+        assert_eq!(state.feed_crates, crates - 1);
+        state.tick(60);
+        assert_eq!(job(&state, feeding).state, care::CareJobState::Completed);
+        assert_eq!(state.feed_crates, crates - 1);
+        let deliveries: u32 = state.keepers.iter().map(|k| k.deliveries_completed).sum();
+        assert_eq!(deliveries, 1);
+        assert_eq!(state.keepers[0].deliveries_completed, 1);
+    }
+
+    #[test]
+    fn a_blocked_crew_member_holds_both_reservations_until_the_path_returns() {
+        let (mut state, _, id) = crew_park();
+        assert!(state.bulldoze(2, ENTRANCE_Y).ok);
+        let path_free = |state: &GameState| state.keeper_route(&state.keepers[1]).is_some();
+        // Dispatch needs a route, so nothing is reserved while the path is gone.
+        state.tick(1);
+        assert_eq!(job(&state, id).state, care::CareJobState::Due);
+        assert!(state.place_path(2, ENTRANCE_Y).ok);
+        state.tick(1);
+        assert_eq!(job(&state, id).keeper_ids, [1, 2]);
+
+        // The path goes again mid-walk: both keepers keep the job, neither works alone.
+        assert!(state.bulldoze(2, ENTRANCE_Y).ok);
+        state.tick(30);
+        assert!(!path_free(&state));
+        assert_eq!(job(&state, id).state, care::CareJobState::InProgress);
+        assert_eq!(job(&state, id).keeper_ids, [1, 2]);
+        assert!(
+            state
+                .keepers
+                .iter()
+                .all(|k| !matches!(k.activity, care::KeeperActivity::Working { .. }))
+        );
+        assert!(state.place_path(2, ENTRANCE_Y).ok);
+        state.tick(90);
+        assert_eq!(job(&state, id).state, care::CareJobState::Completed);
+    }
+
+    #[test]
+    fn bulldozing_a_dangerous_habitat_releases_its_whole_crew() {
+        let (mut state, _, id) = crew_park();
+        state.tick(4);
+        assert_eq!(job(&state, id).keeper_ids, [1, 2]);
+        assert!(state.bulldoze(3, 8).ok);
+        assert!(state.care_jobs.iter().all(|job| job.id != id));
+        assert!(
+            state
+                .keepers
+                .iter()
+                .all(|k| k.activity == care::KeeperActivity::AtDepot)
         );
     }
 
@@ -5902,7 +6120,7 @@ mod tests {
         state.hire_zoned_keeper();
         let job_id = push_inspection(&mut state, habitat_id, 3, 0);
         state.tick(1);
-        assert_eq!(job(&state, job_id).keeper_id, Some(1));
+        assert_eq!(job(&state, job_id).keeper_ids, [1]);
 
         assert!(state.bulldoze(3, 8).ok);
         assert!(state.habitats.is_empty());

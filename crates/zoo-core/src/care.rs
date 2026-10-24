@@ -11,8 +11,14 @@
 //! cross-zone borrowing or park-wide fallback. Jobs are served highest effective priority
 //! first, then oldest due, then lowest id; each job takes the eligible keeper with the
 //! shortest walk to the gate (lowest id on ties). Dispatch reserves the keeper and the job's
-//! supplies at once, so neither a keeper nor a feed crate can be claimed twice. Jobs needing
-//! more than one keeper wait for synchronized crews (#136) and are missed meanwhile.
+//! supplies at once, so neither a keeper nor a feed crate can be claimed twice.
+//!
+//! Dangerous species need a crew (#136): every in-habitat job of such a habitat stays one job
+//! with a worker requirement of two. Dispatch reserves the two nearest eligible keepers
+//! together or none at all; the first to arrive waits inside the gate for the other, and
+//! once both are there they work together: the first reserved keeper does the care work while
+//! the other manages the animals. A crew that cannot be assembled within the grace hour
+//! leaves the job missed.
 //!
 //! Keepers walk (#95): from the depot along paths to the habitat's service gate, one tile per
 //! staff movement step, step inside, work for the task's `work_minutes`, then take the next
@@ -29,8 +35,17 @@ use serde::Serialize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeeperActivity {
     AtDepot,
-    ToGate { job_id: u32 },
-    Working { job_id: u32, remaining_minutes: u32 },
+    ToGate {
+        job_id: u32,
+    },
+    /// Inside the gate, waiting for the rest of the job's crew to arrive.
+    AwaitingCrew {
+        job_id: u32,
+    },
+    Working {
+        job_id: u32,
+        remaining_minutes: u32,
+    },
     ToDepot,
 }
 
@@ -39,6 +54,7 @@ impl KeeperActivity {
         match self {
             Self::AtDepot => "at_depot",
             Self::ToGate { .. } => "to_gate",
+            Self::AwaitingCrew { .. } => "awaiting_crew",
             Self::Working { .. } => "working",
             Self::ToDepot => "to_depot",
         }
@@ -51,7 +67,9 @@ impl KeeperActivity {
 
     pub fn job_id(self) -> Option<u32> {
         match self {
-            Self::ToGate { job_id } | Self::Working { job_id, .. } => Some(job_id),
+            Self::ToGate { job_id }
+            | Self::AwaitingCrew { job_id }
+            | Self::Working { job_id, .. } => Some(job_id),
             Self::AtDepot | Self::ToDepot => None,
         }
     }
@@ -173,7 +191,7 @@ pub(crate) enum CareJobState {
 }
 
 /// One authoritative scheduled care occurrence.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CareJob {
     pub id: u32,
     pub habitat_id: u32,
@@ -183,7 +201,9 @@ pub(crate) struct CareJob {
     pub required_keepers: u32,
     pub work_minutes: u32,
     pub state: CareJobState,
-    pub keeper_id: Option<u32>,
+    /// The reserved crew, nearest first; empty until dispatch. The first keeper performs the
+    /// care work, any other manages the animals.
+    pub keeper_ids: Vec<u32>,
     /// A feed crate or cleaning fee taken at dispatch and applied on completion.
     pub supplies_reserved: bool,
     pub resolved_minute: Option<u64>,
@@ -207,7 +227,7 @@ pub(crate) struct CareJobView {
     pub required_keepers: u32,
     pub work_minutes: u32,
     pub state: CareJobState,
-    pub keeper_id: Option<u32>,
+    pub keeper_ids: Vec<u32>,
     /// Why a due job has no keeper yet; `None` once dispatched or resolved.
     pub waiting_reason: Option<String>,
     /// Minutes of grace left while due; zero once dispatched or resolved.
@@ -302,7 +322,7 @@ impl GameState {
                         required_keepers: schedule.required_keepers,
                         work_minutes: task.work_minutes,
                         state: CareJobState::Due,
-                        keeper_id: None,
+                        keeper_ids: Vec::new(),
                         supplies_reserved: false,
                         resolved_minute: None,
                     });
@@ -346,14 +366,13 @@ impl GameState {
         }
     }
 
-    /// Matches one due job to the free eligible keeper with the shortest walk to the gate
-    /// (lowest id on ties) and reserves the keeper and the job's depot supplies together.
-    /// Undispatched jobs stay due until their grace hour lapses.
+    /// Matches one due job to its crew: the free eligible keepers with the shortest walks to
+    /// the gate (lowest id on ties), as many as the job requires. The whole crew and the
+    /// job's depot supplies are reserved together, or nothing is. Undispatched jobs stay due
+    /// until their grace hour lapses.
     fn dispatch_care_job(&mut self, job_index: usize) {
-        let job = self.care_jobs[job_index];
-        if job.required_keepers > 1 {
-            return;
-        }
+        let job = &self.care_jobs[job_index];
+        let (job_id, category, crew_size) = (job.id, job.category, job.required_keepers as usize);
         let Some(habitat_index) = self.habitats.iter().position(|h| h.id == job.habitat_id) else {
             return;
         };
@@ -362,31 +381,31 @@ impl GameState {
             return;
         };
         // Only one depot exists, so the nearest depot with stock is that depot or none.
-        let supply = self.job_supply(habitat, job.category);
+        let supply = self.job_supply(habitat, category);
         if self.supply_shortage(supply).is_some() {
             return;
         }
 
-        let mut best: Option<(usize, usize)> = None;
+        // (walk length, keeper index): sorting picks the nearest, lowest id on ties.
+        let mut crew: Vec<(usize, usize)> = Vec::new();
         for (keeper_index, keeper) in self.keepers.iter().enumerate() {
-            if !keeper.activity.is_free() || !self.keeper_eligible(keeper, zone_id, job.category) {
+            if !keeper.activity.is_free() || !self.keeper_eligible(keeper, zone_id, category) {
                 continue;
             }
             let candidate = Keeper {
-                activity: KeeperActivity::ToGate { job_id: job.id },
+                activity: KeeperActivity::ToGate { job_id },
                 ..keeper.clone()
             };
             self.count_path_search();
-            let Some(route) = self.keeper_route(&candidate) else {
-                continue;
-            };
-            if best.is_none_or(|(length, _)| route.len() < length) {
-                best = Some((route.len(), keeper_index));
+            if let Some(route) = self.keeper_route(&candidate) {
+                crew.push((route.len(), keeper_index));
             }
         }
-        let Some((route_length, keeper_index)) = best else {
+        if crew.len() < crew_size {
             return;
-        };
+        }
+        crew.sort_unstable();
+        crew.truncate(crew_size);
 
         let supplies_reserved = match supply {
             Supply::FeedCrate => {
@@ -405,41 +424,80 @@ impl GameState {
             Supply::None => false,
         };
 
-        let keeper_id = self.keepers[keeper_index].id;
         let job = &mut self.care_jobs[job_index];
         job.state = CareJobState::InProgress;
-        job.keeper_id = Some(keeper_id);
+        job.keeper_ids = crew
+            .iter()
+            .map(|&(_, keeper_index)| self.keepers[keeper_index].id)
+            .collect();
         job.supplies_reserved = supplies_reserved;
-        // A keeper still inside after the previous job starts the next one on the spot.
-        self.keepers[keeper_index].activity = if route_length <= 1 {
-            KeeperActivity::Working {
-                job_id: job.id,
-                remaining_minutes: job.work_minutes,
-            }
-        } else {
-            KeeperActivity::ToGate { job_id: job.id }
-        };
+        for &(route_length, keeper_index) in &crew {
+            // A keeper still inside after the previous job is already at this gate.
+            self.keepers[keeper_index].activity = if route_length <= 1 {
+                KeeperActivity::AwaitingCrew { job_id }
+            } else {
+                KeeperActivity::ToGate { job_id }
+            };
+        }
+        self.start_when_crew_assembled(job_id);
     }
 
+    /// Once every reserved keeper waits inside the gate, the whole crew starts working.
+    fn start_when_crew_assembled(&mut self, job_id: u32) {
+        let Some(job) = self.care_jobs.iter().find(|job| job.id == job_id) else {
+            return;
+        };
+        let work_minutes = job.work_minutes;
+        let crew: Vec<usize> = job
+            .keeper_ids
+            .iter()
+            .filter_map(|&id| self.keepers.iter().position(|k| k.id == id))
+            .collect();
+        let waiting = KeeperActivity::AwaitingCrew { job_id };
+        if crew
+            .iter()
+            .any(|&index| self.keepers[index].activity != waiting)
+        {
+            return;
+        }
+        for keeper_index in crew {
+            self.keepers[keeper_index].activity = KeeperActivity::Working {
+                job_id,
+                remaining_minutes: work_minutes,
+            };
+        }
+    }
+
+    /// A crew works in lockstep, so every member finishes the same minute; the first to
+    /// finish resolves the job and applies its single outcome.
     fn complete_care_job(&mut self, keeper_index: usize, job_id: u32, now: u64) {
         self.keepers[keeper_index].activity = KeeperActivity::ToDepot;
-        let Some(job) = self.care_jobs.iter_mut().find(|job| job.id == job_id) else {
+        let Some(job) = self
+            .care_jobs
+            .iter_mut()
+            .find(|job| job.id == job_id && job.state == CareJobState::InProgress)
+        else {
             return;
         };
         job.state = CareJobState::Completed;
         job.resolved_minute = Some(now);
-        let job = *job;
+        let (habitat_id, category, worker_id) = (
+            job.habitat_id,
+            job.category,
+            job.keeper_ids.first().copied(),
+        );
         if !job.supplies_reserved {
             return;
         }
-        let Some(habitat) = self.habitats.iter_mut().find(|h| h.id == job.habitat_id) else {
+        let Some(habitat) = self.habitats.iter_mut().find(|h| h.id == habitat_id) else {
             return;
         };
-        match job.category {
+        match category {
             CareCategory::Feeding => {
                 habitat.food = 100;
-                let keeper = &mut self.keepers[keeper_index];
-                keeper.deliveries_completed = keeper.deliveries_completed.saturating_add(1);
+                if let Some(worker) = self.keepers.iter_mut().find(|k| Some(k.id) == worker_id) {
+                    worker.deliveries_completed = worker.deliveries_completed.saturating_add(1);
+                }
             }
             CareCategory::Cleaning => habitat.cleanliness = 100,
             CareCategory::Inspection | CareCategory::Enrichment => {}
@@ -456,7 +514,9 @@ impl GameState {
         };
         let depot = self.depot_position();
         let (goal, destination) = match keeper.activity {
-            KeeperActivity::AtDepot | KeeperActivity::Working { .. } => return Some(vec![here]),
+            KeeperActivity::AtDepot
+            | KeeperActivity::AwaitingCrew { .. }
+            | KeeperActivity::Working { .. } => return Some(vec![here]),
             KeeperActivity::ToGate { job_id } => {
                 let habitat_id = self.care_jobs.iter().find(|j| j.id == job_id)?.habitat_id;
                 let habitat = self.habitats.iter().find(|h| h.id == habitat_id)?;
@@ -535,21 +595,18 @@ impl GameState {
     }
 
     fn keeper_arrived(&mut self, keeper_index: usize) {
-        let activity = match self.keepers[keeper_index].activity {
-            KeeperActivity::ToGate { job_id } => self
-                .care_jobs
-                .iter()
-                .find(|job| job.id == job_id)
-                .map_or(KeeperActivity::ToDepot, |job| KeeperActivity::Working {
-                    job_id,
-                    remaining_minutes: job.work_minutes,
-                }),
-            _ => {
-                self.keepers[keeper_index].exit = None;
-                KeeperActivity::AtDepot
-            }
+        let keeper = &mut self.keepers[keeper_index];
+        let KeeperActivity::ToGate { job_id } = keeper.activity else {
+            keeper.exit = None;
+            keeper.activity = KeeperActivity::AtDepot;
+            return;
         };
-        self.keepers[keeper_index].activity = activity;
+        if !self.care_jobs.iter().any(|job| job.id == job_id) {
+            self.keepers[keeper_index].activity = KeeperActivity::ToDepot;
+            return;
+        }
+        self.keepers[keeper_index].activity = KeeperActivity::AwaitingCrew { job_id };
+        self.start_when_crew_assembled(job_id);
     }
 
     /// Demolishing a habitat cancels its care: carried feed returns to the depot stock and
@@ -606,6 +663,9 @@ impl GameState {
             .and_then(|job_id| self.care_jobs.iter().find(|job| job.id == job_id));
         let task = job.map_or_else(String::new, |job| format!("{:?}", job.category));
         let habitat = job.map_or(0, |job| job.habitat_id);
+        let performs_care = job.is_none_or(|job| job.keeper_ids.first() == Some(&keeper.id));
+        let partner =
+            job.and_then(|job| job.keeper_ids.iter().copied().find(|&id| id != keeper.id));
         let status = match (keeper.activity, &route) {
             (KeeperActivity::ToGate { .. }, None) => {
                 format!("Blocked: no path to habitat #{habitat}'s service gate")
@@ -617,12 +677,26 @@ impl GameState {
                     task.to_lowercase()
                 )
             }
+            (KeeperActivity::AwaitingCrew { .. }, _) => format!(
+                "Waiting inside habitat #{habitat}'s gate for keeper #{} before {}",
+                partner.unwrap_or_default(),
+                task.to_lowercase()
+            ),
             (
                 KeeperActivity::Working {
                     remaining_minutes, ..
                 },
                 _,
-            ) => format!("{task} in habitat #{habitat} · {remaining_minutes} min left"),
+            ) => match partner {
+                None => format!("{task} in habitat #{habitat} · {remaining_minutes} min left"),
+                Some(partner) if performs_care => format!(
+                    "{task} in habitat #{habitat} while keeper #{partner} manages the animals · {remaining_minutes} min left"
+                ),
+                Some(partner) => format!(
+                    "Managing the animals in habitat #{habitat} while keeper #{partner} does {} · {remaining_minutes} min left",
+                    task.to_lowercase()
+                ),
+            },
             (KeeperActivity::ToDepot, Some(_)) => "Returning to the depot".to_owned(),
             (KeeperActivity::AtDepot, _) => match keeper.zone_id {
                 None => "Idle · needs a work zone".to_owned(),
@@ -702,30 +776,41 @@ impl GameState {
         ActionResult::ok(format!("Keeper #{keeper_id} schedule updated"))
     }
 
-    /// Why a due job has no keeper yet, so short staffing is visible on the job itself.
+    /// Why a due job has no keeper yet, so short staffing is visible on the job itself. Crew
+    /// jobs say how many of their required keepers the zone can field.
     fn waiting_reason(&self, job: &CareJob) -> Option<String> {
         if job.state != CareJobState::Due {
             return None;
         }
-        if job.required_keepers > 1 {
-            return Some(format!(
-                "Needs {} keepers together; crews are not scheduled yet",
-                job.required_keepers
-            ));
-        }
         let habitat = self.habitats.iter().find(|h| h.id == job.habitat_id)?;
-        if let Some(problem) = self.staffing_problem(habitat) {
+        if let Some(problem) = self.zone_staffing_problem(habitat) {
             return Some(problem);
         }
         let zone_id = self.habitat_zone(habitat)?;
         let category = job.category.key();
+        let need = job.required_keepers as usize;
+        let short = |count: usize, what: &str| {
+            format!(
+                "Needs {need} keepers together; only {count} zone #{zone_id} {category} keeper {what}"
+            )
+        };
         let zone_keepers = || self.keepers.iter().filter(|k| k.zone_id == Some(zone_id));
-        if !zone_keepers().any(|k| k.schedule.accepts(job.category)) {
+        let accepting = zone_keepers()
+            .filter(|k| k.schedule.accepts(job.category))
+            .count();
+        if accepting == 0 {
             return Some(format!("No zone #{zone_id} keeper accepts {category}"));
         }
+        if accepting < need {
+            return Some(short(accepting, "exists"));
+        }
         let eligible = || zone_keepers().filter(|k| self.keeper_eligible(k, zone_id, job.category));
-        if eligible().next().is_none() {
+        let on_shift = eligible().count();
+        if on_shift == 0 {
             return Some(format!("No zone #{zone_id} {category} keeper is on shift"));
+        }
+        if on_shift < need {
+            return Some(short(on_shift, "is on shift"));
         }
         if let Some(shortage) = self.supply_shortage(self.job_supply(habitat, job.category)) {
             return Some(shortage.to_owned());
@@ -733,10 +818,14 @@ impl GameState {
         if !self.service_gate_reachable(habitat) {
             return Some(super::GATE_UNREACHABLE.to_owned());
         }
-        if eligible().any(|k| k.activity.is_free()) {
+        let free = eligible().filter(|k| k.activity.is_free()).count();
+        if free >= need {
             return Some("A free keeper has no route to the service gate".to_owned());
         }
-        Some(format!("All zone #{zone_id} {category} keepers are busy"))
+        if free == 0 {
+            return Some(format!("All zone #{zone_id} {category} keepers are busy"));
+        }
+        Some(short(free, "is free"))
     }
 
     /// Overrides one task of a habitat's own schedule; the catalog and other habitats are
@@ -811,7 +900,7 @@ impl GameState {
                 required_keepers: job.required_keepers,
                 work_minutes: job.work_minutes,
                 state: job.state,
-                keeper_id: job.keeper_id,
+                keeper_ids: job.keeper_ids.clone(),
                 waiting_reason: self.waiting_reason(job),
                 expires_in_minutes: if job.state == CareJobState::Due {
                     (job.due_minute + CARE_GRACE_MINUTES).saturating_sub(now)

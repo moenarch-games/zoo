@@ -1640,9 +1640,20 @@ export default function App() {
                   </div>
                   {selectedHabitat.care_required_keepers !== null &&
                     selectedHabitat.care_required_keepers > 1 && (
-                      <div>
-                        <dt>Staffing</dt>
-                        <dd>{selectedHabitat.care_required_keepers} keepers per job</dd>
+                      <div
+                        className={
+                          selectedHabitat.zone_keeper_count < selectedHabitat.care_required_keepers
+                            ? "zone-warning"
+                            : ""
+                        }
+                      >
+                        <dt>Dangerous animals</dt>
+                        <dd>
+                          {selectedHabitat.care_required_keepers} keepers together per job
+                          {selectedHabitat.zone_keeper_count <
+                            selectedHabitat.care_required_keepers &&
+                            ` · only ${selectedHabitat.zone_keeper_count} in zone`}
+                        </dd>
                       </div>
                     )}
                   <div>
@@ -1668,7 +1679,8 @@ export default function App() {
                       )
                       let progress = `next in ${task.next_due_in_minutes} min`
                       if (active) {
-                        progress = `keeper #${active.keeper_id ?? "?"} on the job`
+                        const crew = active.keeper_ids.length > 1 ? "keepers" : "keeper"
+                        progress = `${crew} ${idList(active.keeper_ids)} on the job`
                       } else if (due) {
                         progress = `due, ${due.expires_in_minutes} min left`
                         if (due.waiting_reason !== null) {
