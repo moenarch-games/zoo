@@ -44,7 +44,7 @@ fn default_catalog_preserves_six_species_public_rules() {
 #[test]
 fn bundle_has_versioned_rules_identity_and_is_copied_into_park() {
     let mut definition = catalog();
-    assert_eq!(definition["schema_version"], 1);
+    assert_eq!(definition["schema_version"], 2);
     assert!(
         definition["ruleset_id"]
             .as_str()

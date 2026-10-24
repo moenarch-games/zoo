@@ -144,7 +144,7 @@ export async function runRendererLifetimeAcceptance(context) {
   // --- 2. An incompatible content contract stops at a readable failure screen --------------------
   const catalogUrl = new URL("content/catalog.json", previewUrl).href
   const definition = await (await fetch(catalogUrl)).json()
-  definition.schema_version = 2
+  definition.schema_version = 999
   catalogBody = Buffer.from(JSON.stringify(definition)).toString("base64")
   await cdp.send("Fetch.enable", {
     patterns: [{ urlPattern: catalogUrl, requestStage: "Request" }],

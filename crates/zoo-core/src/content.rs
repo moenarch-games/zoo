@@ -11,6 +11,7 @@ pub(crate) const MAX_CENTS: i64 = 9_007_199_254_740_991;
 // A park has WIDTH*HEIGHT tiles and habitat capacity is twelve. Bound even
 // a conservative whole-park appeal sum before any arithmetic is performed.
 const MAX_RULE_VALUE: u32 = u32::MAX / (super::WIDTH * super::HEIGHT * 12);
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -18,6 +19,7 @@ pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json"
 pub(crate) struct Catalog {
     pub schema_version: u32,
     pub ruleset_id: String,
+    pub balance: Balance,
     pub species: Vec<Species>,
     pub facilities: Vec<Facility>,
     pub unlocks: Vec<Unlock>,
@@ -32,6 +34,8 @@ pub(crate) struct Species {
     pub appeal: u32,
     pub minimum_social_group: u32,
     pub space_per_animal: u32,
+    /// Operating cost charged every in-game hour for each animal of this species.
+    pub hourly_upkeep_cents: i64,
     pub asset_ref: String,
     pub unlock_ref: String,
     pub care: CareProfile,
@@ -117,7 +121,111 @@ pub(crate) struct Facility {
     pub unlock_ref: String,
     pub build_cost_cents: i64,
     pub price_cents: i64,
+    /// Operating cost charged every in-game hour for each built stand. Fixed facilities are
+    /// not built stands and keep this at zero.
+    pub hourly_upkeep_cents: i64,
     pub footprint: Footprint,
+}
+
+/// Park-wide prices, operating costs and wages. Species and facility costs live on their
+/// own definitions; everything here applies to the whole park.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Balance {
+    pub admission_price_cents: i64,
+    pub construction: ConstructionCosts,
+    pub habitat_care: HabitatCareCosts,
+    pub feed_batch_cents: i64,
+    pub maintenance_repair_cents: i64,
+    pub staff: StaffCosts,
+    pub upkeep: ParkUpkeep,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConstructionCosts {
+    pub path_tile_cents: i64,
+    pub habitat_base_cents: i64,
+    pub habitat_tile_cents: i64,
+    pub fence_segment_cents: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HabitatCareCosts {
+    pub water_refill_cents: i64,
+    pub cleaning_cents: i64,
+    pub shelter_cents: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StaffCosts {
+    pub keeper: StaffRole,
+    pub janitor: StaffRole,
+    pub mechanic: StaffRole,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StaffRole {
+    pub hire_cents: i64,
+    pub hourly_wage_cents: i64,
+}
+
+/// Hourly park upkeep that no species or facility definition owns.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParkUpkeep {
+    pub habitat_hourly_cents: i64,
+    pub fence_segment_hourly_cents: i64,
+}
+
+impl Balance {
+    fn validate(&self) -> Result<(), String> {
+        let build = &self.construction;
+        let care = &self.habitat_care;
+        let staff = &self.staff;
+        let upkeep = &self.upkeep;
+        for (path, value) in [
+            ("admission_price_cents", self.admission_price_cents),
+            ("construction/path_tile_cents", build.path_tile_cents),
+            ("construction/habitat_base_cents", build.habitat_base_cents),
+            ("construction/habitat_tile_cents", build.habitat_tile_cents),
+            (
+                "construction/fence_segment_cents",
+                build.fence_segment_cents,
+            ),
+            ("habitat_care/water_refill_cents", care.water_refill_cents),
+            ("habitat_care/cleaning_cents", care.cleaning_cents),
+            ("habitat_care/shelter_cents", care.shelter_cents),
+            ("feed_batch_cents", self.feed_batch_cents),
+            ("maintenance_repair_cents", self.maintenance_repair_cents),
+            ("staff/keeper/hire_cents", staff.keeper.hire_cents),
+            (
+                "staff/keeper/hourly_wage_cents",
+                staff.keeper.hourly_wage_cents,
+            ),
+            ("staff/janitor/hire_cents", staff.janitor.hire_cents),
+            (
+                "staff/janitor/hourly_wage_cents",
+                staff.janitor.hourly_wage_cents,
+            ),
+            ("staff/mechanic/hire_cents", staff.mechanic.hire_cents),
+            (
+                "staff/mechanic/hourly_wage_cents",
+                staff.mechanic.hourly_wage_cents,
+            ),
+            ("upkeep/habitat_hourly_cents", upkeep.habitat_hourly_cents),
+            (
+                "upkeep/fence_segment_hourly_cents",
+                upkeep.fence_segment_hourly_cents,
+            ),
+        ] {
+            money(value, &format!("balance/{path}"))?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -155,6 +263,19 @@ impl Catalog {
         if document.len() > MAX_DOCUMENT_BYTES {
             return Err(format!("catalog: exceeds {MAX_DOCUMENT_BYTES} bytes"));
         }
+        // Check the version before the full schema, so a catalog written for another version
+        // (such as one embedded in an older save) reports that instead of a missing field.
+        #[derive(Deserialize)]
+        struct Version {
+            schema_version: u32,
+        }
+        let version: Version = serde_json::from_str(document)
+            .map_err(|error| format!("catalog/schema_version: {error}"))?;
+        if version.schema_version != SCHEMA_VERSION {
+            return Err(format!(
+                "schema_version: only version {SCHEMA_VERSION} is supported"
+            ));
+        }
         // Keep Serde's typed definition as the only schema authority. The
         // adapter records its field path without first building a parallel JSON
         // value tree or duplicating field/type tables.
@@ -169,10 +290,8 @@ impl Catalog {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 {
-            return Err("schema_version: only version 1 is supported".into());
-        }
         text(&self.ruleset_id, "ruleset_id")?;
+        self.balance.validate()?;
         for (group, count) in [
             ("species", self.species.len()),
             ("facilities", self.facilities.len()),
@@ -205,6 +324,10 @@ impl Catalog {
             money(
                 species.purchase_cost_cents,
                 &format!("{prefix}/purchase_cost_cents"),
+            )?;
+            money(
+                species.hourly_upkeep_cents,
+                &format!("{prefix}/hourly_upkeep_cents"),
             )?;
             self.references(
                 &prefix,
@@ -276,6 +399,10 @@ impl Catalog {
                 &format!("{prefix}/build_cost_cents"),
             )?;
             money(facility.price_cents, &format!("{prefix}/price_cents"))?;
+            money(
+                facility.hourly_upkeep_cents,
+                &format!("{prefix}/hourly_upkeep_cents"),
+            )?;
             for (dimension, value) in [
                 ("width", facility.footprint.width),
                 ("height", facility.footprint.height),
@@ -303,6 +430,14 @@ impl Catalog {
             {
                 return Err(format!(
                     "{prefix}/service: fixed entity {} requires its matching service",
+                    facility.key
+                ));
+            }
+            if ["entrance", "animal_care_depot"].contains(&facility.key.as_str())
+                && facility.hourly_upkeep_cents != 0
+            {
+                return Err(format!(
+                    "{prefix}/hourly_upkeep_cents: fixed entity {} is not a built stand",
                     facility.key
                 ));
             }

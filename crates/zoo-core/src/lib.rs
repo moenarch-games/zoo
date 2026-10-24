@@ -18,18 +18,22 @@ const WIDTH: u32 = 20;
 const HEIGHT: u32 = 14;
 const ENTRANCE_X: u32 = 0;
 const ENTRANCE_Y: u32 = 7;
+#[cfg(test)]
 const PATH_COST: i64 = 1_000;
 const LEGACY_HABITAT_WIDTH: u32 = 4;
 const LEGACY_HABITAT_HEIGHT: u32 = 3;
+#[cfg(test)]
 const HABITAT_BASE_COST: i64 = 10_000;
+#[cfg(test)]
 const HABITAT_TILE_COST: i64 = 3_000;
+#[cfg(test)]
 const FENCE_SEGMENT_COST: i64 = 1_500;
 const MIN_HABITAT_DIMENSION: u32 = 3;
 const MAX_HABITAT_AREA: u64 = 100;
+#[cfg(test)]
 const ADMISSION_PRICE: i64 = 1_200;
+#[cfg(test)]
 const WATER_REFILL_COST: i64 = 800;
-const CLEAN_HABITAT_COST: i64 = 2_000;
-const SHELTER_COST: i64 = 12_000;
 const CARE_DECAY_INTERVAL_MINUTES: u32 = 15;
 #[cfg(test)]
 const FOOD_STAND_BUILD_COST: i64 = 18_000;
@@ -41,14 +45,22 @@ const FOOD_BUY_THRESHOLD: u32 = 20;
 const DRINK_BUY_THRESHOLD: u32 = 20;
 const ANIMAL_CARE_DEPOT_X: u32 = 2;
 const ANIMAL_CARE_DEPOT_Y: u32 = ENTRANCE_Y - 1;
+#[cfg(test)]
 const FEED_BATCH_COST: i64 = 6_000;
 const FEED_BATCH_CRATES: u32 = 10;
+#[cfg(test)]
 const KEEPER_HIRE_COST: i64 = 25_000;
+#[cfg(test)]
 const KEEPER_HOURLY_WAGE: i64 = 1_200;
+#[cfg(test)]
 const JANITOR_HIRE_COST: i64 = 18_000;
+#[cfg(test)]
 const JANITOR_HOURLY_WAGE: i64 = 900;
+#[cfg(test)]
 const MECHANIC_HIRE_COST: i64 = 22_000;
+#[cfg(test)]
 const MECHANIC_HOURLY_WAGE: i64 = 1_000;
+#[cfg(test)]
 const MAINTENANCE_REPAIR_COST: i64 = 2_500;
 const MAINTENANCE_DECAY_INTERVAL_MINUTES: u32 = 30;
 const MAINTENANCE_WEAR_PER_INTERVAL: u32 = 8;
@@ -638,7 +650,7 @@ impl PlacementEvaluation {
             width,
             height,
             orientation: HabitatOrientation::for_dimensions(width, height),
-            cost_cents: habitat_cost(width, height),
+            cost_cents: 0,
             occupied_tiles,
             fence_segments,
         }
@@ -655,7 +667,7 @@ impl PlacementEvaluation {
             width,
             height,
             orientation: HabitatOrientation::for_dimensions(width, height),
-            cost_cents: habitat_cost(width, height),
+            cost_cents: 0,
             occupied_tiles: Vec::new(),
             fence_segments: Vec::new(),
         }
@@ -679,14 +691,6 @@ impl PlacementEvaluation {
             ..Self::invalid("", x, y, width, height)
         }
     }
-}
-
-fn habitat_cost(width: u32, height: u32) -> i64 {
-    let area = i64::from(width).saturating_mul(i64::from(height));
-    let perimeter = i64::from(width.saturating_add(height).saturating_mul(2));
-    HABITAT_BASE_COST
-        .saturating_add(area.saturating_mul(HABITAT_TILE_COST))
-        .saturating_add(perimeter.saturating_mul(FENCE_SEGMENT_COST))
 }
 
 fn normalized_rect(ax: u32, ay: u32, bx: u32, by: u32) -> (u32, u32, u32, u32) {
@@ -917,7 +921,10 @@ impl GameState {
             Some(TileKind::AnimalCareDepot) => {
                 ActionResult::error("The central animal-care depot occupies that tile")
             }
-            Some(TileKind::Grass) => match self.spend(PATH_COST, ExpenseCategory::Construction) {
+            Some(TileKind::Grass) => match self.spend(
+                self.catalog.balance.construction.path_tile_cents,
+                ExpenseCategory::Construction,
+            ) {
                 Ok(()) => {
                     self.set_tile(x, y, TileKind::Path);
                     self.refresh_guest_routes();
@@ -1002,7 +1009,24 @@ impl GameState {
         ActionResult::ok(format!("{} #{id} built beside the path", definition.label))
     }
 
+    fn habitat_cost(&self, width: u32, height: u32) -> i64 {
+        let costs = &self.catalog.balance.construction;
+        let area = i64::from(width).saturating_mul(i64::from(height));
+        let perimeter = i64::from(width.saturating_add(height).saturating_mul(2));
+        costs
+            .habitat_base_cents
+            .saturating_add(area.saturating_mul(costs.habitat_tile_cents))
+            .saturating_add(perimeter.saturating_mul(costs.fence_segment_cents))
+    }
+
+    /// Every evaluation, accepted or not, previews the catalog price of its fence loop.
     fn evaluate_habitat_rect(&self, ax: u32, ay: u32, bx: u32, by: u32) -> PlacementEvaluation {
+        let mut evaluation = self.habitat_rect_placement(ax, ay, bx, by);
+        evaluation.cost_cents = self.habitat_cost(evaluation.width, evaluation.height);
+        evaluation
+    }
+
+    fn habitat_rect_placement(&self, ax: u32, ay: u32, bx: u32, by: u32) -> PlacementEvaluation {
         let (x, y, width, height) = normalized_rect(ax, ay, bx, by);
         if width < MIN_HABITAT_DIMENSION || height < MIN_HABITAT_DIMENSION {
             return PlacementEvaluation::invalid(
@@ -1100,8 +1124,7 @@ impl GameState {
             );
         }
 
-        let cost = habitat_cost(width, height);
-        if self.cash_cents < cost {
+        if self.cash_cents < self.habitat_cost(width, height) {
             return PlacementEvaluation::rejected(
                 "Not enough cash",
                 x,
@@ -1349,7 +1372,10 @@ impl GameState {
     }
 
     fn buy_animal_feed(&mut self) -> ActionResult {
-        if let Err(message) = self.spend(FEED_BATCH_COST, ExpenseCategory::AnimalFeed) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.feed_batch_cents,
+            ExpenseCategory::AnimalFeed,
+        ) {
             return ActionResult::error(message);
         }
         self.feed_crates = self.feed_crates.saturating_add(FEED_BATCH_CRATES);
@@ -1359,7 +1385,10 @@ impl GameState {
     }
 
     fn hire_keeper(&mut self) -> ActionResult {
-        if let Err(message) = self.spend(KEEPER_HIRE_COST, ExpenseCategory::KeeperHiring) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.staff.keeper.hire_cents,
+            ExpenseCategory::KeeperHiring,
+        ) {
             return ActionResult::error(message);
         }
         let id = self.next_keeper_id;
@@ -1398,7 +1427,10 @@ impl GameState {
                 "Connect the central operations depot to the park entrance before hiring janitors",
             );
         };
-        if let Err(message) = self.spend(JANITOR_HIRE_COST, ExpenseCategory::JanitorHiring) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.staff.janitor.hire_cents,
+            ExpenseCategory::JanitorHiring,
+        ) {
             return ActionResult::error(message);
         }
         let id = self.next_janitor_id;
@@ -1421,7 +1453,10 @@ impl GameState {
                 "Connect the central operations depot to the park entrance before hiring mechanics",
             );
         };
-        if let Err(message) = self.spend(MECHANIC_HIRE_COST, ExpenseCategory::MechanicHiring) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.staff.mechanic.hire_cents,
+            ExpenseCategory::MechanicHiring,
+        ) {
             return ActionResult::error(message);
         }
         let id = self.next_mechanic_id;
@@ -1479,7 +1514,10 @@ impl GameState {
         if self.habitats[index].water >= 100 {
             return ActionResult::ok("Water is already full");
         }
-        if let Err(message) = self.spend(WATER_REFILL_COST, ExpenseCategory::HabitatCare) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.habitat_care.water_refill_cents,
+            ExpenseCategory::HabitatCare,
+        ) {
             return ActionResult::error(message);
         }
         self.habitats[index].water = 100;
@@ -1497,7 +1535,10 @@ impl GameState {
         if self.habitats[index].cleanliness >= 100 {
             return ActionResult::ok("Habitat is already clean");
         }
-        if let Err(message) = self.spend(CLEAN_HABITAT_COST, ExpenseCategory::HabitatCare) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.habitat_care.cleaning_cents,
+            ExpenseCategory::HabitatCare,
+        ) {
             return ActionResult::error(message);
         }
         self.habitats[index].cleanliness = 100;
@@ -1515,7 +1556,10 @@ impl GameState {
         if self.habitats[index].has_shelter {
             return ActionResult::ok("Basic shelter is already installed");
         }
-        if let Err(message) = self.spend(SHELTER_COST, ExpenseCategory::HabitatCare) {
+        if let Err(message) = self.spend(
+            self.catalog.balance.habitat_care.shelter_cents,
+            ExpenseCategory::HabitatCare,
+        ) {
             return ActionResult::error(message);
         }
         self.habitats[index].has_shelter = true;
@@ -1715,7 +1759,11 @@ impl GameState {
         let choice = (self.next_guest_id as usize) % candidates.len();
         let (target_habitat, route) = candidates.swap_remove(choice);
 
-        if self.next_guest_id == u32::MAX || !self.earn(ADMISSION_PRICE, IncomeCategory::Admissions)
+        if self.next_guest_id == u32::MAX
+            || !self.earn(
+                self.catalog.balance.admission_price_cents,
+                IncomeCategory::Admissions,
+            )
         {
             return;
         }
@@ -2467,7 +2515,10 @@ impl GameState {
             return false;
         };
         if self
-            .spend(MAINTENANCE_REPAIR_COST, ExpenseCategory::MaintenanceRepair)
+            .spend(
+                self.catalog.balance.maintenance_repair_cents,
+                ExpenseCategory::MaintenanceRepair,
+            )
             .is_err()
         {
             return false;
@@ -2525,23 +2576,34 @@ impl GameState {
     }
 
     fn charge_upkeep(&mut self) {
-        let animal_count: i64 = self
-            .habitats
+        // Catalog values are bounded per field, not per park, so sums saturate and an
+        // unaffordable total is rejected by the cash/ledger range checks below.
+        let balance = &self.catalog.balance;
+        let times = |count: usize, cents: i64| (count as i64).saturating_mul(cents);
+        let habitat_upkeep = self.habitats.iter().fold(0_i64, |total, habitat| {
+            let animals = habitat.species.as_ref().map_or(0, |species| {
+                times(habitat.animals as usize, species.hourly_upkeep_cents)
+            });
+            total
+                .saturating_add(balance.upkeep.habitat_hourly_cents)
+                .saturating_add(animals)
+                .saturating_add(times(
+                    habitat.fence_length() as usize,
+                    balance.upkeep.fence_segment_hourly_cents,
+                ))
+        });
+        let park_upkeep = self
+            .concessions
             .iter()
-            .map(|habitat| i64::from(habitat.animals))
-            .sum();
-        let fence_count: i64 = self
-            .habitats
-            .iter()
-            .map(|habitat| i64::from(habitat.fence_length()))
-            .sum();
-        let park_upkeep = self.habitats.len() as i64 * 250
-            + animal_count * 125
-            + fence_count * 8
-            + self.concessions.len() as i64 * 50;
-        let keeper_wages = self.keepers.len() as i64 * KEEPER_HOURLY_WAGE;
-        let janitor_wages = self.janitors.len() as i64 * JANITOR_HOURLY_WAGE;
-        let mechanic_wages = self.mechanics.len() as i64 * MECHANIC_HOURLY_WAGE;
+            .fold(habitat_upkeep, |total, stand| {
+                total.saturating_add(stand.definition.hourly_upkeep_cents)
+            });
+        let keeper_wages = times(self.keepers.len(), balance.staff.keeper.hourly_wage_cents);
+        let janitor_wages = times(self.janitors.len(), balance.staff.janitor.hourly_wage_cents);
+        let mechanic_wages = times(
+            self.mechanics.len(),
+            balance.staff.mechanic.hourly_wage_cents,
+        );
         let charges = [
             (ExpenseCategory::ParkUpkeep, park_upkeep),
             (ExpenseCategory::KeeperWages, keeper_wages),
@@ -3222,11 +3284,11 @@ impl GameState {
             let at_service_tile = self
                 .concession_service_tiles(task.concession_id)
                 .contains(&position);
-            if at_service_tile && self.cash_cents < MAINTENANCE_REPAIR_COST {
+            if at_service_tile && self.cash_cents < self.catalog.balance.maintenance_repair_cents {
                 return format!(
                     "Waiting for repair parts at stand #{} · ${} needed",
                     task.concession_id,
-                    MAINTENANCE_REPAIR_COST / 100
+                    self.catalog.balance.maintenance_repair_cents / 100
                 );
             }
             return format!(
@@ -3310,14 +3372,14 @@ impl GameState {
             y: ANIMAL_CARE_DEPOT_Y,
             feed_crates: self.feed_crates,
             feed_batch_crates: FEED_BATCH_CRATES,
-            feed_batch_cost_cents: FEED_BATCH_COST,
-            keeper_hire_cost_cents: KEEPER_HIRE_COST,
-            keeper_hourly_wage_cents: KEEPER_HOURLY_WAGE,
-            janitor_hire_cost_cents: JANITOR_HIRE_COST,
-            janitor_hourly_wage_cents: JANITOR_HOURLY_WAGE,
-            mechanic_hire_cost_cents: MECHANIC_HIRE_COST,
-            mechanic_hourly_wage_cents: MECHANIC_HOURLY_WAGE,
-            maintenance_repair_cost_cents: MAINTENANCE_REPAIR_COST,
+            feed_batch_cost_cents: self.catalog.balance.feed_batch_cents,
+            keeper_hire_cost_cents: self.catalog.balance.staff.keeper.hire_cents,
+            keeper_hourly_wage_cents: self.catalog.balance.staff.keeper.hourly_wage_cents,
+            janitor_hire_cost_cents: self.catalog.balance.staff.janitor.hire_cents,
+            janitor_hourly_wage_cents: self.catalog.balance.staff.janitor.hourly_wage_cents,
+            mechanic_hire_cost_cents: self.catalog.balance.staff.mechanic.hire_cents,
+            mechanic_hourly_wage_cents: self.catalog.balance.staff.mechanic.hourly_wage_cents,
+            maintenance_repair_cost_cents: self.catalog.balance.maintenance_repair_cents,
             keepers: self
                 .keepers
                 .iter()
@@ -3575,7 +3637,12 @@ impl GameState {
             },
             species_catalog: self.species_catalog(),
             complaints: self.complaint_summary(),
-            finance: FinanceView::new(self.day, self.finance_today, self.finance_previous),
+            finance: FinanceView::new(
+                self.catalog.balance.admission_price_cents,
+                self.day,
+                self.finance_today,
+                self.finance_previous,
+            ),
             tutorial: self.tutorial_view(),
         }
     }
@@ -3845,7 +3912,12 @@ struct FinanceView {
 }
 
 impl FinanceView {
-    fn new(day: u32, current: FinanceLedger, previous: Option<FinanceLedger>) -> Self {
+    fn new(
+        admission_price_cents: i64,
+        day: u32,
+        current: FinanceLedger,
+        previous: Option<FinanceLedger>,
+    ) -> Self {
         let current_day = FinanceDayView::new(day, current);
         let previous_day =
             previous.map(|ledger| FinanceDayView::new(day.saturating_sub(1), ledger));
@@ -3858,7 +3930,7 @@ impl FinanceView {
             Some(_) => "flat",
         };
         Self {
-            admission_price_cents: ADMISSION_PRICE,
+            admission_price_cents,
             current_day,
             previous_day,
             profit_change_cents,
@@ -4530,7 +4602,10 @@ mod tests {
         assert_eq!((evaluation.width, evaluation.height), (5, 4));
         assert_eq!(evaluation.occupied_tiles.len(), 20);
         assert_eq!(evaluation.fence_segments.len(), 18);
-        assert_eq!(evaluation.cost_cents, habitat_cost(5, 4));
+        assert_eq!(
+            evaluation.cost_cents,
+            HABITAT_BASE_COST + 20 * HABITAT_TILE_COST + 18 * FENCE_SEGMENT_COST
+        );
 
         let before = state.cash_cents;
         assert!(state.place_habitat_rect(7, 11, 3, 8).ok);
@@ -6318,7 +6393,7 @@ mod tests {
         assert_eq!(ledger.admissions_income_cents, ADMISSION_PRICE);
         assert_eq!(
             ledger.construction_expense_cents,
-            habitat_cost(LEGACY_HABITAT_WIDTH, LEGACY_HABITAT_HEIGHT)
+            HABITAT_BASE_COST + 12 * HABITAT_TILE_COST + 14 * FENCE_SEGMENT_COST
         );
         assert_eq!(
             ledger.animal_purchase_expense_cents,
@@ -6375,7 +6450,12 @@ mod tests {
         assert_eq!(previous.construction_expense_cents, 1_000);
         assert_eq!(previous.profit_cents(), 200);
 
-        let view = FinanceView::new(state.day, state.finance_today, state.finance_previous);
+        let view = FinanceView::new(
+            ADMISSION_PRICE,
+            state.day,
+            state.finance_today,
+            state.finance_previous,
+        );
         assert_eq!(view.current_day.profit_cents, 0);
         assert_eq!(view.previous_day.expect("previous day view").day, 1);
         assert_eq!(view.profit_change_cents, Some(-200));
