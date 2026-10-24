@@ -35,6 +35,7 @@ const typedCases: [string, unknown][] = [
   ["facilities/0/service", 7], ["facilities/0/asset_ref", 7],
   ["facilities/0/unlock_ref", false],
   ["facilities/0/footprint/width", "bad"], ["facilities/0/footprint/height", false],
+  ["balance/staff/keeper/hire_cents", "bad"], ["species/0/hourly_upkeep_cents", false],
 ]
 for (const [path, value] of typedCases) {
   const invalid = structuredClone(definition)

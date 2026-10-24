@@ -1,6 +1,31 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ruleset_id": "zoo-classic-v1",
+  "balance": {
+    "admission_price_cents": 1200,
+    "construction": {
+      "path_tile_cents": 1000,
+      "habitat_base_cents": 10000,
+      "habitat_tile_cents": 3000,
+      "fence_segment_cents": 1500
+    },
+    "habitat_care": {
+      "water_refill_cents": 800,
+      "cleaning_cents": 2000,
+      "shelter_cents": 12000
+    },
+    "feed_batch_cents": 6000,
+    "maintenance_repair_cents": 2500,
+    "staff": {
+      "keeper": { "hire_cents": 25000, "hourly_wage_cents": 1200 },
+      "janitor": { "hire_cents": 18000, "hourly_wage_cents": 900 },
+      "mechanic": { "hire_cents": 22000, "hourly_wage_cents": 1000 }
+    },
+    "upkeep": {
+      "habitat_hourly_cents": 250,
+      "fence_segment_hourly_cents": 8
+    }
+  },
   "unlocks": [
     {
       "key": "available",
@@ -15,6 +40,7 @@
       "appeal": 95,
       "minimum_social_group": 2,
       "space_per_animal": 4,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "capybara",
       "unlock_ref": "available",
       "care": {
@@ -51,6 +77,7 @@
       "appeal": 80,
       "minimum_social_group": 3,
       "space_per_animal": 2,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "flamingo",
       "unlock_ref": "available",
       "care": {
@@ -87,6 +114,7 @@
       "appeal": 125,
       "minimum_social_group": 3,
       "space_per_animal": 5,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "zebra",
       "unlock_ref": "available",
       "care": {
@@ -123,6 +151,7 @@
       "appeal": 160,
       "minimum_social_group": 2,
       "space_per_animal": 8,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "giraffe",
       "unlock_ref": "available",
       "care": {
@@ -166,6 +195,7 @@
       "appeal": 190,
       "minimum_social_group": 2,
       "space_per_animal": 12,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "elephant",
       "unlock_ref": "available",
       "care": {
@@ -209,6 +239,7 @@
       "appeal": 110,
       "minimum_social_group": 4,
       "space_per_animal": 3,
+      "hourly_upkeep_cents": 125,
       "asset_ref": "penguin",
       "unlock_ref": "available",
       "care": {
@@ -255,6 +286,7 @@
       "unlock_ref": "available",
       "build_cost_cents": 18000,
       "price_cents": 500,
+      "hourly_upkeep_cents": 50,
       "footprint": {
         "width": 1,
         "height": 1
@@ -268,6 +300,7 @@
       "unlock_ref": "available",
       "build_cost_cents": 14000,
       "price_cents": 350,
+      "hourly_upkeep_cents": 50,
       "footprint": {
         "width": 1,
         "height": 1
@@ -281,6 +314,7 @@
       "unlock_ref": "available",
       "build_cost_cents": 0,
       "price_cents": 0,
+      "hourly_upkeep_cents": 0,
       "footprint": {
         "width": 1,
         "height": 1
@@ -294,6 +328,7 @@
       "unlock_ref": "available",
       "build_cost_cents": 0,
       "price_cents": 0,
+      "hourly_upkeep_cents": 0,
       "footprint": {
         "width": 1,
         "height": 1

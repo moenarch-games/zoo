@@ -1,5 +1,39 @@
 {
   "content": {
+    "balance": {
+      "admission_price_cents": 1200,
+      "construction": {
+        "fence_segment_cents": 1500,
+        "habitat_base_cents": 10000,
+        "habitat_tile_cents": 3000,
+        "path_tile_cents": 1000
+      },
+      "feed_batch_cents": 6000,
+      "habitat_care": {
+        "cleaning_cents": 2000,
+        "shelter_cents": 12000,
+        "water_refill_cents": 800
+      },
+      "maintenance_repair_cents": 2500,
+      "staff": {
+        "janitor": {
+          "hire_cents": 18000,
+          "hourly_wage_cents": 900
+        },
+        "keeper": {
+          "hire_cents": 25000,
+          "hourly_wage_cents": 1200
+        },
+        "mechanic": {
+          "hire_cents": 22000,
+          "hourly_wage_cents": 1000
+        }
+      },
+      "upkeep": {
+        "fence_segment_hourly_cents": 8,
+        "habitat_hourly_cents": 250
+      }
+    },
     "facilities": [
       {
         "asset_ref": "food_stand",
@@ -8,6 +42,7 @@
           "height": 1,
           "width": 1
         },
+        "hourly_upkeep_cents": 50,
         "key": "food",
         "label": "Food stand",
         "price_cents": 500,
@@ -21,6 +56,7 @@
           "height": 1,
           "width": 1
         },
+        "hourly_upkeep_cents": 50,
         "key": "drink",
         "label": "Drink stand",
         "price_cents": 350,
@@ -34,6 +70,7 @@
           "height": 1,
           "width": 1
         },
+        "hourly_upkeep_cents": 0,
         "key": "entrance",
         "label": "Entrance",
         "price_cents": 0,
@@ -47,6 +84,7 @@
           "height": 1,
           "width": 1
         },
+        "hourly_upkeep_cents": 0,
         "key": "animal_care_depot",
         "label": "Animal-care depot",
         "price_cents": 0,
@@ -55,7 +93,7 @@
       }
     ],
     "ruleset_id": "zoo-classic-v1",
-    "schema_version": 1,
+    "schema_version": 2,
     "species": [
       {
         "appeal": 95,
@@ -86,6 +124,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "capybara",
         "label": "Capybara",
         "minimum_social_group": 2,
@@ -122,6 +161,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "flamingo",
         "label": "Flamingo",
         "minimum_social_group": 3,
@@ -158,6 +198,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "zebra",
         "label": "Zebra",
         "minimum_social_group": 3,
@@ -201,6 +242,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "giraffe",
         "label": "Giraffe",
         "minimum_social_group": 2,
@@ -244,6 +286,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "elephant",
         "label": "Elephant",
         "minimum_social_group": 2,
@@ -287,6 +330,7 @@
             }
           ]
         },
+        "hourly_upkeep_cents": 125,
         "key": "penguin",
         "label": "Penguin",
         "minimum_social_group": 4,
@@ -525,6 +569,7 @@
             "height": 1,
             "width": 1
           },
+          "hourly_upkeep_cents": 50,
           "key": "food",
           "label": "Food stand",
           "price_cents": 500,
@@ -548,6 +593,7 @@
             "height": 1,
             "width": 1
           },
+          "hourly_upkeep_cents": 50,
           "key": "drink",
           "label": "Drink stand",
           "price_cents": 350,
@@ -901,6 +947,7 @@
               }
             ]
           },
+          "hourly_upkeep_cents": 125,
           "key": "zebra",
           "label": "Zebra",
           "minimum_social_group": 3,
@@ -988,6 +1035,7 @@
               }
             ]
           },
+          "hourly_upkeep_cents": 125,
           "key": "capybara",
           "label": "Capybara",
           "minimum_social_group": 2,
