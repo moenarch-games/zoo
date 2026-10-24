@@ -661,7 +661,7 @@ impl GameState {
             tiles,
             fence: self.default_fence().clone(),
             species: None,
-            animals: 0,
+            animals: Vec::new(),
             welfare: 100,
             food: 100,
             water: 100,
@@ -737,6 +737,9 @@ impl GameState {
         let habitat = &mut self.habitats[index];
         habitat.tiles = tiles;
         habitat.service_gate = gate;
+        for animal in &mut habitat.animals {
+            animal.settle_into(&habitat.tiles);
+        }
         self.refresh_guest_routes();
     }
 
@@ -942,11 +945,11 @@ impl GameState {
                     id: Some(id),
                     effect: "fence and enclosure removed".to_owned(),
                 });
-                if habitat.animals > 0 {
+                if habitat.stocked() {
                     plan.affected.push(Affected {
                         kind: "animals",
                         id: None,
-                        effect: format!("{} animals leave the park", habitat.animals),
+                        effect: format!("{} animals leave the park", habitat.animal_count()),
                     });
                 }
                 let departing = self
@@ -969,10 +972,8 @@ impl GameState {
                         effect: "scheduled care work cancelled".to_owned(),
                     });
                 }
-                plan.undoable = habitat.species.is_none()
-                    && habitat.animals == 0
-                    && departing == 0
-                    && !care_work;
+                plan.undoable =
+                    habitat.species.is_none() && !habitat.stocked() && departing == 0 && !care_work;
                 (plan, Some(Target::Habitat(id)))
             }
         }
@@ -1073,6 +1074,7 @@ impl GameState {
             .iter()
             .position(|habitat| habitat.id == id)
             .expect("planned habitat exists");
+        self.animals_depart(index);
         let habitat = self.habitats.remove(index);
         for tile in &habitat.tiles {
             self.set_tile(tile.x, tile.y, TileKind::Grass);
@@ -1147,7 +1149,7 @@ impl GameState {
                 let Some(habitat) = self.habitats.iter().find(|habitat| habitat.id == *id) else {
                     return Err(format!("habitat #{id} no longer exists"));
                 };
-                if habitat.species.is_some() || habitat.animals > 0 {
+                if habitat.species.is_some() || habitat.stocked() {
                     return used(format!("habitat #{id} has animals"));
                 }
                 if habitat.has_shelter {

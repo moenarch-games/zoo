@@ -32,7 +32,7 @@ import { loadSceneryKit, type SceneryKit } from "./scenery-kit"
 
 export type ParkPick =
   | { kind: "guest"; id: number; tile: Point | null }
-  | { kind: "animal"; habitatId: number; tile: Point | null }
+  | { kind: "animal"; id: number; habitatId: number; tile: Point | null }
   | { kind: "concession"; id: number; tile: Point }
   | { kind: "depot"; tile: Point | null }
   | { kind: "tile"; tile: Point }
@@ -110,6 +110,8 @@ type ViewDebugHook = {
   ready: boolean
   camera: () => { yawDegrees: number; pitchDegrees: number; zoom: number; target: Vec3 } | null
   projectWorld: (point: Vec3) => { x: number; y: number; visible: boolean } | null
+  /** The screen point of animal `id`'s rendered pick anchor (#96 browser proof). */
+  animalPoint: (id: number) => { x: number; y: number; visible: boolean } | null
   parkFootprintInFrame: () => boolean
   /** Scene parts submitted, counting each instance. */
   nodeCount: () => number
@@ -281,7 +283,7 @@ export default function ParkView(props: Props) {
           case "guest":
             return { kind: "guest", id: anchor.id, tile }
           case "animal":
-            return { kind: "animal", habitatId: anchor.habitatId, tile }
+            return { kind: "animal", id: anchor.id, habitatId: anchor.habitatId, tile }
           case "concession":
             return { kind: "concession", id: anchor.id, tile: anchor.tile }
           case "depot":
@@ -848,6 +850,19 @@ export default function ParkView(props: Props) {
               point.y <= viewport.height
             )
           })
+        },
+        animalPoint: (id) => {
+          const anchor = anchors.find((entry) => entry.kind === "animal" && entry.id === id)
+          if (!camera || !anchor) {
+            return null
+          }
+          const rect = canvas.getBoundingClientRect()
+          const projected = createWorldProjector(camera, viewport)(anchor.point)
+          return {
+            x: rect.left + projected.x,
+            y: rect.top + projected.y,
+            visible: projected.visible,
+          }
         },
         nodeCount: () => nodeCount,
         drawCount: () => drawCount,

@@ -10,12 +10,14 @@ import {
 import type {
   ActionResult,
   Alert,
+  Animal,
   CareCategory,
   CareTask,
   ConstructionPreview,
   ConstructionStep,
   GateEvaluation,
   Guest,
+  Habitat,
   Keeper,
   Objective,
   OverlayKind,
@@ -244,6 +246,8 @@ export default function App() {
   const [messageKind, setMessageKind] = useState<"info" | "error">("info")
   const [selectedHabitatId, setSelectedHabitatId] = useState<number | null>(null)
   const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null)
+  const [selectedAnimalId, setSelectedAnimalId] = useState<number | null>(null)
+  const [animalName, setAnimalName] = useState("")
   const [selectedDepot, setSelectedDepot] = useState(false)
   const [selectedConcessionId, setSelectedConcessionId] = useState<number | null>(null)
   // #94: the management workspace (null when closed) and the active overlay.
@@ -567,6 +571,11 @@ export default function App() {
     [selectedGuestId, snapshot],
   )
 
+  const selectedAnimal = useMemo(
+    () => snapshot?.animals.find((animal) => animal.id === selectedAnimalId) ?? null,
+    [selectedAnimalId, snapshot],
+  )
+
   const selectedZone = useMemo(
     () => snapshot?.work_zones.find((zone) => zone.id === selectedZoneId) ?? null,
     [selectedZoneId, snapshot],
@@ -588,6 +597,9 @@ export default function App() {
     if (selectedGuestId !== null && !snapshot.guests.some((g) => g.id === selectedGuestId)) {
       setSelectedGuestId(null)
     }
+    if (selectedAnimalId !== null && !snapshot.animals.some((a) => a.id === selectedAnimalId)) {
+      setSelectedAnimalId(null)
+    }
     if (selectedZoneId !== null && !snapshot.work_zones.some((z) => z.id === selectedZoneId)) {
       setSelectedZoneId(null)
     }
@@ -597,7 +609,14 @@ export default function App() {
     ) {
       setSelectedConcessionId(null)
     }
-  }, [selectedConcessionId, selectedGuestId, selectedHabitatId, selectedZoneId, snapshot])
+  }, [
+    selectedAnimalId,
+    selectedConcessionId,
+    selectedGuestId,
+    selectedHabitatId,
+    selectedZoneId,
+    snapshot,
+  ])
 
   // The active overlay is re-read from zoo-core with each snapshot, never per rendered frame.
   const overlayView = useMemo<OverlayView | null>(() => {
@@ -747,6 +766,7 @@ export default function App() {
       construction: constructionPreview,
       selectedHabitatId,
       selectedGuestId,
+      selectedAnimalId,
       selectedDepot,
       gatePreview,
       zonesVisible,
@@ -762,6 +782,7 @@ export default function App() {
       overlayView,
       outline,
       placement,
+      selectedAnimalId,
       selectedDepot,
       selectedGuestId,
       selectedHabitatId,
@@ -1007,6 +1028,7 @@ export default function App() {
 
   const selectHabitat = (habitatId: number | null) => {
     setSelectedGuestId(null)
+    setSelectedAnimalId(null)
     setSelectedDepot(false)
     setSelectedZoneId(null)
     setSelectedConcessionId(null)
@@ -1015,6 +1037,7 @@ export default function App() {
 
   const selectZone = (zoneId: number | null) => {
     setSelectedGuestId(null)
+    setSelectedAnimalId(null)
     setSelectedDepot(false)
     setSelectedHabitatId(null)
     setSelectedConcessionId(null)
@@ -1023,6 +1046,7 @@ export default function App() {
 
   const selectConcession = (standId: number) => {
     setSelectedGuestId(null)
+    setSelectedAnimalId(null)
     setSelectedDepot(false)
     setSelectedHabitatId(null)
     setSelectedZoneId(null)
@@ -1030,10 +1054,34 @@ export default function App() {
     describeStand(standId)
   }
 
+  /** Inspects one individual animal by its stable ID (#96). */
+  const selectAnimal = (animalId: number) => {
+    setSelectedGuestId(null)
+    setSelectedHabitatId(null)
+    setSelectedZoneId(null)
+    setSelectedDepot(false)
+    setSelectedConcessionId(null)
+    setSelectedAnimalId(animalId)
+    const picked = snapshot?.animals.find((animal) => animal.id === animalId)
+    setAnimalName(picked?.name ?? "")
+    if (picked) {
+      inform(`${picked.name} selected · ${picked.activity}`)
+    }
+  }
+
+  const renameAnimal = () => {
+    const game = gameRef.current
+    if (!game || selectedAnimalId === null) {
+      return
+    }
+    perform(() => game.rename_animal(selectedAnimalId, animalName))
+  }
+
   const selectGuest = (guestId: number) => {
     setSelectedHabitatId(null)
     setSelectedZoneId(null)
     setSelectedDepot(false)
+    setSelectedAnimalId(null)
     setSelectedConcessionId(null)
     setSelectedGuestId(guestId)
   }
@@ -1161,6 +1209,7 @@ export default function App() {
 
   const selectDepot = () => {
     setSelectedGuestId(null)
+    setSelectedAnimalId(null)
     setSelectedHabitatId(null)
     setSelectedZoneId(null)
     setSelectedConcessionId(null)
@@ -1287,8 +1336,7 @@ export default function App() {
           selectGuest(pick.id)
           return
         case "animal":
-          selectHabitat(pick.habitatId)
-          inform(`Habitat #${pick.habitatId} selected`)
+          selectAnimal(pick.id)
           return
         case "depot":
           selectDepot()
@@ -1585,6 +1633,7 @@ export default function App() {
     setTool("select")
     setSelectedHabitatId(null)
     setSelectedGuestId(null)
+    setSelectedAnimalId(null)
     setSelectedDepot(false)
     setSelectedZoneId(null)
     setHoveredTile(null)
@@ -2345,7 +2394,23 @@ export default function App() {
               </div>
             </>
           )}
-          {!selectedDepot && selectedGuest && (
+          {!selectedDepot && selectedAnimal && (
+            <AnimalInspector
+              animal={selectedAnimal}
+              habitat={snapshot.habitats.find((h) => h.id === selectedAnimal.habitat_id) ?? null}
+              speciesLabel={speciesLabel(selectedAnimal.species, snapshot.species_catalog)}
+              name={animalName}
+              onNameChange={setAnimalName}
+              onRename={renameAnimal}
+              onLocate={() => {
+                requestCamera({ x: selectedAnimal.x, y: selectedAnimal.y })
+                inform(`Camera moved to ${selectedAnimal.name}`)
+              }}
+              onShowHabitat={() => selectHabitat(selectedAnimal.habitat_id)}
+              onClose={() => setSelectedAnimalId(null)}
+            />
+          )}
+          {!selectedDepot && !selectedAnimal && selectedGuest && (
             <>
               <div className="window-title">
                 <span>Guest #{selectedGuest.id}</span>
@@ -2425,6 +2490,26 @@ export default function App() {
                 <div className="meter">
                   <span style={{ width: `${selectedHabitat.welfare}%` }} />
                 </div>
+
+                {selectedHabitat.animals > 0 && (
+                  <>
+                    <h3>Residents</h3>
+                    <ul className="animal-roster" aria-label="Residents">
+                      {snapshot.animals
+                        .filter((animal) => animal.habitat_id === selectedHabitat.id)
+                        .map((animal) => (
+                          <li key={animal.id}>
+                            <button onClick={() => selectAnimal(animal.id)}>
+                              <span>{animal.name}</span>
+                              <small>
+                                #{animal.id} · {animal.activity}
+                              </small>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  </>
+                )}
 
                 <h3>Viewing</h3>
                 <dl>
@@ -2799,6 +2884,7 @@ export default function App() {
             !selectedGuest &&
             !selectedHabitat &&
             !selectedZone &&
+            !selectedAnimal &&
             !selectedConcession && (
               <>
                 <div className="window-title">
@@ -3249,5 +3335,123 @@ function ObjectiveChecklist({
         {guided && <button onClick={onSkip}>Skip guide</button>}
       </div>
     </details>
+  )
+}
+
+/**
+ * One animal's identity, authoritative activity and individual needs (#96), beside the habitat
+ * resources and welfare components it shares with its group. Every value comes from zoo-core.
+ */
+function AnimalInspector({
+  animal,
+  habitat,
+  speciesLabel,
+  name,
+  onNameChange,
+  onRename,
+  onLocate,
+  onShowHabitat,
+  onClose,
+}: {
+  animal: Animal
+  habitat: Habitat | null
+  speciesLabel: string
+  name: string
+  onNameChange: (name: string) => void
+  onRename: () => void
+  onLocate: () => void
+  onShowHabitat: () => void
+  onClose: () => void
+}) {
+  let activity = "Resting"
+  if (animal.activity === "walking") {
+    activity = animal.target ? `Walking to (${animal.target.x}, ${animal.target.y})` : "Walking"
+  }
+  return (
+    <>
+      <div className="window-title">
+        <span>
+          {animal.name} · #{animal.id}
+        </span>
+        <button onClick={onClose} aria-label="Close animal inspector">
+          ×
+        </button>
+      </div>
+      <div className="animal-card" data-animal-id={animal.id}>
+        <div className="habitat-name">{speciesLabel}</div>
+        <div className="guest-thought" data-testid="animal-activity">
+          {activity}
+        </div>
+        <form
+          className="animal-rename"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onRename()
+          }}
+        >
+          <label>
+            <span>Name</span>
+            <input
+              value={name}
+              maxLength={24}
+              onChange={(event) => onNameChange(event.target.value)}
+              aria-label="Animal name"
+            />
+          </label>
+          <button type="submit" disabled={name.trim() === "" || name.trim() === animal.name}>
+            Rename
+          </button>
+        </form>
+        <dl>
+          <div>
+            <dt>Sex</dt>
+            <dd>{animal.sex}</dd>
+          </div>
+          <div>
+            <dt>Life stage</dt>
+            <dd>{animal.life_stage}</dd>
+          </div>
+          <div>
+            <dt>Arrived</dt>
+            <dd>Day {animal.arrived_day}</dd>
+          </div>
+          <div>
+            <dt>Position</dt>
+            <dd>
+              ({animal.x}, {animal.y}) · habitat #{animal.habitat_id}
+            </dd>
+          </div>
+        </dl>
+        <h3>Own needs</h3>
+        <NeedBar label="Energy" value={animal.energy} />
+        {habitat && (
+          <>
+            <h3>Shared with habitat #{habitat.id}</h3>
+            <NeedBar label="Food" value={habitat.food} />
+            <NeedBar label="Water" value={habitat.water} />
+            <NeedBar label="Cleanliness" value={habitat.cleanliness} />
+            <NeedBar label="Social fit" value={habitat.social_score} />
+            <NeedBar label="Space fit" value={habitat.space_score} />
+            <dl>
+              <div>
+                <dt>Shelter</dt>
+                <dd>{habitat.has_shelter ? "Yes" : "None"}</dd>
+              </div>
+              <div>
+                <dt>Group welfare</dt>
+                <dd>
+                  {habitat.welfare}% → {habitat.welfare_target}%
+                </dd>
+              </div>
+            </dl>
+            <div className="guest-thought">{habitat.welfare_status}</div>
+          </>
+        )}
+        <div className="animal-actions">
+          <button onClick={onLocate}>Locate</button>
+          <button onClick={onShowHabitat}>Show habitat</button>
+        </div>
+      </div>
+    </>
   )
 }

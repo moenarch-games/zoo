@@ -48,6 +48,7 @@ export type SceneOverlay = {
   construction: ConstructionPreview | null
   selectedHabitatId: number | null
   selectedGuestId: number | null
+  selectedAnimalId: number | null
   selectedDepot: boolean
   /** Rust's evaluation of the fence segment under the pointer while moving a gate. */
   gatePreview: GateEvaluation | null
@@ -74,7 +75,7 @@ export type SceneFrameInput = {
 /** Screen-pickable anchors for entities that do not map 1:1 to a clicked ground tile. */
 export type PickAnchor =
   | { kind: "guest"; id: number; point: Vec3; radius: number }
-  | { kind: "animal"; habitatId: number; point: Vec3; radius: number }
+  | { kind: "animal"; id: number; habitatId: number; point: Vec3; radius: number }
   | { kind: "concession"; id: number; tile: Point; point: Vec3; radius: number }
   | { kind: "depot"; point: Vec3; radius: number }
 
@@ -1388,8 +1389,10 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
   const nodes: RendererSceneNode[] = []
   const anchors: PickAnchor[] = []
   for (const animal of animals) {
-    const slotX = ((animal.slot % 3) - 1) * 0.26
-    const slotZ = ((Math.floor(animal.slot / 3) % 2) - 0.5) * 0.3
+    // A stable cosmetic offset keeps animals sharing a tile apart.
+    const spot = animal.cosmetic_seed % 6
+    const slotX = ((spot % 3) - 1) * 0.26
+    const slotZ = ((Math.floor(spot / 3) % 2) - 0.5) * 0.3
     const [x, z] = input.resolveActor(
       `animal:${animal.id}`,
       animal.x + 0.5 + slotX,
@@ -1397,7 +1400,8 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
     )
     const phase = animal.animation_phase * 0.37 + animal.id
     const wander = input.animate ? Math.sin(input.timeSeconds * 0.35 + phase) * 0.8 : 0
-    const stride = input.animate ? Math.sin(input.timeSeconds * 4 + phase) : 0
+    const walking = animal.activity === "walking"
+    const stride = input.animate && walking ? Math.sin(input.timeSeconds * 4 + phase) : 0
     const yaw = phase + wander
     const m = model(`animal:${animal.id}`, { x, z }, yaw)
     const size = ANIMAL_SHADOW_SIZE[animal.species] ?? 0.22
@@ -1405,10 +1409,24 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
       blobShadow(`animal:${animal.id}:shadow`, x, z, size),
       ...animalFigure(m, animal.species, stride),
     )
+    if (animal.id === input.overlay.selectedAnimalId) {
+      nodes.push(
+        node(
+          `animal:${animal.id}:ring`,
+          [x, 0.02, z],
+          cylinderGeometry(size + 0.08, 0.015),
+          "#f6d36f",
+          {
+            opacity: 0.8,
+          },
+        ),
+      )
+    }
     presence.push({ key: `animal:${animal.id}`, kind: "animal", x, z, working: false })
     const height = ANIMAL_PICK_HEIGHT[animal.species] ?? 0.25
     anchors.push({
       kind: "animal",
+      id: animal.id,
       habitatId: animal.habitat_id,
       point: [x, height, z],
       radius: size + 0.1,

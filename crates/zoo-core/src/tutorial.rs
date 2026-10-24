@@ -76,7 +76,7 @@ impl GameState {
     fn tutorial_habitat(&self) -> Option<&Habitat> {
         self.habitats
             .iter()
-            .find(|habitat| habitat.animals > 0)
+            .find(|habitat| habitat.stocked())
             .or_else(|| self.habitats.first())
     }
 
@@ -213,13 +213,13 @@ impl GameState {
     }
 
     fn guest_problem(&self) -> Option<String> {
-        if !self.habitats.iter().any(|habitat| habitat.animals > 0) {
+        if !self.habitats.iter().any(|habitat| habitat.stocked()) {
             return Some("Guests come to see animals: stock a habitat first.".to_owned());
         }
         let start = self.entrance;
         let occupancy = self.viewing_occupancy();
         let viewable = self.habitats.iter().any(|habitat| {
-            habitat.animals > 0
+            habitat.stocked()
                 && self
                     .viewing_route_with_occupancy(habitat, start, &occupancy)
                     .is_some()
@@ -236,7 +236,7 @@ impl GameState {
         let habitat = self
             .habitats
             .iter()
-            .filter(|habitat| habitat.animals > 0 && habitat.welfare < at_least)
+            .filter(|habitat| habitat.stocked() && habitat.welfare < at_least)
             .min_by_key(|habitat| habitat.welfare)?;
         let (name, score) = Self::lowest_welfare_part(habitat);
         let trend = if habitat.welfare_target() > habitat.welfare {
@@ -254,7 +254,7 @@ impl GameState {
     /// Problems that matter whatever the next step is: stocked animals nobody can care for, or
     /// an empty feed store.
     fn standing_problem(&self) -> Option<String> {
-        let stocked = || self.habitats.iter().filter(|habitat| habitat.animals > 0);
+        let stocked = || self.habitats.iter().filter(|habitat| habitat.stocked());
         if let Some(problem) = stocked().find_map(|habitat| {
             self.staffing_problem(habitat).map(|problem| {
                 format!("Habitat #{} has animals but no care: {problem}", habitat.id)

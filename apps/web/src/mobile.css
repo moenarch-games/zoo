@@ -122,8 +122,15 @@
 
   .habitat-card,
   .guest-card,
+  .animal-card,
   .manager-card {
     padding: 12px;
+  }
+
+  .animal-roster button,
+  .animal-actions button,
+  .animal-rename button {
+    min-height: 44px;
   }
 
   .shop-row,

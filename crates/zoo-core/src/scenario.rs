@@ -784,12 +784,16 @@ impl GameState {
 
     pub(crate) fn goal_reached(&self, goal: &Goal) -> bool {
         let count = |n: usize, at_least: u32| n >= at_least as usize;
-        let stocked = || self.habitats.iter().filter(|habitat| habitat.animals > 0);
+        let stocked = || self.habitats.iter().filter(|habitat| habitat.stocked());
         match goal {
             Goal::Habitats { at_least } => count(self.habitats.len(), *at_least),
             Goal::StockedHabitats { at_least } => count(stocked().count(), *at_least),
             Goal::Animals { at_least } => {
-                let animals: u64 = self.habitats.iter().map(|h| u64::from(h.animals)).sum();
+                let animals: u64 = self
+                    .habitats
+                    .iter()
+                    .map(|h| u64::from(h.animal_count()))
+                    .sum();
                 animals >= u64::from(*at_least)
             }
             Goal::Keepers { at_least } => count(self.keepers.len(), *at_least),
@@ -986,10 +990,10 @@ mod tests {
         assert_eq!(empty.tutorial_view_status(), "active");
         let partly = built("partly-prepared");
         assert!(!partly.habitats.is_empty());
-        assert!(partly.habitats.iter().all(|habitat| habitat.animals == 0));
+        assert!(partly.habitats.iter().all(|habitat| !habitat.stocked()));
         assert_eq!(partly.tutorial_view_status(), "off");
         let living = built("living-starter");
-        assert!(living.habitats.iter().any(|habitat| habitat.animals > 0));
+        assert!(living.habitats.iter().any(|habitat| habitat.stocked()));
         assert!(!living.keepers.is_empty() && !living.concessions.is_empty());
         let recovery = built("recovery");
         assert!(recovery.habitats.iter().any(|habitat| habitat.water < 40));

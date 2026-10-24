@@ -352,7 +352,7 @@ impl GameState {
     fn job_supply(&self, habitat: &super::Habitat, category: CareCategory) -> Supply {
         match category {
             CareCategory::Feeding
-                if habitat.animals > 0 && habitat.food < FEED_DELIVERY_THRESHOLD =>
+                if habitat.stocked() && habitat.food < FEED_DELIVERY_THRESHOLD =>
             {
                 Supply::FeedCrate
             }
