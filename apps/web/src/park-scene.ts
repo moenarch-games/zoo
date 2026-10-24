@@ -190,26 +190,6 @@ const GABLE_ROOF = facetedMesh("zoo:gable-roof:v1", [
   ],
 ])
 
-/** Low-poly rock blob: an irregular octahedron-ish hull, unit radius. */
-const BLOB = facetedMesh(
-  "zoo:blob:v1",
-  (() => {
-    const top: Vec3 = [0, 0.8, 0]
-    const bottom: Vec3 = [0, -0.3, 0]
-    const ring: Vec3[] = [0, 1, 2, 3, 4, 5].map((i) => {
-      const angle = (i / 6) * Math.PI * 2 + 0.3
-      const radius = i % 2 === 0 ? 1 : 0.82
-      return [Math.cos(angle) * radius, 0.12 * (i % 3), Math.sin(angle) * radius] as Vec3
-    })
-    const triangles: Triangle[] = []
-    ring.forEach((a, i) => {
-      const b = ring[(i + 1) % ring.length] ?? a
-      triangles.push([a, b, top], [a, bottom, b])
-    })
-    return triangles
-  })(),
-)
-
 // ---------------------------------------------------------------------------------------------
 // Node helpers
 
@@ -490,17 +470,6 @@ function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] 
     }
   }
   return nodes
-}
-
-/** The small code-built rocks inside habitats (habitat dressing stays Zoo-authored for now). */
-function rock(id: string, x: number, z: number, scale: number, turn: number) {
-  return model(id, { x, z }, turn * 6).mesh(
-    "stone",
-    BLOB,
-    [0, 0.04, 0],
-    [0.28 * scale, 0.22 * scale, 0.22 * scale],
-    "#9a9a8e",
-  )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1008,7 +977,7 @@ function tileAt(snapshot: Snapshot, x: number, y: number): Tile | undefined {
 // ---------------------------------------------------------------------------------------------
 // Habitat furnishing
 
-function habitatNodes(habitat: Habitat, selected: boolean): RendererSceneNode[] {
+function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): RendererSceneNode[] {
   const nodes: RendererSceneNode[] = []
   const id = `habitat:${habitat.id}`
   const right = habitat.x + habitat.width
@@ -1048,11 +1017,13 @@ function habitatNodes(habitat: Habitat, selected: boolean): RendererSceneNode[] 
     )
   }
 
-  // A couple of rocks per habitat for texture.
+  // A couple of zoo-scenery rocks per habitat for texture, seeded by the habitat id.
   for (let index = 0; index < 2; index += 1) {
     const rx = habitat.x + 0.4 + hash(habitat.id, index, 11) * (habitat.width - 0.8)
     const rz = habitat.y + 0.4 + hash(habitat.id, index, 12) * (habitat.height - 0.8)
-    nodes.push(rock(`${id}:rock:${index}`, rx, rz, 0.8, hash(habitat.id, index)))
+    const scale = 0.6 + hash(habitat.id, index, 13) * 0.2
+    const yaw = hash(habitat.id, index) * Math.PI * 2
+    nodes.push(...sceneryPiece(kit, "rock-round", `${id}:rock:${index}`, rx, rz, scale, yaw))
   }
 
   if (
@@ -1504,13 +1475,17 @@ export function buildSceneryNodes(snapshot: Snapshot, kit: SceneryKit): Renderer
  * Nodes that depend only on the snapshot and interaction overlay (scenery excluded). Callers cache this per
  * snapshot/overlay identity so per-frame actor animation does not rebuild terrain and scenery.
  */
-export function buildStaticNodes(snapshot: Snapshot, overlay: SceneOverlay): RendererSceneNode[] {
+export function buildStaticNodes(
+  snapshot: Snapshot,
+  overlay: SceneOverlay,
+  kit: SceneryKit,
+): RendererSceneNode[] {
   snapshot = presentationSnapshot(snapshot)
   const depot = snapshot.animal_care_depot
   const nodes = [
     ...terrainNodes(snapshot),
     ...snapshot.habitats.flatMap((habitat) =>
-      habitatNodes(habitat, habitat.id === overlay.selectedHabitatId),
+      habitatNodes(habitat, habitat.id === overlay.selectedHabitatId, kit),
     ),
     ...fenceNodes(snapshot, overlay.placement),
     ...zoneNodes(snapshot, overlay),

@@ -331,7 +331,7 @@ export default function ParkView(props: Props) {
             staticGeneration += 1
             staticBatches = batchNodes(
               "static",
-              buildStaticNodes(current.snapshot, current.overlay),
+              buildStaticNodes(current.snapshot, current.overlay, kit),
               String(staticGeneration),
             )
             const key = sceneryKey(current.snapshot)
