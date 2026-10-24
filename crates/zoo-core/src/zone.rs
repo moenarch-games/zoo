@@ -6,11 +6,12 @@
 //! The keeper scheduler (#134) only gives a keeper habitat jobs from its own zone. Zone, gate
 //! and keeper edits change future eligibility; a job already under way runs to completion.
 use super::{ActionResult, GameState, Habitat, Position};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_WORK_ZONES: usize = 32;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkZone {
     pub id: u32,
     pub x: u32,

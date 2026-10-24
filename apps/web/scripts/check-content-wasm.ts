@@ -45,4 +45,13 @@ for (const [path, value] of typedCases) {
   parent[leaf] = value
   assert.throws(() => ZooGame.from_content_json(JSON.stringify(invalid)), new RegExp(leaf), `Missing offending field ${path}`)
 }
+// #88: the WASM bindings load the native schema-v1 fixture through the same validation.
+const fixture = readFileSync(new URL("../../../crates/zoo-core/tests/fixtures/save-v1.json", import.meta.url), "utf8")
+const resumed = new ZooGame()
+assert.equal(JSON.parse(resumed.load_save(fixture)).ok, true)
+assert.deepEqual(JSON.parse(resumed.save_json()), JSON.parse(fixture))
+const before = resumed.save_json()
+assert.equal(JSON.parse(resumed.load_save(fixture.slice(0, 100))).code, "malformed")
+assert.equal(resumed.save_json(), before)
+resumed.free()
 console.log("content-wasm-acceptance=ok (real generated Rust bindings)")

@@ -1,0 +1,450 @@
+//! Versioned park saves (#88).
+//!
+//! A save is one JSON envelope owned by `zoo-core`:
+//!
+//! ```json
+//! { "format": "zoo-save", "schema_version": 1, "content": { ...catalog... }, "park": { ... } }
+//! ```
+//!
+//! `content` is the validated catalog the park runs on (it carries the content schema version
+//! and ruleset id), so a save restores the same rules and species definitions it was made with.
+//! `park` is the complete authoritative [`GameState`]: tiles, entities, stable next IDs, tick
+//! and time accumulators, stocks, ledgers, care jobs, staff assignments and tutorial progress.
+//! The simulation uses no random streams. Camera, windows and device settings are never part of
+//! a save; neither are the session recorder, pending domain events or diagnostic work counters.
+//! Loading resumes at the saved simulation time and never simulates elapsed wall-clock time.
+//!
+//! Loading parses, migrates, deserializes and validates the whole document before it replaces
+//! the active park; any failure returns a structured error and leaves the current park as it
+//! was. Because a load replaces the park rather than merging into it, repeated imports cannot
+//! duplicate animals, staff, money, tasks or admissions.
+//!
+//! # Migration procedure
+//!
+//! Every change to the saved shape bumps [`SCHEMA_VERSION`] and adds one arm to [`migrate`]
+//! that rewrites a version `n` document's JSON into version `n + 1`. Migrations run in order on
+//! the raw JSON value before typed deserialization, so the typed `GameState` only ever reads
+//! the current schema. Each released schema keeps an immutable fixture under
+//! `tests/fixtures/save-v<n>.json` that must keep loading. Documents newer than this build are
+//! rejected as `unsupported_version`.
+use super::{
+    ENTRANCE_X, ENTRANCE_Y, GameState, HEIGHT, MAX_GUEST_HABITATS_PER_VISIT, Position, TileKind,
+    WIDTH,
+    care::CareJobState,
+    content::{self, Catalog},
+};
+use serde::Serialize;
+use serde_json::{Value, json};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+pub(crate) const FORMAT: &str = "zoo-save";
+pub(crate) const SCHEMA_VERSION: u32 = 1;
+/// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
+pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
+const MINUTES_PER_DAY: u32 = 24 * 60;
+
+/// A structured load failure. `code` is stable for callers; `message` explains it.
+#[derive(Debug, Serialize)]
+pub(crate) struct SaveError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl SaveError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// Serializes the park and its content into a current-schema save document.
+pub(crate) fn encode(state: &GameState) -> String {
+    let envelope = json!({
+        "format": FORMAT,
+        "schema_version": SCHEMA_VERSION,
+        "content": state.catalog.as_ref(),
+        "park": state,
+    });
+    serde_json::to_string(&envelope).expect("park state serialization is infallible")
+}
+
+/// Parses, migrates and validates a save document into a park ready to replace the active one.
+pub(crate) fn decode(document: &str) -> Result<GameState, SaveError> {
+    if document.len() > MAX_SAVE_BYTES {
+        return Err(SaveError::new(
+            "too_large",
+            format!("save exceeds {MAX_SAVE_BYTES} bytes"),
+        ));
+    }
+    let value: Value = serde_json::from_str(document)
+        .map_err(|error| SaveError::new("malformed", format!("save is not valid JSON: {error}")))?;
+    if value.get("format").and_then(Value::as_str) != Some(FORMAT) {
+        return Err(SaveError::new(
+            "unsupported_format",
+            format!("not a {FORMAT} document"),
+        ));
+    }
+    let version = value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| SaveError::new("invalid_save", "schema_version: missing or not a number"))?;
+    if version > u64::from(SCHEMA_VERSION) {
+        return Err(SaveError::new(
+            "unsupported_version",
+            format!("save schema {version} is newer than supported schema {SCHEMA_VERSION}"),
+        ));
+    }
+    if version == 0 {
+        return Err(SaveError::new(
+            "unsupported_version",
+            "save schema 0 does not exist",
+        ));
+    }
+    let mut value = migrate(value, version as u32)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| SaveError::new("invalid_save", "save is not an object"))?;
+    if let Some(key) = object.keys().find(|key| {
+        !matches!(
+            key.as_str(),
+            "format" | "schema_version" | "content" | "park"
+        )
+    }) {
+        return Err(SaveError::new(
+            "invalid_save",
+            format!("unknown field `{key}`"),
+        ));
+    }
+    let content = object
+        .remove("content")
+        .ok_or_else(|| SaveError::new("invalid_save", "content: missing"))?;
+    let park = object
+        .remove("park")
+        .ok_or_else(|| SaveError::new("invalid_save", "park: missing"))?;
+    let catalog = Catalog::parse(&content.to_string())
+        .map_err(|message| SaveError::new("invalid_content", message))?;
+    let mut state: GameState = serde_path_to_error::deserialize(park).map_err(|error| {
+        SaveError::new(
+            "invalid_save",
+            format!("park/{}: {}", error.path(), error.inner()),
+        )
+    })?;
+    state.catalog = Arc::new(catalog);
+    if let Some(violation) = state.save_violation() {
+        return Err(SaveError::new("invalid_park", violation));
+    }
+    Ok(state)
+}
+
+/// Rewrites a document of schema `from` into the current schema, one version at a time.
+fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
+    match from {
+        SCHEMA_VERSION => Ok(value),
+        // Released schemas add one step each: `1 => migrate(v1_to_v2(value)?, 2),`.
+        other => Err(SaveError::new(
+            "unsupported_version",
+            format!("no migration from save schema {other}"),
+        )),
+    }
+}
+
+impl GameState {
+    /// Structural checks a loaded park must pass beyond the per-tick invariants: dimensions,
+    /// fixed landmarks, unique ordered IDs, resolvable references and value ranges.
+    fn save_violation(&self) -> Option<String> {
+        self.save_violation_result().err()
+    }
+
+    fn save_violation_result(&self) -> Result<(), String> {
+        if self.width != WIDTH || self.height != HEIGHT {
+            return Err(format!(
+                "park is {}x{}, expected {WIDTH}x{HEIGHT}",
+                self.width, self.height
+            ));
+        }
+        if let Some(violation) = self.invariant_violation() {
+            return Err(violation);
+        }
+        if self.day == 0 || self.minute_of_day >= MINUTES_PER_DAY {
+            return Err(format!(
+                "clock day {} minute {} is out of range",
+                self.day, self.minute_of_day
+            ));
+        }
+        ordered(
+            "litter",
+            self.litter.iter().map(|task| task.id),
+            self.next_litter_id,
+        )?;
+        ordered(
+            "maintenance",
+            self.maintenance.iter().map(|task| task.id),
+            self.next_maintenance_id,
+        )?;
+        let in_bounds = |name: &str, id: u32, x: u32, y: u32| {
+            if x < self.width && y < self.height {
+                Ok(())
+            } else {
+                Err(format!("{name} {id} stands outside the park at {x},{y}"))
+            }
+        };
+        let percent = |name: &str, id: u32, values: &[u32]| {
+            if values.iter().all(|value| *value <= 100) {
+                Ok(())
+            } else {
+                Err(format!("{name} {id} has a rating above 100"))
+            }
+        };
+
+        // Landmarks and tile ownership.
+        if self.tile(ENTRANCE_X, ENTRANCE_Y) != Some(TileKind::Entrance) {
+            return Err("the entrance tile is missing".to_owned());
+        }
+        let depot = self.depot_position();
+        if self.tile(depot.x, depot.y) != Some(TileKind::AnimalCareDepot) {
+            return Err("the animal-care depot tile is missing".to_owned());
+        }
+        let habitat_ids: HashSet<u32> = self.habitats.iter().map(|h| h.id).collect();
+        let concession_ids: HashSet<u32> = self.concessions.iter().map(|c| c.id).collect();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                match self.tile(x, y) {
+                    Some(TileKind::Entrance) if (x, y) != (ENTRANCE_X, ENTRANCE_Y) => {
+                        return Err(format!("a second entrance tile at {x},{y}"));
+                    }
+                    Some(TileKind::AnimalCareDepot) if (x, y) != (depot.x, depot.y) => {
+                        return Err(format!("a second depot tile at {x},{y}"));
+                    }
+                    Some(TileKind::Habitat(id)) if !habitat_ids.contains(&id) => {
+                        return Err(format!("tile {x},{y} belongs to missing habitat {id}"));
+                    }
+                    Some(TileKind::Concession(id)) if !concession_ids.contains(&id) => {
+                        return Err(format!("tile {x},{y} belongs to missing concession {id}"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for habitat in &self.habitats {
+            let id = habitat.id;
+            let fits = habitat.width > 0
+                && habitat.height > 0
+                && habitat
+                    .x
+                    .checked_add(habitat.width)
+                    .is_some_and(|r| r <= self.width)
+                && habitat
+                    .y
+                    .checked_add(habitat.height)
+                    .is_some_and(|b| b <= self.height);
+            if !fits {
+                return Err(format!("habitat {id} footprint leaves the park"));
+            }
+            let owned = (habitat.y..habitat.y + habitat.height).all(|y| {
+                (habitat.x..habitat.x + habitat.width)
+                    .all(|x| self.tile(x, y) == Some(TileKind::Habitat(id)))
+            });
+            let tiles = self
+                .tiles
+                .iter()
+                .filter(|tile| **tile == TileKind::Habitat(id))
+                .count();
+            if !owned || tiles != habitat.area() as usize {
+                return Err(format!("habitat {id} tiles do not match its footprint"));
+            }
+            match &habitat.species {
+                Some(species) if !self.catalog.species.contains(species) => {
+                    return Err(format!(
+                        "habitat {id} houses species {} that does not match the content",
+                        species.key
+                    ));
+                }
+                None if habitat.animals > 0 => {
+                    return Err(format!("habitat {id} has animals but no species"));
+                }
+                _ => {}
+            }
+            percent(
+                "habitat",
+                id,
+                &[
+                    habitat.welfare,
+                    habitat.food,
+                    habitat.water,
+                    habitat.cleanliness,
+                ],
+            )?;
+        }
+        for stand in &self.concessions {
+            in_bounds("concession", stand.id, stand.x, stand.y)?;
+            if self.tile(stand.x, stand.y) != Some(TileKind::Concession(stand.id)) {
+                return Err(format!("concession {} has no tile", stand.id));
+            }
+            if !self
+                .catalog
+                .facilities
+                .iter()
+                .any(|facility| same_facility(facility, &stand.definition))
+            {
+                return Err(format!(
+                    "concession {} uses facility {} that does not match the content",
+                    stand.id, stand.definition.key
+                ));
+            }
+            percent("concession", stand.id, &[stand.condition])?;
+        }
+
+        // Staff, tasks and their references.
+        let zone_ids: HashSet<u32> = self.work_zones.iter().map(|z| z.id).collect();
+        let keeper_ids: HashSet<u32> = self.keepers.iter().map(|k| k.id).collect();
+        let job_ids: HashSet<u32> = self.care_jobs.iter().map(|j| j.id).collect();
+        for keeper in &self.keepers {
+            in_bounds("keeper", keeper.id, keeper.x, keeper.y)?;
+            if keeper.zone_id.is_some_and(|zone| !zone_ids.contains(&zone)) {
+                return Err(format!("keeper {} works in a missing zone", keeper.id));
+            }
+            if keeper
+                .activity
+                .job_id()
+                .is_some_and(|job| !job_ids.contains(&job))
+            {
+                return Err(format!("keeper {} works a missing care job", keeper.id));
+            }
+            if keeper.schedule.categories.is_empty() {
+                return Err(format!("keeper {} accepts no care categories", keeper.id));
+            }
+        }
+        for job in &self.care_jobs {
+            if !habitat_ids.contains(&job.habitat_id) {
+                return Err(format!("care job {} belongs to a missing habitat", job.id));
+            }
+            if job.keeper_ids.iter().any(|id| !keeper_ids.contains(id)) {
+                return Err(format!("care job {} reserves a missing keeper", job.id));
+            }
+            if job.state == CareJobState::InProgress
+                && job.keeper_ids.len() != job.required_keepers as usize
+            {
+                return Err(format!("care job {} has an incomplete crew", job.id));
+            }
+        }
+        let litter_ids: HashSet<u32> = self.litter.iter().map(|t| t.id).collect();
+        let janitor_ids: HashSet<u32> = self.janitors.iter().map(|j| j.id).collect();
+        for janitor in &self.janitors {
+            in_bounds("janitor", janitor.id, janitor.x, janitor.y)?;
+            if janitor
+                .target_litter_id
+                .is_some_and(|id| !litter_ids.contains(&id))
+            {
+                return Err(format!("janitor {} targets missing litter", janitor.id));
+            }
+        }
+        for task in &self.litter {
+            in_bounds("litter", task.id, task.x, task.y)?;
+            if task
+                .assigned_janitor_id
+                .is_some_and(|id| !janitor_ids.contains(&id))
+            {
+                return Err(format!("litter {} is assigned a missing janitor", task.id));
+            }
+        }
+        let maintenance_ids: HashSet<u32> = self.maintenance.iter().map(|t| t.id).collect();
+        let mechanic_ids: HashSet<u32> = self.mechanics.iter().map(|m| m.id).collect();
+        for mechanic in &self.mechanics {
+            in_bounds("mechanic", mechanic.id, mechanic.x, mechanic.y)?;
+            if mechanic
+                .target_maintenance_id
+                .is_some_and(|id| !maintenance_ids.contains(&id))
+            {
+                return Err(format!(
+                    "mechanic {} targets a missing maintenance task",
+                    mechanic.id
+                ));
+            }
+        }
+        for task in &self.maintenance {
+            if !concession_ids.contains(&task.concession_id) {
+                return Err(format!(
+                    "maintenance {} belongs to a missing concession",
+                    task.id
+                ));
+            }
+            if task
+                .assigned_mechanic_id
+                .is_some_and(|id| !mechanic_ids.contains(&id))
+            {
+                return Err(format!(
+                    "maintenance {} is assigned a missing mechanic",
+                    task.id
+                ));
+            }
+        }
+
+        // Guests.
+        for guest in &self.guests {
+            let id = guest.id;
+            in_bounds("guest", id, guest.x, guest.y)?;
+            if !habitat_ids.contains(&guest.target_habitat) {
+                return Err(format!("guest {id} heads to a missing habitat"));
+            }
+            if guest.route_index > guest.route.len() {
+                return Err(format!("guest {id} is past the end of its route"));
+            }
+            if let Some(Position { x, y }) = guest
+                .route
+                .iter()
+                .find(|step| step.x >= self.width || step.y >= self.height)
+            {
+                return Err(format!("guest {id} routes outside the park at {x},{y}"));
+            }
+            if guest.visited_habitats.len() > MAX_GUEST_HABITATS_PER_VISIT {
+                return Err(format!("guest {id} visited too many habitats"));
+            }
+            percent(
+                "guest",
+                id,
+                &[
+                    guest.happiness,
+                    guest.energy,
+                    guest.hunger,
+                    guest.thirst,
+                    guest.value_perception,
+                ],
+            )?;
+        }
+
+        // Ledgers.
+        let ledgers = std::iter::once(&self.finance_today).chain(self.finance_previous.as_ref());
+        for ledger in ledgers {
+            let fields = serde_json::to_value(ledger).expect("ledger serialization is infallible");
+            let out_of_range = fields.as_object().into_iter().flatten().any(|(_, cents)| {
+                cents
+                    .as_i64()
+                    .is_none_or(|cents| !(0..=content::MAX_CENTS).contains(&cents))
+            });
+            if out_of_range {
+                return Err("a finance ledger entry is outside its range".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn ordered(name: &str, ids: impl Iterator<Item = u32>, next: u32) -> Result<(), String> {
+    let mut previous = 0;
+    for id in ids {
+        if id <= previous || id >= next {
+            return Err(format!(
+                "{name} id {id} is duplicated, out of order or not yet allocated (next {next})"
+            ));
+        }
+        previous = id;
+    }
+    Ok(())
+}
+
+fn same_facility(left: &content::Facility, right: &content::Facility) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
+}

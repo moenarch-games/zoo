@@ -68,7 +68,7 @@ pub(crate) struct Session {
 }
 
 /// Deterministic FNV-1a 64-bit digest; identifies content, it is not a security hash.
-fn fnv1a64(bytes: &[u8]) -> String {
+pub(crate) fn fnv1a64(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
         hash ^= u64::from(*byte);
@@ -99,6 +99,13 @@ impl Session {
             pending_fault: None,
             injected_corruption: false,
         }
+    }
+
+    /// Marks a session that began from a loaded save rather than the default scenario, so a
+    /// command-log replay from the default start fails closed instead of diverging silently.
+    pub fn mark_save_start(&mut self, save_document: &str) {
+        self.start["scenario"] = json!("save");
+        self.start["save_digest"] = json!(fnv1a64(save_document.as_bytes()));
     }
 
     pub fn start(&self) -> &Value {
