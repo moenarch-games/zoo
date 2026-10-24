@@ -34,7 +34,6 @@ fn populate(game: &mut ZooGame, rect: (u32, u32, u32, u32), species: &str) -> u3
         .unwrap() as u32;
     accepted(game.hire_keeper());
     zone_newest_keeper(game);
-    accepted(game.schedule_keeper(habitat_id));
     accepted(game.adopt(habitat_id, species.to_owned()));
     habitat_id
 }

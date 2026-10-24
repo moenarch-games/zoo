@@ -654,6 +654,13 @@ dd {
   color: #b3261e;
 }
 
+.keeper-categories {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 10px;
+}
+
 .zone-keeper-select {
   display: flex;
   gap: 8px;

@@ -35,8 +35,6 @@ fn replay_reproduces_zone_bounds_keeper_assignments_and_membership() {
     ok(game.set_work_zone_bounds(2, 6, 2, 13, 12));
     ok(game.assign_keeper_zone(1, 1));
     ok(game.assign_keeper_zone(2, 2));
-    ok(game.schedule_keeper(1));
-    ok(game.schedule_keeper(2));
     ok(game.create_work_zone(14, 0, 19, 13));
     ok(game.delete_work_zone(3));
     game.tick(30);

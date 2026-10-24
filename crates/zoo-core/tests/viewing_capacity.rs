@@ -27,7 +27,6 @@ fn path_frontage_adds_capacity_only_where_animals_are_visible() {
     accepted(game.hire_keeper());
     accepted(game.create_work_zone(0, 0, 19, 13));
     accepted(game.assign_keeper_zone(1, 1));
-    accepted(game.schedule_keeper(habitat_id));
     accepted(game.adopt(habitat_id, "capybara".to_owned()));
 
     let before = snapshot(&game);

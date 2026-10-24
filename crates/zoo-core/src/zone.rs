@@ -3,9 +3,8 @@
 //! A work zone is one map-aligned rectangle; zones never overlap. A habitat belongs to the zone
 //! containing its service gate's fence tile, so one gate resolves to zero or one zone. Each
 //! keeper has at most one zone; a keeper without one is idle and flagged as needing a zone.
-//! Until the zone scheduler (#134) lands, the per-habitat "schedule keeper" action only picks
-//! keepers from the habitat's zone, and any schedule a zone or gate edit invalidates is
-//! released (a job already under way still runs to completion).
+//! The keeper scheduler (#134) only gives a keeper habitat jobs from its own zone. Zone, gate
+//! and keeper edits change future eligibility; a job already under way runs to completion.
 use super::{ActionResult, GameState, Habitat, Position};
 use serde::Serialize;
 
@@ -215,11 +214,7 @@ impl GameState {
         zone.y = bounds.y;
         zone.width = bounds.width;
         zone.height = bounds.height;
-        let released = self.release_out_of_zone_schedules();
-        ActionResult::ok(format!(
-            "Work zone #{zone_id} updated{}",
-            released_suffix(released)
-        ))
+        ActionResult::ok(format!("Work zone #{zone_id} updated"))
     }
 
     /// Deletes a zone; its keepers become unassigned and its habitats uncovered.
@@ -233,11 +228,7 @@ impl GameState {
                 keeper.zone_id = None;
             }
         }
-        let released = self.release_out_of_zone_schedules();
-        ActionResult::ok(format!(
-            "Work zone #{zone_id} deleted{}",
-            released_suffix(released)
-        ))
+        ActionResult::ok(format!("Work zone #{zone_id} deleted"))
     }
 
     pub(crate) fn assign_keeper_zone(&mut self, keeper_id: u32, zone_id: u32) -> ActionResult {
@@ -257,39 +248,17 @@ impl GameState {
             ));
         }
         keeper.zone_id = Some(zone_id);
-        let released = self.release_out_of_zone_schedules();
         ActionResult::ok(format!(
-            "Keeper #{keeper_id} assigned to work zone #{zone_id}{}",
-            released_suffix(released)
+            "Keeper #{keeper_id} assigned to work zone #{zone_id}"
         ))
     }
 
-    /// Clears every habitat schedule whose keeper no longer works in the habitat's zone. A job
-    /// the keeper already started keeps running; the keeper only stops taking new ones there.
-    pub(crate) fn release_out_of_zone_schedules(&mut self) -> usize {
-        let mut released = 0;
-        for habitat_index in 0..self.habitats.len() {
-            let Some(keeper_id) = self.habitats[habitat_index].keeper_id else {
-                continue;
-            };
-            let zone = self.habitat_zone(&self.habitats[habitat_index]);
-            let keeper = self
-                .keepers
-                .iter_mut()
-                .find(|keeper| keeper.id == keeper_id);
-            let valid = keeper
-                .as_ref()
-                .is_some_and(|keeper| zone.is_some() && keeper.zone_id == zone);
-            if valid {
-                continue;
-            }
-            if let Some(keeper) = keeper {
-                keeper.assigned_habitat_id = None;
-            }
-            self.habitats[habitat_index].keeper_id = None;
-            released += 1;
-        }
-        released
+    /// How many keepers work in a zone, whatever their categories or shifts.
+    pub(crate) fn zone_keeper_count(&self, zone_id: u32) -> usize {
+        self.keepers
+            .iter()
+            .filter(|keeper| keeper.zone_id == Some(zone_id))
+            .count()
     }
 
     pub(crate) fn work_zone_views(&self) -> Vec<WorkZoneView> {
@@ -338,14 +307,6 @@ impl GameState {
                     .is_some_and(|zone_id| !self.work_zones.iter().any(|zone| zone.id == zone_id))
             })
             .map(|keeper| format!("keeper {} references a deleted work zone", keeper.id))
-    }
-}
-
-pub(crate) fn released_suffix(released: usize) -> String {
-    match released {
-        0 => String::new(),
-        1 => " · released 1 keeper schedule outside its zone".to_owned(),
-        count => format!(" · released {count} keeper schedules outside their zones"),
     }
 }
 
@@ -441,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn scheduling_respects_zones_and_unassigned_keepers_stay_idle() {
+    fn adoption_needs_a_staffed_zone_and_unassigned_keepers_stay_idle() {
         let mut state = GameState::default();
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let id = state.habitats[0].id;
@@ -451,33 +412,23 @@ mod tests {
             "Idle · needs a work zone"
         );
 
-        let uncovered = state.schedule_keeper(id);
+        let uncovered = state.adopt(id, "capybara");
         assert!(!uncovered.ok);
         assert!(uncovered.message.contains("outside every work zone"));
         assert!(state.create_work_zone(0, 0, 9, 13).ok);
-        let unstaffed = state.schedule_keeper(id);
+        let unstaffed = state.adopt(id, "capybara");
         assert!(!unstaffed.ok);
-        assert!(
-            unstaffed
-                .message
-                .contains("No free keeper works in zone #1")
-        );
+        assert!(unstaffed.message.contains("No keeper works in zone #1"));
 
         assert!(state.assign_keeper_zone(1, 1).ok);
         assert!(state.assign_keeper_zone(1, 1).message.contains("already"));
         assert!(!state.assign_keeper_zone(1, 9).ok);
         assert!(!state.assign_keeper_zone(9, 1).ok);
-        assert!(state.schedule_keeper(id).ok);
-
-        // Reassigning the keeper to another zone releases the schedule.
-        assert!(state.create_work_zone(10, 0, 19, 13).ok);
-        let moved = state.assign_keeper_zone(1, 2);
-        assert!(moved.ok);
-        assert!(moved.message.contains("released 1 keeper schedule"));
-        assert_eq!(state.habitats[0].keeper_id, None);
-        assert_eq!(state.keepers[0].assigned_habitat_id, None);
+        assert!(state.adopt(id, "capybara").ok);
 
         // Deleting a zone unassigns its keepers without blocking.
+        assert!(state.create_work_zone(10, 0, 19, 13).ok);
+        assert!(state.assign_keeper_zone(1, 2).ok);
         assert!(state.delete_work_zone(2).ok);
         assert_eq!(state.keepers[0].zone_id, None);
         assert!(state.invariant_violation().is_none());
@@ -490,7 +441,6 @@ mod tests {
         let id = state.habitats[0].id;
         assert!(state.buy_animal_feed().ok);
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(id).ok);
         assert!(state.adopt(id, "capybara").ok);
         state.habitats[0].food = 10;
         let job_id = (0..24 * 60)
@@ -505,8 +455,6 @@ mod tests {
 
         let deleted = state.delete_work_zone(1);
         assert!(deleted.ok);
-        assert!(deleted.message.contains("released 1 keeper schedule"));
-        assert_eq!(state.habitats[0].keeper_id, None);
         for _ in 0..120 {
             state.tick(1);
         }

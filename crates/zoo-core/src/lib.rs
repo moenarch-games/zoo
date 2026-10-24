@@ -120,9 +120,10 @@ struct Concession {
 #[derive(Clone, Debug)]
 struct Keeper {
     id: u32,
-    assigned_habitat_id: Option<u32>,
     /// The keeper's work zone; `None` leaves the keeper idle and flagged as needing one.
     zone_id: Option<u32>,
+    /// Which care jobs and hours the scheduler may give this keeper.
+    schedule: care::KeeperSchedule,
     deliveries_completed: u32,
     /// The keeper's tile; the depot tile itself while at the depot.
     x: u32,
@@ -404,7 +405,6 @@ struct Habitat {
     water: u32,
     cleanliness: u32,
     has_shelter: bool,
-    keeper_id: Option<u32>,
     /// Instantiated from the species defaults on first adoption, then owned by the habitat.
     care_schedule: Option<care::CareSchedule>,
     /// The fence segment keepers walk through; its outside tile must stay unbuilt.
@@ -508,7 +508,7 @@ impl Habitat {
             / 8
     }
 
-    fn welfare_status(&self, gate_reachable: bool) -> String {
+    fn welfare_status(&self, staffing: Option<&str>, gate_reachable: bool) -> String {
         let Some(species) = &self.species else {
             return "Ready for animals".to_owned();
         };
@@ -520,19 +520,20 @@ impl Habitat {
             (true, true) => "Social group is too small and habitat space is crowded".to_owned(),
             (true, false) => format!("Social group needs at least {minimum_group} animals"),
             (false, true) => "Habitat space is crowded for this group".to_owned(),
-            (false, false) => self.care_status(gate_reachable),
+            (false, false) => self.care_status(staffing, gate_reachable),
         }
     }
 
-    fn care_status(&self, gate_reachable: bool) -> String {
-        if self.keeper_id.is_none() {
-            return "No keeper is scheduled for food deliveries".to_owned();
+    /// `staffing` is why no keeper can serve this habitat at all, if so.
+    fn care_status(&self, staffing: Option<&str>, gate_reachable: bool) -> String {
+        if let Some(problem) = staffing {
+            return problem.to_owned();
         }
         if !gate_reachable {
             return GATE_UNREACHABLE.to_owned();
         }
         if self.animals == 0 {
-            return "Keeper scheduled; care supplies are ready".to_owned();
+            return "Zone keepers ready; care starts with the first animals".to_owned();
         }
         if self.food < 40 {
             return "Food is running low".to_owned();
@@ -1154,7 +1155,6 @@ impl GameState {
             water: 100,
             cleanliness: 100,
             has_shelter: false,
-            keeper_id: None,
             care_schedule: None,
             service_gate,
         });
@@ -1299,8 +1299,8 @@ impl GameState {
         {
             return ActionResult::error("Each habitat currently keeps one species");
         }
-        if habitat.keeper_id.is_none() {
-            return ActionResult::error("Schedule a keeper before adopting animals");
+        if let Some(problem) = self.staffing_problem(habitat) {
+            return ActionResult::error(format!("Staff this habitat before adopting: {problem}"));
         }
 
         if let Err(message) = self.spend(species.purchase_cost(), ExpenseCategory::AnimalPurchase) {
@@ -1343,8 +1343,8 @@ impl GameState {
         self.next_keeper_id = self.next_keeper_id.saturating_add(1);
         self.keepers.push(Keeper {
             id,
-            assigned_habitat_id: None,
             zone_id: None,
+            schedule: care::KeeperSchedule::default(),
             deliveries_completed: 0,
             x: ANIMAL_CARE_DEPOT_X,
             y: ANIMAL_CARE_DEPOT_Y,
@@ -1415,70 +1415,18 @@ impl GameState {
         ))
     }
 
-    fn schedule_keeper(&mut self, habitat_id: u32) -> ActionResult {
-        let Some(habitat_index) = self
-            .habitats
-            .iter()
-            .position(|habitat| habitat.id == habitat_id)
-        else {
-            return ActionResult::error("Select a habitat first");
+    /// Why no keeper can ever serve this habitat's jobs, if so: its gate lies outside every
+    /// work zone, or nobody works in that zone. There is no park-wide staffing fallback.
+    fn staffing_problem(&self, habitat: &Habitat) -> Option<String> {
+        let Some(zone_id) = self.habitat_zone(habitat) else {
+            return Some(
+                "No work zone: the service gate is outside every work zone; draw a zone around it"
+                    .to_owned(),
+            );
         };
-        if let Some(keeper_id) = self.habitats[habitat_index].keeper_id {
-            return ActionResult::ok(format!(
-                "Keeper #{keeper_id} is already scheduled for habitat #{habitat_id}"
-            ));
-        }
-        let Some(zone_id) = self.habitat_zone(&self.habitats[habitat_index]) else {
-            return ActionResult::error(format!(
-                "Habitat #{habitat_id}'s service gate is outside every work zone; draw a zone around it"
-            ));
-        };
-        let Some(keeper_index) = self.keepers.iter().position(|keeper| {
-            keeper.assigned_habitat_id.is_none() && keeper.zone_id == Some(zone_id)
-        }) else {
-            return ActionResult::error(format!(
-                "No free keeper works in zone #{zone_id}; assign one in the zone inspector or hire another"
-            ));
-        };
-
-        let keeper_id = self.keepers[keeper_index].id;
-        self.keepers[keeper_index].assigned_habitat_id = Some(habitat_id);
-        self.habitats[habitat_index].keeper_id = Some(keeper_id);
-        ActionResult::ok(format!(
-            "Keeper #{keeper_id} scheduled for habitat #{habitat_id}"
-        ))
-    }
-
-    fn feed_habitat(&mut self, habitat_id: u32) -> ActionResult {
-        let Some(index) = self
-            .habitats
-            .iter()
-            .position(|habitat| habitat.id == habitat_id)
-        else {
-            return ActionResult::error("Select a habitat first");
-        };
-        if self.habitats[index].food >= 100 {
-            return ActionResult::ok("Food is already fully stocked");
-        }
-        let Some(keeper_id) = self.habitats[index].keeper_id else {
-            return ActionResult::error("Schedule a keeper before delivering food");
-        };
-        if self.feed_crates == 0 {
-            return ActionResult::error("The animal-care depot is out of feed crates");
-        }
-
-        self.feed_crates -= 1;
-        self.habitats[index].food = 100;
-        if let Some(keeper) = self
-            .keepers
-            .iter_mut()
-            .find(|keeper| keeper.id == keeper_id)
-        {
-            keeper.deliveries_completed = keeper.deliveries_completed.saturating_add(1);
-        }
-        ActionResult::ok(format!(
-            "Keeper #{keeper_id} delivered feed to habitat #{habitat_id}"
-        ))
+        (self.zone_keeper_count(zone_id) == 0).then(|| {
+            format!("No keeper works in zone #{zone_id}; assign one in the zone inspector")
+        })
     }
 
     fn refill_water(&mut self, habitat_id: u32) -> ActionResult {
@@ -3111,14 +3059,11 @@ impl GameState {
     }
 
     fn feeding_status(&self, habitat: &Habitat) -> String {
-        let Some(keeper_id) = habitat.keeper_id else {
-            if self.habitat_zone(habitat).is_none() {
-                return "No zone: the service gate is outside every work zone".to_owned();
-            }
-            return "No keeper scheduled; assign a keeper to this zone".to_owned();
-        };
+        if let Some(problem) = self.staffing_problem(habitat) {
+            return problem;
+        }
         if self.feed_crates == 0 {
-            return format!("Keeper #{keeper_id} is waiting for depot feed stock");
+            return "Feeding waits for depot feed stock".to_owned();
         }
         let next_feeding = habitat.care_schedule.as_ref().and_then(|schedule| {
             schedule
@@ -3128,10 +3073,10 @@ impl GameState {
         });
         match next_feeding {
             Some(task) => format!(
-                "Keeper #{keeper_id} scheduled · next feeding in {} min",
+                "Next feeding in {} min",
                 task.next_due_minute.saturating_sub(self.absolute_minute())
             ),
-            None => format!("Keeper #{keeper_id} scheduled · care starts with the first animals"),
+            None => "Care starts with the first animals".to_owned(),
         }
     }
 
@@ -3411,6 +3356,8 @@ impl GameState {
                     .map(|spot| spot.occupancy)
                     .fold(0_u32, u32::saturating_add);
                 let gate_reachable = self.service_gate_reachable(habitat);
+                let staffing = self.staffing_problem(habitat);
+                let work_zone_id = self.habitat_zone(habitat);
                 HabitatView {
                     id: habitat.id,
                     x: habitat.x,
@@ -3452,13 +3399,14 @@ impl GameState {
                     welfare_target: habitat.welfare_target(),
                     social_score: habitat.social_score(),
                     space_score: habitat.space_score(),
-                    welfare_status: habitat.welfare_status(gate_reachable),
+                    welfare_status: habitat.welfare_status(staffing.as_deref(), gate_reachable),
                     food: habitat.food,
                     water: habitat.water,
                     cleanliness: habitat.cleanliness,
                     has_shelter: habitat.has_shelter,
-                    keeper_id: habitat.keeper_id,
-                    work_zone_id: self.habitat_zone(habitat),
+                    work_zone_id,
+                    zone_keeper_count: work_zone_id
+                        .map_or(0, |zone_id| self.zone_keeper_count(zone_id) as u32),
                     care_required_keepers: habitat
                         .care_schedule
                         .as_ref()
@@ -3470,7 +3418,7 @@ impl GameState {
                         .unwrap_or_default(),
                     care_jobs: self.care_job_views(habitat.id),
                     feeding_status: self.feeding_status(habitat),
-                    care_status: habitat.care_status(gate_reachable),
+                    care_status: habitat.care_status(staffing.as_deref(), gate_reachable),
                     appeal: habitat.appeal(),
                 }
             })
@@ -3623,13 +3571,20 @@ struct KeeperView {
     id: u32,
     x: u32,
     y: u32,
-    assigned_habitat_id: Option<u32>,
     zone_id: Option<u32>,
     /// No work zone: the keeper stays idle until assigned one.
     needs_zone: bool,
+    /// Care categories the keeper accepts, in catalog order.
+    categories: Vec<content::CareCategory>,
+    /// The daily availability window; `shift_end_minute` may wrap past midnight.
+    shift_start_minute: u32,
+    shift_end_minute: u32,
+    on_shift: bool,
     deliveries_completed: u32,
     activity: &'static str,
     job_id: Option<u32>,
+    /// The habitat of the keeper's current job.
+    habitat_id: Option<u32>,
     /// Remaining walk from the keeper's tile to its destination; empty when blocked.
     route: Vec<Position>,
     status: String,
@@ -3743,9 +3698,10 @@ struct HabitatView {
     water: u32,
     cleanliness: u32,
     has_shelter: bool,
-    keeper_id: Option<u32>,
-    /// The work zone containing the service gate; `None` means no keeper can be scheduled.
+    /// The work zone containing the service gate; `None` means no keeper can serve it.
     work_zone_id: Option<u32>,
+    /// Keepers working in that zone; habitat jobs go only to them.
+    zone_keeper_count: u32,
     care_required_keepers: Option<u32>,
     care_schedule: Vec<care::CareTaskView>,
     care_jobs: Vec<care::CareJobView>,
@@ -4044,8 +4000,12 @@ impl ZooGame {
             "hire_keeper" => self.hire_keeper(),
             "hire_janitor" => self.hire_janitor(),
             "hire_mechanic" => self.hire_mechanic(),
-            "schedule_keeper" => self.schedule_keeper(number("habitat_id")?),
-            "feed_habitat" => self.feed_habitat(number("habitat_id")?),
+            "set_keeper_schedule" => self.set_keeper_schedule(
+                number("keeper_id")?,
+                text("categories")?,
+                number("shift_start_minute")?,
+                number("shift_end_minute")?,
+            ),
             "refill_water" => self.refill_water(number("habitat_id")?),
             "clean_habitat" => self.clean_habitat(number("habitat_id")?),
             "add_shelter" => self.add_shelter(number("habitat_id")?),
@@ -4287,16 +4247,23 @@ impl ZooGame {
         )
     }
 
-    pub fn schedule_keeper(&mut self, habitat_id: u32) -> String {
-        let args = serde_json::json!({ "habitat_id": habitat_id });
-        self.command("schedule_keeper", args, |state| {
-            state.schedule_keeper(habitat_id)
+    /// Sets which care categories (comma-separated keys) and daily hours a keeper works.
+    pub fn set_keeper_schedule(
+        &mut self,
+        keeper_id: u32,
+        categories: String,
+        shift_start_minute: u32,
+        shift_end_minute: u32,
+    ) -> String {
+        let args = serde_json::json!({
+            "keeper_id": keeper_id,
+            "categories": categories,
+            "shift_start_minute": shift_start_minute,
+            "shift_end_minute": shift_end_minute,
+        });
+        self.command("set_keeper_schedule", args, |state| {
+            state.set_keeper_schedule(keeper_id, &categories, shift_start_minute, shift_end_minute)
         })
-    }
-
-    pub fn feed_habitat(&mut self, habitat_id: u32) -> String {
-        let args = serde_json::json!({ "habitat_id": habitat_id });
-        self.command("feed_habitat", args, |state| state.feed_habitat(habitat_id))
     }
 
     pub fn refill_water(&mut self, habitat_id: u32) -> String {
@@ -4415,10 +4382,10 @@ impl Default for ZooGame {
 mod tests {
     use super::*;
 
-    fn staff_habitat(state: &mut GameState, habitat_id: u32) {
+    /// Buys feed and adds one more keeper to the park-wide zone covering the habitat.
+    fn staff_habitat(state: &mut GameState, _habitat_id: u32) {
         assert!(state.buy_animal_feed().ok);
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(habitat_id).ok);
     }
 
     fn test_habitat(x: u32, y: u32, width: u32, height: u32) -> Habitat {
@@ -4436,7 +4403,6 @@ mod tests {
             water: 100,
             cleanliness: 100,
             has_shelter: true,
-            keeper_id: Some(1),
             care_schedule: None,
             service_gate: FenceSegment {
                 x,
@@ -4934,24 +4900,6 @@ mod tests {
     }
 
     #[test]
-    fn habitat_care_actions_remain_idempotent() {
-        let mut state = GameState::default();
-        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
-        let habitat_id = state.habitats[0].id;
-        staff_habitat(&mut state, habitat_id);
-        assert!(state.adopt(habitat_id, "capybara").ok);
-        state.tick(CARE_DECAY_INTERVAL_MINUTES);
-        assert!(state.habitats[0].food < 100);
-
-        let before = state.feed_crates;
-        assert!(state.feed_habitat(habitat_id).ok);
-        let after_first = state.feed_crates;
-        assert_eq!(after_first, before - 1);
-        assert!(state.feed_habitat(habitat_id).ok);
-        assert_eq!(state.feed_crates, after_first);
-    }
-
-    #[test]
     fn concession_placement_requires_path_and_is_idempotent() {
         let mut state = GameState::default();
         let before = state.cash_cents;
@@ -5347,48 +5295,220 @@ mod tests {
         );
     }
 
-    #[test]
-    fn adoption_requires_a_scheduled_keeper() {
-        let mut state = GameState::default();
-        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
-        let habitat_id = state.habitats[0].id;
-
-        let unstaffed = state.adopt(habitat_id, "capybara");
-        assert!(!unstaffed.ok);
-        assert_eq!(
-            unstaffed.message,
-            "Schedule a keeper before adopting animals"
-        );
-
-        state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(habitat_id).ok);
-        assert!(state.adopt(habitat_id, "capybara").ok);
-    }
-
-    #[test]
-    fn keeper_assignment_is_idempotent_and_one_keeper_cannot_cover_two_habitats() {
+    /// Two empty habitats on one path row; neither generates jobs of its own.
+    fn empty_two_habitat_park() -> GameState {
         let mut state = GameState::default();
         for x in 5..=11 {
             assert!(state.place_path(x, ENTRANCE_Y).ok);
         }
         assert!(state.place_habitat_rect(3, 8, 5, 10).ok);
         assert!(state.place_habitat_rect(7, 8, 9, 10).ok);
-        let first_id = state.habitats[0].id;
-        let second_id = state.habitats[1].id;
+        state
+    }
 
+    /// Adds a due inspection job (no supplies) directly, as a habitat schedule would.
+    fn push_inspection(state: &mut GameState, habitat_id: u32, priority: u32, age: u64) -> u32 {
+        let id = state.next_care_job_id;
+        state.next_care_job_id += 1;
+        state.care_jobs.push(care::CareJob {
+            id,
+            habitat_id,
+            category: content::CareCategory::Inspection,
+            due_minute: state.absolute_minute() - age,
+            priority,
+            required_keepers: 1,
+            work_minutes: 10,
+            state: care::CareJobState::Due,
+            keeper_id: None,
+            supplies_reserved: false,
+            resolved_minute: None,
+        });
+        id
+    }
+
+    fn job(state: &GameState, id: u32) -> care::CareJob {
+        *state.care_jobs.iter().find(|job| job.id == id).unwrap()
+    }
+
+    fn waiting_reason(state: &GameState, habitat_id: u32, id: u32) -> Option<String> {
+        state
+            .care_job_views(habitat_id)
+            .into_iter()
+            .find(|view| view.id == id)
+            .and_then(|view| view.waiting_reason)
+    }
+
+    #[test]
+    fn short_staffing_serves_priority_first_and_leaves_lower_work_missed() {
+        let mut state = empty_two_habitat_park();
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(first_id).ok);
-        assert!(state.schedule_keeper(first_id).ok);
-        assert_eq!(state.keepers.len(), 1);
-        assert_eq!(state.keepers[0].assigned_habitat_id, Some(first_id));
+        let low = push_inspection(&mut state, 1, 2, 50);
+        let high = push_inspection(&mut state, 2, 4, 0);
 
-        let unavailable = state.schedule_keeper(second_id);
-        assert!(!unavailable.ok);
-        assert!(unavailable.message.contains("hire another"));
+        state.tick(1);
+        assert_eq!(job(&state, high).state, care::CareJobState::InProgress);
+        assert_eq!(job(&state, high).keeper_id, Some(1));
+        assert_eq!(job(&state, low).state, care::CareJobState::Due);
+        assert_eq!(
+            waiting_reason(&state, 1, low).as_deref(),
+            Some("All zone #1 inspection keepers are busy")
+        );
 
+        // The only keeper is still walking or working when the low job's grace hour lapses.
+        state.tick(10);
+        assert_eq!(job(&state, low).state, care::CareJobState::Missed);
+        assert_eq!(job(&state, low).keeper_id, None);
+        assert_eq!(waiting_reason(&state, 1, low), None);
+        state.tick(60);
+        assert_eq!(job(&state, high).state, care::CareJobState::Completed);
+        assert_eq!(job(&state, low).state, care::CareJobState::Missed);
+    }
+
+    #[test]
+    fn equal_priority_work_resolves_oldest_due_first() {
+        let mut state = empty_two_habitat_park();
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(second_id).ok);
-        assert_eq!(state.habitats[1].keeper_id, Some(2));
+        let newer = push_inspection(&mut state, 1, 3, 5);
+        let older = push_inspection(&mut state, 2, 3, 20);
+
+        state.tick(1);
+        assert_eq!(job(&state, older).keeper_id, Some(1));
+        assert_eq!(job(&state, newer).state, care::CareJobState::Due);
+    }
+
+    #[test]
+    fn a_job_takes_the_nearest_free_keeper_and_never_double_books() {
+        let mut state = empty_two_habitat_park();
+        state.hire_zoned_keeper();
+        state.hire_zoned_keeper();
+        // Keeper #2 is already standing at habitat #2's gate access tile.
+        let access = state
+            .gate_access_tile(state.habitats[1].service_gate)
+            .unwrap();
+        state.keepers[1].x = access.x;
+        state.keepers[1].y = access.y;
+        state.keepers[1].activity = care::KeeperActivity::ToDepot;
+        let near = push_inspection(&mut state, 2, 3, 0);
+        let other = push_inspection(&mut state, 1, 3, 0);
+        let third = push_inspection(&mut state, 1, 3, 0);
+
+        state.tick(1);
+        assert_eq!(job(&state, near).keeper_id, Some(2));
+        assert_eq!(job(&state, other).keeper_id, Some(1));
+        assert_eq!(job(&state, third).state, care::CareJobState::Due);
+        let busy: Vec<u32> = state
+            .care_jobs
+            .iter()
+            .filter(|job| job.state == care::CareJobState::InProgress)
+            .filter_map(|job| job.keeper_id)
+            .collect();
+        assert_eq!(busy, vec![2, 1]);
+    }
+
+    #[test]
+    fn eligibility_follows_zone_category_and_shift_without_borrowing() {
+        let mut state = empty_two_habitat_park();
+        // Habitat #1's gate (3, 8) lies in zone #1; zone #2 covers the rest of the park.
+        assert!(state.create_work_zone(0, 0, 5, 13).ok);
+        assert!(state.create_work_zone(6, 0, 19, 13).ok);
+        assert_eq!(state.habitat_zone(&state.habitats[0]), Some(1));
+        assert!(state.hire_keeper().ok);
+        let id = push_inspection(&mut state, 1, 3, 0);
+
+        state.tick(1);
+        assert_eq!(
+            waiting_reason(&state, 1, id).as_deref(),
+            Some("No keeper works in zone #1; assign one in the zone inspector")
+        );
+        // A free keeper in another zone is never borrowed.
+        assert!(state.assign_keeper_zone(1, 2).ok);
+        state.tick(1);
+        assert_eq!(job(&state, id).state, care::CareJobState::Due);
+
+        assert!(state.assign_keeper_zone(1, 1).ok);
+        assert!(state.set_keeper_schedule(1, "cleaning", 0, 1440).ok);
+        state.tick(1);
+        assert_eq!(
+            waiting_reason(&state, 1, id).as_deref(),
+            Some("No zone #1 keeper accepts inspection")
+        );
+
+        // 09:03 now; a 13:00–05:00 shift wraps past midnight and excludes the morning.
+        assert!(
+            state
+                .set_keeper_schedule(1, "inspection,cleaning", 780, 300)
+                .ok
+        );
+        assert_eq!(
+            state.keepers[0].schedule.categories,
+            vec![
+                content::CareCategory::Cleaning,
+                content::CareCategory::Inspection
+            ]
+        );
+        state.tick(1);
+        assert_eq!(
+            waiting_reason(&state, 1, id).as_deref(),
+            Some("No zone #1 inspection keeper is on shift")
+        );
+        assert_eq!(
+            state.keeper_view(&state.keepers[0]).status,
+            "Off shift until 13:00"
+        );
+
+        assert!(state.set_keeper_schedule(1, "inspection", 540, 1020).ok);
+        state.tick(1);
+        assert_eq!(job(&state, id).keeper_id, Some(1));
+    }
+
+    #[test]
+    fn keeper_schedules_are_validated_and_idempotent() {
+        let mut state = GameState::default();
+        assert!(state.hire_keeper().ok);
+        for (categories, start, end) in [
+            ("", 0, 1440),
+            ("grooming", 0, 1440),
+            ("feeding", 1440, 1440),
+            ("feeding", 0, 0),
+            ("feeding", 600, 600),
+            ("feeding", 0, 1441),
+        ] {
+            assert!(
+                !state.set_keeper_schedule(1, categories, start, end).ok,
+                "{categories} {start}-{end}"
+            );
+        }
+        assert!(!state.set_keeper_schedule(9, "feeding", 0, 1440).ok);
+        assert!(
+            state
+                .set_keeper_schedule(1, "feeding,feeding,cleaning", 360, 1080)
+                .ok
+        );
+        let repeat = state.set_keeper_schedule(1, "cleaning, feeding", 360, 1080);
+        assert!(repeat.ok);
+        assert!(repeat.message.contains("already"));
+    }
+
+    #[test]
+    fn reassigning_a_keeper_mid_job_keeps_the_running_job_intact() {
+        let mut state = empty_two_habitat_park();
+        assert!(state.create_work_zone(0, 0, 5, 13).ok);
+        assert!(state.create_work_zone(6, 0, 19, 13).ok);
+        assert!(state.hire_keeper().ok);
+        assert!(state.assign_keeper_zone(1, 1).ok);
+        let first = push_inspection(&mut state, 1, 3, 0);
+        state.tick(1);
+        assert_eq!(job(&state, first).keeper_id, Some(1));
+
+        assert!(state.assign_keeper_zone(1, 2).ok);
+        assert!(state.set_keeper_schedule(1, "feeding", 0, 1440).ok);
+        let second = push_inspection(&mut state, 1, 3, 0);
+        state.tick(60);
+        assert_eq!(job(&state, first).state, care::CareJobState::Completed);
+        assert_eq!(job(&state, first).keeper_id, Some(1));
+        // Future zone #1 inspection work is no longer this keeper's.
+        assert_eq!(job(&state, second).state, care::CareJobState::Missed);
+        assert!(state.invariant_violation().is_none());
     }
 
     #[test]
@@ -5450,7 +5570,6 @@ mod tests {
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(habitat_id).ok);
         assert!(state.adopt(habitat_id, "capybara").ok);
         state.habitats[0].food = 40;
         let feeding = |state: &GameState| {
@@ -5781,11 +5900,14 @@ mod tests {
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(habitat_id).ok);
+        let job_id = push_inspection(&mut state, habitat_id, 3, 0);
+        state.tick(1);
+        assert_eq!(job(&state, job_id).keeper_id, Some(1));
 
         assert!(state.bulldoze(3, 8).ok);
         assert!(state.habitats.is_empty());
-        assert_eq!(state.keepers[0].assigned_habitat_id, None);
+        assert!(state.care_jobs.is_empty());
+        assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
     }
 
     /// Rating of a park with no habitats, no guests and no litter.
@@ -5883,7 +6005,6 @@ mod tests {
 
         assert!(state.buy_animal_feed().ok);
         state.hire_zoned_keeper();
-        assert!(state.schedule_keeper(habitat_id).ok);
         assert!(state.adopt(habitat_id, "capybara").ok);
 
         let care_before = state.finance_today.habitat_care_expense_cents;
