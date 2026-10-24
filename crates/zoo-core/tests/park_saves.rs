@@ -6,6 +6,7 @@ use zoo_core::ZooGame;
 const FIXTURE_V1: &str = "tests/fixtures/save-v1.json";
 const FIXTURE_V2: &str = "tests/fixtures/save-v2.json";
 const FIXTURE_V3: &str = "tests/fixtures/save-v3.json";
+const FIXTURE_V4: &str = "tests/fixtures/save-v4.json";
 
 fn json(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
@@ -139,7 +140,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 4.into()),
+            mutate(&|v| v["schema_version"] = 5.into()),
         ),
         (
             "invalid_save",
@@ -194,22 +195,44 @@ fn repeated_imports_replace_rather_than_accumulate() {
 }
 
 #[test]
-fn the_schema_v3_fixture_still_loads_unchanged() {
+fn the_schema_v4_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V3,
+            FIXTURE_V4,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V3).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V4).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));
     let diagnostics = json(&game.diagnostics_json());
     assert_eq!(diagnostics["start"]["scenario"], "save");
     game.tick(60);
+}
+
+/// Schema 3 parks gain alerts, re-read from the park as it loads; nothing else changes.
+#[test]
+fn the_schema_v3_fixture_migrates_by_reading_its_alerts() {
+    let fixture = std::fs::read_to_string(FIXTURE_V3).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    let alerts = saved["park"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alerts")
+        .unwrap();
+    let minute = json(&game.snapshot_json());
+    let now =
+        (minute["day"].as_u64().unwrap() - 1) * 1440 + minute["minute_of_day"].as_u64().unwrap();
+    for alert in alerts.as_array().unwrap() {
+        assert_eq!(alert["first_minute"].as_u64(), Some(now), "{alert}");
+    }
+    saved["schema_version"] = 3.into();
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
 }
 
 /// Schema 2 keeper-training parks continue as the guided opening scenario: same park, same
@@ -227,7 +250,7 @@ fn the_schema_v2_fixture_migrates_keeper_training_to_the_opening_guide() {
     let mut original = json(&fixture);
     for value in [&mut saved, &mut original] {
         let park = value["park"].as_object_mut().unwrap();
-        for key in ["tutorial", "objectives"] {
+        for key in ["tutorial", "objectives", "alerts"] {
             park.remove(key);
         }
         park["scenario"].as_object_mut().unwrap().remove("id");
@@ -266,6 +289,7 @@ fn the_schema_v1_fixture_migrates_to_the_opening_scenario() {
         "unlocks",
         "objectives",
         "tutorial",
+        "alerts",
     ] {
         park.remove(key);
     }

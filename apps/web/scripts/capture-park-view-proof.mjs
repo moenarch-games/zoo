@@ -6,6 +6,7 @@ import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
 import {runSessionRecorderAcceptance} from "./session-recorder-proof.mjs"
 import {runOpeningScenarioAcceptance} from "./opening-scenario-proof.mjs"
+import {runManagementAcceptance} from "./management-proof.mjs"
 import {runScenarioAcceptance} from "./scenario-proof.mjs"
 
 const previewUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:4173/"
@@ -520,6 +521,9 @@ try {
 
   // #93: a guided walk through the opening scenario to an operating zoo, saved and resumed.
   await runOpeningScenarioAcceptance({cdp, evaluate, assert, sleep, previewUrl, screenshot, clickButton, frame})
+
+  // #94: alerts lead to and fix park problems; overlays and the management workspace.
+  await runManagementAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

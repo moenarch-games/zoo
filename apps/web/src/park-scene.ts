@@ -9,6 +9,7 @@ import type {
   GateEvaluation,
   Guest,
   Habitat,
+  OverlayView,
   PlacementEvaluation,
   Point,
   Snapshot,
@@ -18,6 +19,7 @@ import type {
   WorkZoneEvaluation,
   ZoneBounds,
 } from "./game-types"
+import { OVERLAY_COLORS } from "./overlay-colors"
 import type { SceneryKit } from "./scenery-kit"
 import type { SceneryPiece } from "./scenery-manifest"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
@@ -51,6 +53,8 @@ export type SceneOverlay = {
   selectedZoneId: number | null
   /** Rust's evaluation of the zone being drawn, resized, or moved. */
   zonePreview: WorkZoneEvaluation | null
+  /** The active management overlay (#94), graded by zoo-core. */
+  management: OverlayView | null
 }
 
 /** Resolves the presented (smoothed) ground position for a moving actor. */
@@ -1611,6 +1615,50 @@ function overlayNodes(overlay: SceneOverlay): RendererSceneNode[] {
   return nodes
 }
 
+/**
+ * A management overlay tints each graded tile; shape carries the grade too, so color is never
+ * the only signal: warnings add a low block and problems a tall post.
+ */
+function managementNodes(view: OverlayView | null): RendererSceneNode[] {
+  if (!view) {
+    return []
+  }
+  const nodes: RendererSceneNode[] = []
+  for (const cell of view.cells) {
+    const color = OVERLAY_COLORS[cell.level]
+    const center: [number, number] = [cell.x + 0.5, cell.y + 0.5]
+    nodes.push(
+      node(
+        `management:${cell.x}:${cell.y}`,
+        [center[0], 0.07, center[1]],
+        boxGeometry([0.94, 0.02, 0.94]),
+        color,
+        { opacity: cell.level === "good" ? 0.3 : 0.5 },
+      ),
+    )
+    if (cell.level === "warn") {
+      nodes.push(
+        node(
+          `management:${cell.x}:${cell.y}:mark`,
+          [center[0], 0.16, center[1]],
+          boxGeometry([0.22, 0.18, 0.22]),
+          color,
+        ),
+      )
+    } else if (cell.level === "bad") {
+      nodes.push(
+        node(
+          `management:${cell.x}:${cell.y}:mark`,
+          [center[0], 0.42, center[1]],
+          boxGeometry([0.12, 0.7, 0.12]),
+          color,
+        ),
+      )
+    }
+  }
+  return nodes
+}
+
 // ---------------------------------------------------------------------------------------------
 
 /** Identity of everything outside the park that scenery depends on: park size and gate. */
@@ -1675,6 +1723,7 @@ export function buildStaticNodes(
     ...concessionNodes(snapshot),
     ...litterNodes(snapshot),
     ...overlayNodes(overlay),
+    ...managementNodes(overlay.management),
   ]
   if (overlay.selectedDepot) {
     nodes.push(

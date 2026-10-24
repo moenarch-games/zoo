@@ -393,6 +393,9 @@ export type Snapshot = {
   scenario: ScenarioState
   /** Rust-owned bounded construction undo/redo (#92). */
   construction: ConstructionHistory
+  /** Rust-owned current park problems, most severe and oldest first (#94). */
+  alerts: Alert[]
+  summary: DailySummary
 }
 
 export type ActionResult = {
@@ -440,4 +443,87 @@ export type ConstructionHistory = {
   redo_depth: number
   undo: ConstructionStep | null
   redo: ConstructionStep | null
+}
+
+/** What an alert or overlay item concerns (#94). */
+export type AlertSubject =
+  | { kind: "depot" }
+  | { kind: "paths" }
+  | { kind: "habitat"; id: number }
+  | { kind: "concession"; id: number }
+  | { kind: "keeper"; id: number }
+
+export type AlertAction =
+  | "buy_feed"
+  | "hire_keeper"
+  | "hire_janitor"
+  | "hire_mechanic"
+  | "build_path"
+  | "draw_zone"
+  | "assign_keeper"
+  | "adopt_animals"
+  | "inspect_habitat"
+  | "inspect_facility"
+
+/**
+ * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and
+ * removed once resolved. Minutes count from day 1, 00:00.
+ */
+export type Alert = {
+  code: string
+  severity: "critical" | "warning" | "notice"
+  subject: AlertSubject
+  focus: Point
+  message: string
+  action: AlertAction
+  first_minute: number
+  last_minute: number
+}
+
+export type OverlayKind = "access" | "welfare" | "staff" | "cleanliness" | "facilities" | "viewing"
+export type OverlayLevel = "good" | "warn" | "bad"
+
+/** A Rust-graded management overlay; computed on request, never per frame. */
+export type OverlayView = {
+  kind: OverlayKind
+  title: string
+  legend: { level: OverlayLevel; label: string }[]
+  cells: (Point & { level: OverlayLevel; value: number | null })[]
+  items: { level: OverlayLevel; subject: AlertSubject; focus: Point; label: string }[]
+  good: number
+  warn: number
+  bad: number
+}
+
+/** Today's headline numbers with the entities and ledger lines that make them up. */
+export type DailySummary = {
+  day: number
+  profit_cents: number
+  income_cents: number
+  expenses_cents: number
+  admissions: number
+  admissions_income_cents: number
+  admission_price_cents: number
+  welfare: number | null
+  welfare_habitats: {
+    habitat_id: number
+    species: SpeciesKey | null
+    animals: number
+    welfare: number
+  }[]
+  complaints: number
+  complaint_groups: {
+    category: "hungry" | "thirsty" | "tired" | "poor_value"
+    guest_ids: number[]
+  }[]
+  unfinished: number
+  open_jobs: {
+    job_id: number
+    habitat_id: number
+    category: CareCategory
+    state: "due" | "in_progress"
+  }[]
+  litter: number
+  maintenance: number
+  headline: string
 }

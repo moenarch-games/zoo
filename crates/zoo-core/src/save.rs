@@ -39,7 +39,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) const FORMAT: &str = "zoo-save";
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 /// Far above any reachable park on the fixed grid; rejects oversized documents before parsing.
 pub(crate) const MAX_SAVE_BYTES: usize = 4 * 1024 * 1024;
 const MINUTES_PER_DAY: u32 = 24 * 60;
@@ -145,6 +145,7 @@ fn migrate(value: Value, from: u32) -> Result<Value, SaveError> {
         SCHEMA_VERSION => Ok(value),
         1 => migrate(v1_to_v2(value)?, 2),
         2 => migrate(v2_to_v3(value)?, 3),
+        3 => migrate(v3_to_v4(value)?, 4),
         other => Err(SaveError::new(
             "unsupported_version",
             format!("no migration from save schema {other}"),
@@ -213,6 +214,18 @@ fn v2_to_v3(mut value: Value) -> Result<Value, SaveError> {
     }
     park.insert("tutorial".to_owned(), json!({ "status": status }));
     value["schema_version"] = json!(3);
+    Ok(value)
+}
+
+/// Schema 4 (#94) saves the park's alerts. An older park starts without any; loading re-reads
+/// the park's conditions at once, so its current problems reappear first seen at load time.
+fn v3_to_v4(mut value: Value) -> Result<Value, SaveError> {
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "park: missing or not an object"))?;
+    park.insert("alerts".to_owned(), json!([]));
+    value["schema_version"] = json!(4);
     Ok(value)
 }
 
