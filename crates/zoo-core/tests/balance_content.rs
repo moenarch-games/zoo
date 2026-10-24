@@ -150,13 +150,14 @@ fn invalid_balance_values_name_their_field_path() {
 }
 
 #[test]
-fn a_previous_content_version_reports_the_version_not_a_missing_field() {
+fn content_of_another_shape_reports_the_offending_field() {
+    // The typed catalog is the schema: it has no version number, so a retired one is unknown.
     let mut old = catalog();
-    old["schema_version"] = json!(1);
+    old["schema_version"] = json!(2);
+    let error = ZooGame::from_content_json(&old.to_string()).err().unwrap();
+    assert!(error.contains("unknown field `schema_version`"), "{error}");
+    let mut old = catalog();
     old.as_object_mut().unwrap().remove("balance");
     let error = ZooGame::from_content_json(&old.to_string()).err().unwrap();
-    assert!(
-        error.contains("schema_version") && !error.contains("balance"),
-        "{error}"
-    );
+    assert!(error.contains("balance"), "{error}");
 }

@@ -1,6 +1,5 @@
 {
   "format": "zoo-scenario",
-  "schema_version": 1,
   "id": "first-zoo",
   "title": "Your first zoo",
   "summary": "An empty meadow with an entrance, a short path and the animal-care depot. A guide walks you through a first habitat, its care, guests and a stand until the zoo runs itself; skip it for a free build.",

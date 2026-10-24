@@ -1,6 +1,6 @@
 # Park content catalog
 
-`crates/zoo-core/content/catalog.json` is the canonical version-3 content source.
+`crates/zoo-core/content/catalog.json` is the canonical content source. It carries no version number: the strict typed definition is its schema and the session `content_digest` its identity ([merge-safe format identities](../decisions/merge-safe-format-identities.md)).
 Rust validates it for native and WASM parks. Vite serves and bundles this same
 source at `content/catalog.json`; the browser fetches it and calls
 `ZooGame.from_content_json` before creating a live park. A failed load displays
@@ -15,11 +15,11 @@ bundle, as are each species' per-animal and each stand's hourly upkeep. The
 construction, habitat care actions, feed batches, maintenance repairs, staff hire
 costs and hourly wages, and per-habitat upkeep. Every money
 field is validated with its field path (for example
-`balance/staff/keeper/hourly_wage_cents`). The schema version is checked before
-the rest of the document, so content written for another version (such as the
-version 1 content embedded in older saves) fails with a `schema_version` error;
-saves keep the catalog they were made with (save schema 6 rewrites the version 2
-content of older saves into version 3). Food/drink service behavior retains the existing core implementation.
+`balance/staff/keeper/hourly_wage_cents`). Content of another shape (such as an
+older catalog embedded in a save) fails with the offending field path; save
+migrations rewrite embedded catalogs when the shape changes (schema 6 adds fences,
+schema 8 drops the catalog's old version number), and saves keep the catalog they
+were made with. Food/drink service behavior retains the existing core implementation.
 
 `fences` (#95) lists the fence types a habitat can be enclosed with: key, label,
 `material` (`wood` or `steel`, the supported looks), `height_cm` (1..=1000), and

@@ -42,9 +42,8 @@ fn default_catalog_preserves_six_species_public_rules() {
     assert_eq!(json!(actual), expected);
 }
 #[test]
-fn bundle_has_versioned_rules_identity_and_is_copied_into_park() {
+fn bundle_has_rules_identity_and_is_copied_into_park() {
     let mut definition = catalog();
-    assert_eq!(definition["schema_version"], 3);
     assert!(
         definition["ruleset_id"]
             .as_str()
@@ -87,7 +86,6 @@ fn definition_only_species_uses_existing_adoption_and_finance() {
 fn invalid_catalogs_reject_with_field_paths() {
     let original = catalog();
     let cases = [
-        ("schema_version", json!(999)),
         ("species/0/purchase_cost_cents", json!(-1)),
         ("species/0/space_per_animal", json!(0)),
         ("species/0/minimum_social_group", json!(0)),
@@ -316,7 +314,6 @@ fn localization_and_valid_presentation_changes_do_not_change_simulation_decision
 fn wrong_leaf_types_identify_the_actual_offending_field() {
     let original = catalog();
     for (path, value) in [
-        ("/schema_version", json!("bad")),
         ("/ruleset_id", json!(7)),
         ("/species/0/key", json!(7)),
         ("/species/0/label", json!(false)),

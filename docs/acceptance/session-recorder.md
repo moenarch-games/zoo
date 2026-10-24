@@ -17,7 +17,7 @@ Existing methods keep their signatures. The contract adds exactly these public m
 | `diagnostics_json(&self) -> String` | Returns the session bundle described below as JSON, at most 1,048,576 bytes. It is read-only and is not recorded. |
 | `session_status(&self) -> String` | Returns `"running"` or `"frozen"`. It is a cheap per-tick query for the UI and is not recorded. |
 | `inject_fault(&mut self, kind: &str) -> String` | A test-only fault injector that returns an `ActionResult` JSON. `"invariant"` corrupts authoritative state so that the **real** invariant check detects the corruption no later than the next advance. `"panic"` makes the next advance panic; in WASM the panic is a trap. Any other kind returns `ok: false` and changes nothing. The call is recorded as a command (`kind: "inject_fault"`, `args: {"kind": …}`), so a replay reproduces the failing step. Normal play never calls it (see Fault injection). |
-| `ZooGame::replay(content_document: &str, session_json: &str) -> Result<ZooGame, String>` | Builds a new game from the content document and replays the bundle's `commands` in `seq` order. It returns `Err` in four cases: the content does not match `start` (`ruleset_id`, `schema_version` or `content_digest`); the log is incomplete (`commands_dropped > 0`, or the first `seq` is not 0); any re-executed result differs from the recorded `result` (a divergence); or the bundle is malformed. The replayed game records its own session, which must equal the original. |
+| `ZooGame::replay(content_document: &str, session_json: &str) -> Result<ZooGame, String>` | Builds a new game from the content document and replays the bundle's `commands` in `seq` order. It returns `Err` in four cases: the content does not match `start` (`ruleset_id` or `content_digest`); the log is incomplete (`commands_dropped > 0`, or the first `seq` is not 0); any re-executed result differs from the recorded `result` (a divergence); or the bundle is malformed. The replayed game records its own session, which must equal the original. |
 
 The existing behaviour changes in three ways.
 
@@ -37,7 +37,7 @@ The bundle has a closed field set. It has exactly the fields below, and each nes
 | --- | --- |
 | `format` | `"zoo-diagnostics/1"` |
 | `build` | `{zoo_core_version}`: the crate version. |
-| `start` | `{scenario, ruleset_id, schema_version, content_digest}`, the starting-state identity. `scenario` is `"default"` until #91 adds scenarios. `content_digest` is a deterministic, non-empty digest of the validated content; content that differs must produce a different digest. The simulation has no RNG, so there is no seed field. |
+| `start` | `{scenario, scenario_digest, seed, ruleset_id, content_digest}`, the starting-state identity. `scenario` is `"default"` until #91 adds scenarios. `content_digest` is a deterministic, non-empty digest of the validated content; content that differs must produce a different digest. The simulation has no RNG, so there is no seed field. |
 | `status` | `"running"` or `"frozen"`. |
 | `clock` | `{tick, day, minute_of_day}`. `tick` is the number of simulated minutes since the session started. `day` and `minute_of_day` equal the snapshot's values. |
 | `limits` | `{max_commands: 2000, max_events: 500, max_export_bytes: 1048576}` |

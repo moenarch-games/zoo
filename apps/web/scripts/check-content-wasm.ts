@@ -26,7 +26,7 @@ bad.facilities[0].asset_ref = "missing-real-asset"
 assert.throws(() => ZooGame.from_content_json(JSON.stringify(bad)), /asset_ref/)
 // Supplemental wrong-type diagnostics authored before their repair. Real WASM only.
 const typedCases: [string, unknown][] = [
-  ["schema_version", "bad"], ["ruleset_id", 7],
+  ["ruleset_id", 7],
   ["species/0/key", 7], ["species/0/label", false],
   ["species/0/asset_ref", 7], ["species/0/unlock_ref", false],
   ["species/0/appeal", "bad"], ["species/0/minimum_social_group", "bad"],
@@ -46,11 +46,14 @@ for (const [path, value] of typedCases) {
   parent[leaf] = value
   assert.throws(() => ZooGame.from_content_json(JSON.stringify(invalid)), new RegExp(leaf), `Missing offending field ${path}`)
 }
-// #88: the WASM bindings load the native schema-v1 fixture through the same validation.
+// #88: the WASM bindings migrate the native schema-v1 fixture through the same validation, and
+// the migrated park round-trips unchanged.
 const fixture = readFileSync(new URL("../../../crates/zoo-core/tests/fixtures/save-v1.json", import.meta.url), "utf8")
 const resumed = new ZooGame()
 assert.equal(JSON.parse(resumed.load_save(fixture)).ok, true)
-assert.deepEqual(JSON.parse(resumed.save_json()), JSON.parse(fixture))
+const migrated = resumed.save_json()
+assert.equal(JSON.parse(resumed.load_save(migrated)).ok, true)
+assert.equal(resumed.save_json(), migrated)
 const before = resumed.save_json()
 assert.equal(JSON.parse(resumed.load_save(fixture.slice(0, 100))).code, "malformed")
 assert.equal(resumed.save_json(), before)

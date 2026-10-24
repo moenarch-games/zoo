@@ -1,9 +1,9 @@
 //! Scenario definitions and reproducible park creation (#91).
 //!
-//! A scenario is a versioned, data-only template for a new park:
+//! A scenario is a strictly typed, data-only template for a new park:
 //!
 //! ```json
-//! { "format": "zoo-scenario", "schema_version": 1, "id": "first-zoo", "seed": 1,
+//! { "format": "zoo-scenario", "id": "first-zoo", "seed": 1,
 //!   "map": { "width": 20, "height": 14, "terrain": [] }, "entrance": {..}, "depot": {..},
 //!   "starting_cash_cents": 5000000, "unlocks": {..}, "setup": [..], "tutorial": "none",
 //!   "opening_focus": {..}, "objectives": [..] }
@@ -37,7 +37,6 @@ pub(crate) const MIN_MAP_DIMENSION: u32 = 8;
 pub(crate) const MAX_MAP_DIMENSION: u32 = 64;
 pub(crate) const MAX_MAP_TILES: u32 = MAX_MAP_DIMENSION * MAX_MAP_DIMENSION;
 const FORMAT: &str = "zoo-scenario";
-const SCHEMA_VERSION: u32 = 1;
 const MAX_DOCUMENT_BYTES: usize = 128 * 1024;
 const MAX_SETUP_STEPS: usize = 512;
 const MAX_TERRAIN_PATCHES: usize = 64;
@@ -60,7 +59,6 @@ const BUILT_IN: [&str; 4] = [
 #[serde(deny_unknown_fields)]
 pub(crate) struct Scenario {
     format: String,
-    schema_version: u32,
     pub id: String,
     title: String,
     summary: String,
@@ -473,12 +471,6 @@ impl Scenario {
     fn validate(&self) -> Result<(), String> {
         if self.format != FORMAT {
             return Err(format!("format: expected {FORMAT}"));
-        }
-        if self.schema_version != SCHEMA_VERSION {
-            return Err(format!(
-                "schema_version: {} is not supported (expected {SCHEMA_VERSION})",
-                self.schema_version
-            ));
         }
         slug(&self.id, "id")?;
         text(&self.title, "title", MAX_TEXT_BYTES)?;
@@ -1090,9 +1082,9 @@ mod tests {
     }
 
     #[test]
-    fn unknown_fields_and_versions_are_rejected() {
+    fn unknown_fields_including_a_schema_version_are_rejected() {
         assert!(with(|v| v["surprise"] = 1.into()).is_err());
-        assert!(with(|v| v["schema_version"] = 2.into()).is_err());
+        assert!(with(|v| v["schema_version"] = 1.into()).is_err());
         assert!(with(|v| v["setup"].as_array_mut().unwrap()[0]["extra"] = 1.into()).is_err());
     }
 

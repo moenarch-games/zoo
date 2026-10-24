@@ -1,6 +1,5 @@
 {
   "format": "zoo-scenario",
-  "schema_version": 1,
   "id": "partly-prepared",
   "title": "Unfinished lakeside",
   "summary": "A lakeside plot where the previous builder stopped halfway: one fenced habitat waits for a path, staff and animals, and the food stand has no visitors yet.",

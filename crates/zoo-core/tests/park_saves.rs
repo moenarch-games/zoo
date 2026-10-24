@@ -10,6 +10,7 @@ const FIXTURE_V4: &str = "tests/fixtures/save-v4.json";
 const FIXTURE_V5: &str = "tests/fixtures/save-v5.json";
 const FIXTURE_V6: &str = "tests/fixtures/save-v6.json";
 const FIXTURE_V7: &str = "tests/fixtures/save-v7.json";
+const FIXTURE_V8: &str = "tests/fixtures/save-v8.json";
 
 /// Undoes the schema 6 → 7 migration (#96) on a saved document: every habitat's animal records
 /// become their count again and the park forgets its next animal ID.
@@ -23,6 +24,8 @@ fn animals_as_counts(value: &mut Value) {
         .unwrap()
         .remove("next_animal_id")
         .unwrap();
+    // Schemas 6 and 7 embedded catalogs that still carried their own number (schema 8 drops it).
+    value["content"]["schema_version"] = 3.into();
     value["schema_version"] = 6.into();
 }
 
@@ -66,6 +69,7 @@ fn fences_from_content(value: &mut Value) {
             .insert("fence".to_owned(), wooden.clone());
     }
     value["content"] = built_in;
+    value["content"]["schema_version"] = 3.into();
 }
 
 /// Schema 5 parks keep their fence price and upkeep as the wooden rail type and gain the
@@ -225,7 +229,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "unsupported_version",
-            mutate(&|v| v["schema_version"] = 8.into()),
+            mutate(&|v| v["schema_version"] = 9.into()),
         ),
         (
             "invalid_save",
@@ -317,17 +321,38 @@ fn the_schema_v6_fixture_migrates_counts_to_individual_animals() {
     game.tick(60);
 }
 
+/// Schema 7 catalogs lose their own version number; nothing else changes.
 #[test]
-fn the_schema_v7_fixture_still_loads_unchanged() {
+fn the_schema_v7_fixture_migrates_by_dropping_the_content_version() {
+    let fixture = std::fs::read_to_string(FIXTURE_V7).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut original = json(&fixture);
+    original["content"]
+        .as_object_mut()
+        .unwrap()
+        .remove("schema_version")
+        .unwrap();
+    original["schema_version"] = 8.into();
+    assert_eq!(
+        json(&game.save_json()),
+        original,
+        "migration changes nothing else"
+    );
+    game.tick(60);
+}
+
+#[test]
+fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&mid_run().save_json());
         std::fs::write(
-            FIXTURE_V7,
+            FIXTURE_V8,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V7).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V8).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));

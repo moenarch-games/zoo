@@ -1,6 +1,5 @@
 {
   "format": "zoo-scenario",
-  "schema_version": 1,
   "id": "living-starter",
   "title": "Riverside zoo",
   "summary": "A small working zoo: capybaras and zebras are fed by a keeper, guests stroll past food and drink stands, and there is room to grow along the river.",
