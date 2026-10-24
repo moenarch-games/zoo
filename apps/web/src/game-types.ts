@@ -58,7 +58,8 @@ export type CareJob = {
   required_keepers: number
   work_minutes: number
   state: "due" | "in_progress" | "completed" | "missed"
-  keeper_id: number | null
+  /** The reserved crew; the first keeper does the care work, any other manages the animals. */
+  keeper_ids: number[]
   /** Why a due job has no keeper yet. */
   waiting_reason: string | null
   expires_in_minutes: number
@@ -169,7 +170,8 @@ export type Keeper = Point & {
   shift_end_minute: number
   on_shift: boolean
   deliveries_completed: number
-  activity: "at_depot" | "to_gate" | "working" | "to_depot"
+  /** `awaiting_crew`: inside the gate, waiting for the rest of a dangerous-habitat crew. */
+  activity: "at_depot" | "to_gate" | "awaiting_crew" | "working" | "to_depot"
   job_id: number | null
   /** The habitat of the current job. */
   habitat_id: number | null

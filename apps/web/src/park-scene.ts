@@ -1407,7 +1407,7 @@ function staffNodes(snapshot: Snapshot, input: SceneFrameInput): RendererSceneNo
     const [x, z] = input.resolveActor(key, keeper.x + 0.5, keeper.y + 0.5)
     const yaw = hash(keeper.id, 11) * Math.PI * 2
     const bob =
-      input.animate && keeper.activity !== "working"
+      input.animate && (keeper.activity === "to_gate" || keeper.activity === "to_depot")
         ? Math.abs(Math.sin(input.timeSeconds * 9 + keeper.id)) * 0.03
         : 0
     nodes.push(
