@@ -25,8 +25,7 @@
 //! job or walk back. A dispatched job always runs to completion; supplies (a feed crate or
 //! the cleaning fee) are taken at dispatch. Without a route to the gate, care is blocked.
 use super::{
-    ActionResult, CLEAN_HABITAT_COST, ExpenseCategory, FEED_DELIVERY_THRESHOLD, GameState, Keeper,
-    Position, TileKind,
+    ActionResult, ExpenseCategory, FEED_DELIVERY_THRESHOLD, GameState, Keeper, Position, TileKind,
     content::{self, CareCategory, CareProfile},
 };
 use serde::{Deserialize, Serialize};
@@ -368,7 +367,9 @@ impl GameState {
             Supply::FeedCrate if self.feed_crates == 0 => {
                 Some("The animal-care depot is out of feed crates")
             }
-            Supply::CleaningFee if self.cash_cents < CLEAN_HABITAT_COST => {
+            Supply::CleaningFee
+                if self.cash_cents < self.catalog.balance.habitat_care.cleaning_cents =>
+            {
                 Some("Not enough cash for cleaning supplies")
             }
             _ => None,
@@ -423,7 +424,10 @@ impl GameState {
             }
             Supply::CleaningFee => {
                 if self
-                    .spend(CLEAN_HABITAT_COST, ExpenseCategory::HabitatCare)
+                    .spend(
+                        self.catalog.balance.habitat_care.cleaning_cents,
+                        ExpenseCategory::HabitatCare,
+                    )
                     .is_err()
                 {
                     return;

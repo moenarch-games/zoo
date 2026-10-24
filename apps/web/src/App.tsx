@@ -1,6 +1,12 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
+import {
+  EFFECT_PIECES,
+  loadEffectsManifest,
+  type EffectPiece,
+  type EffectsManifest,
+} from "./effects-kit"
 import type {
   ActionResult,
   CareCategory,
@@ -21,6 +27,14 @@ import type {
   WorkZoneEvaluation,
 } from "./game-types"
 import type { SceneOverlay } from "./park-scene"
+import {
+  background,
+  loadFailureMessage,
+  type SaveSummary,
+  type SlotEntry,
+  summarizeDocument,
+} from "./park-storage"
+import { ParkLibraryPanel, type PanelPrompt } from "./ParkLibraryPanel"
 import type { ParkPick } from "./ParkView"
 import {
   loadSceneryManifest,
@@ -28,6 +42,7 @@ import {
   type SceneryManifest,
   type SceneryPiece,
 } from "./scenery-manifest"
+import { type LoadCheck, useParkLibrary } from "./use-park-library"
 import init, { ZooGame } from "./wasm/zoo_core"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
@@ -192,9 +207,7 @@ export default function App() {
   const [tutorialOpen, setTutorialOpen] = useState(
     () => !window.matchMedia("(max-width: 900px)").matches,
   )
-  const [message, setMessage] = useState(
-    "Extend the entrance path, draw a habitat, then stock and staff it through the care depot.",
-  )
+  const [message, setMessage] = useState("Continue a saved park, or start a new one.")
   const [messageKind, setMessageKind] = useState<"info" | "error">("info")
   const [selectedHabitatId, setSelectedHabitatId] = useState<number | null>(null)
   const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null)
@@ -209,6 +222,17 @@ export default function App() {
   const [cameraResetToken, setCameraResetToken] = useState(0)
   const [parkViewMount, setParkViewMount] = useState(0)
   const [startupFailure, setStartupFailure] = useState<string | null>(null)
+  // #89: the start screen shows once the simulation is ready; play begins with a new, loaded
+  // or imported park. The park menu is the in-game library dialog.
+  const [gameReady, setGameReady] = useState(false)
+  const [screen, setScreen] = useState<"start" | "play">("start")
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [prompt, setPrompt] = useState<PanelPrompt | null>(null)
+
+  const notify = useCallback((text: string, kind: "info" | "error" = "info") => {
+    setMessage(text)
+    setMessageKind(kind)
+  }, [])
 
   const clearFenceGesture = useCallback(() => {
     fenceStartRef.current = null
@@ -261,10 +285,40 @@ export default function App() {
 
   const refresh = useCallback(() => {
     const text = callGame((game) => game.snapshot_json())
-    if (text !== undefined) {
-      setSnapshot(JSON.parse(text) as Snapshot)
+    if (text === undefined) {
+      return null
     }
+    const next = JSON.parse(text) as Snapshot
+    setSnapshot(next)
+    return next
   }, [callGame])
+
+  const captureSave = useCallback(
+    () => (stoppedRef.current ? undefined : callGame((game) => game.save_json())),
+    [callGame],
+  )
+
+  /** Imports are checked by zoo-core on a scratch park, so the active park never changes. */
+  const validateSave = useCallback((document: string): LoadCheck => {
+    let scratch: ZooGame | null = null
+    try {
+      scratch = new ZooGame()
+      return JSON.parse(scratch.load_save(document)) as LoadCheck
+    } catch (error) {
+      return { ok: false, message: String(error) }
+    } finally {
+      scratch?.free()
+    }
+  }, [])
+
+  const library = useParkLibrary({ captureSave, validateSave, notify })
+  const { autosaveIfDue, markChanged } = library
+  // A competing tab's newer save pauses autosave; surface the choice instead of overwriting.
+  useEffect(() => {
+    if (library.conflict) {
+      setMenuOpen(true)
+    }
+  }, [library.conflict])
 
   const checkFrozen = useCallback(() => {
     if (stoppedRef.current || callGame((game) => game.session_status()) !== "frozen") {
@@ -286,13 +340,14 @@ export default function App() {
           ? { ok: false, message: "The park simulation is stopped." }
           : (JSON.parse(text) as ActionResult)
       diagnostics.retain()
+      markChanged()
       setMessage(result.message)
       setMessageKind(result.ok ? "info" : "error")
       refresh()
       checkFrozen()
       return result
     },
-    [callGame, checkFrozen, refresh],
+    [callGame, checkFrozen, markChanged, refresh],
   )
 
   const onRendererFailure = useCallback(
@@ -371,7 +426,7 @@ export default function App() {
             remountParkView: () => setParkViewMount((mount) => mount + 1),
           }
         }
-        refresh()
+        setGameReady(true)
       })
       .catch((error: unknown) => {
         console.error("Zoo simulation initialization failed", error)
@@ -387,10 +442,10 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [callGame, refresh])
+  }, [callGame])
 
   useEffect(() => {
-    if (!snapshot || speed === 0) {
+    if (!snapshot || speed === 0 || screen !== "play") {
       return
     }
     const handle = window.setInterval(() => {
@@ -407,10 +462,14 @@ export default function App() {
         ticksSinceRetainRef.current = 0
         diagnostics.retain()
       }
-      refresh()
+      markChanged()
+      const next = refresh()
+      if (next) {
+        autosaveIfDue((next.day - 1) * 24 * 60 + next.minute_of_day)
+      }
     }, 250)
     return () => window.clearInterval(handle)
-  }, [callGame, checkFrozen, refresh, snapshot !== null, speed])
+  }, [autosaveIfDue, callGame, checkFrozen, markChanged, refresh, screen, snapshot !== null, speed])
 
   const clearStroke = useCallback(() => {
     strokeRef.current = []
@@ -1159,14 +1218,12 @@ export default function App() {
     stoppedRef.current = false
     setRecovery(null)
     setManualExport(null)
-    reset()
+    background(newPark())
   }
 
-  const reset = () => {
+  const resetView = () => {
     clearStroke()
     clearFenceGesture()
-    callGame((game) => game.reset())
-    diagnostics.retain()
     setTool("select")
     setSelectedHabitatId(null)
     setSelectedGuestId(null)
@@ -1174,16 +1231,160 @@ export default function App() {
     setSelectedZoneId(null)
     setHoveredTile(null)
     setCameraResetToken((token) => token + 1)
-    setMessage("New park started.")
-    setMessageKind("info")
-    refresh()
   }
 
-  if (!snapshot) {
+  const enterPlay = () => {
+    setPrompt(null)
+    setMenuOpen(false)
+    setScreen("play")
+    return refresh()
+  }
+
+  /** A fresh park in a new library slot; existing saves are never touched. */
+  const newPark = async () => {
+    resetView()
+    callGame((game) => game.reset())
+    diagnostics.retain()
+    const next = enterPlay()
+    const slot = await library.createSlot(library.defaultName())
+    notify(
+      slot
+        ? `New park “${slot.name}” started. Extend the entrance path, draw a habitat, then stock and staff it through the care depot.`
+        : "New park started. It cannot be stored in this browser; export it to keep it.",
+    )
+    return next
+  }
+
+  /** Replaces the active park with a stored save once zoo-core accepts it. */
+  const openSave = (document: string, entry: SlotEntry | null, label: string) => {
+    const text = callGame((game) => game.load_save(document))
+    const result: LoadCheck =
+      text === undefined
+        ? { ok: false, message: "The park simulation is stopped." }
+        : (JSON.parse(text) as LoadCheck)
+    if (!result.ok) {
+      notify(
+        `${label} could not be opened: ${loadFailureMessage(result.code, result.message)} The current park is unchanged.`,
+        "error",
+      )
+      return false
+    }
+    resetView()
+    diagnostics.retain()
+    const summary = summarizeDocument(document)
+    library.adopt(entry?.slot ?? null, (summary.day - 1) * 24 * 60 + summary.minute)
+    if (entry) {
+      background(library.touch(entry.slot.id))
+    }
+    enterPlay()
+    notify(`${result.message} · ${label}.`)
+    return true
+  }
+
+  const loadEntry = async (entry: SlotEntry, save: SaveSummary) => {
+    const label = `“${entry.slot.name}” ${save.kind === "auto" ? "autosave" : "save"}`
+    try {
+      openSave(await library.readSave(save.key), entry, label)
+    } catch (error) {
+      notify(
+        `${label} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      )
+    }
+  }
+
+  /** Warns before an action would replace a park with progress since its last save. */
+  const guardReplace = (action: string, run: () => void) => {
+    if (screen !== "play" || !library.dirty() || stoppedRef.current) {
+      run()
+      return
+    }
+    const name = library.active?.name ?? "This park"
+    setPrompt({
+      message: `${name} has progress that is not saved yet. ${action} replaces it in this tab; saved parks stay in the library.`,
+      actions: [
+        ...(library.active
+          ? [
+              {
+                label: "Save and continue",
+                run: () => {
+                  background(
+                    library.save("manual").then((saved) => {
+                      setPrompt(null)
+                      if (saved) {
+                        run()
+                      }
+                    }),
+                  )
+                },
+              },
+            ]
+          : []),
+        {
+          label: "Discard changes",
+          run: () => {
+            setPrompt(null)
+            run()
+          },
+        },
+        { label: "Cancel", run: () => setPrompt(null) },
+      ],
+    })
+  }
+
+  const requestNewPark = () => guardReplace("A new park", () => void newPark())
+
+  const requestLoad = (entry: SlotEntry, save: SaveSummary) =>
+    guardReplace(`Loading “${entry.slot.name}”`, () => void loadEntry(entry, save))
+
+  const continueLatest = () => {
+    const entry = library.entries[0]
+    if (entry?.saves[0]) {
+      background(loadEntry(entry, entry.saves[0]))
+    }
+  }
+
+  const importPark = async (file: File) => {
+    const imported = await library.importFile(file)
+    if (imported && !imported.stored) {
+      guardReplace("Opening the imported park", () =>
+        openSave(imported.document, null, "Imported park"),
+      )
+    }
+  }
+
+  const saveAs = async (name: string) => {
+    if (await library.createSlot(name)) {
+      notify(`Saved as new park “${name}”.`)
+    }
+  }
+
+  const libraryPanel = (mode: "start" | "menu") => (
+    <ParkLibraryPanel
+      mode={mode}
+      library={library}
+      message={message}
+      messageKind={messageKind}
+      prompt={prompt}
+      onContinue={continueLatest}
+      onNew={requestNewPark}
+      onLoad={requestLoad}
+      onImport={(file) => void importPark(file)}
+      onSaveAs={(name) => void saveAs(name)}
+      onClose={() => {
+        setPrompt(null)
+        setMenuOpen(false)
+      }}
+    />
+  )
+
+  if (!snapshot || screen === "start") {
+    const starting =
+      gameReady && library.ready ? libraryPanel("start") : "Preparing the park simulation…"
     return (
       <main className="loading">
         {startupFailure === null ? (
-          "Preparing the park simulation…"
+          starting
         ) : (
           <section className="recovery-panel startup-failure bevel" aria-label="Park recovery">
             <div className="window-title">
@@ -1251,7 +1452,10 @@ export default function App() {
       <header className="topbar bevel">
         <div className="brand">
           <strong>Zoo</strong>
-          <span>Opening Day</span>
+          <span>{library.active?.name ?? "Unsaved park"}</span>
+          <small className="save-status" role="status">
+            {library.status}
+          </small>
         </div>
         <div className="stat">
           <span>Cash</span>
@@ -1272,6 +1476,15 @@ export default function App() {
           </strong>
         </div>
         <div className="speed-controls" aria-label="Simulation speed">
+          <button
+            className="park-menu-button"
+            onClick={() => setMenuOpen(true)}
+            title="Park menu: save, load, import, export"
+            aria-label="Park menu"
+            aria-haspopup="dialog"
+          >
+            ☰
+          </button>
           <button
             className="view-reset"
             onClick={() => setCameraResetToken((token) => token + 1)}
@@ -1319,6 +1532,8 @@ export default function App() {
             onRendererFailure={onRendererFailure}
           />
         </Suspense>
+
+        {(menuOpen || prompt !== null) && libraryPanel("menu")}
 
         {recovery && (
           <section
@@ -2168,7 +2383,7 @@ export default function App() {
                     Restart keeper training
                   </button>
                 )}
-                <button className="secondary" onClick={reset}>
+                <button className="secondary" onClick={requestNewPark}>
                   Start new park
                 </button>
                 <SceneryCredits />
@@ -2223,7 +2438,7 @@ export default function App() {
           <ToolButton
             active={tool === "path"}
             icon="▦"
-            label="Path · $10"
+            label="Path"
             onClick={() => setTool("path")}
           />
           <ToolButton
@@ -2278,18 +2493,32 @@ export default function App() {
 const SCENERY_LABELS: Record<SceneryPiece, string> = {
   "tree-round": "Round tree",
   "tree-pine": "Pine tree",
+  "tree-acacia": "Acacia",
   "bush-round": "Berry bush",
-  "rock-round": "Boulder",
+  "grass-tuft": "Grass tuft",
+  "rock-round": "Rock",
+  "rock-boulder": "Boulder",
+}
+
+const EFFECT_LABELS: Record<EffectPiece, string> = {
+  dust: "Keeper dust",
+  leaf: "Leaf flutter",
+  splash: "Pond splash",
 }
 
 /** Lineage of the asset-tooling scenery around the park, as pinned and verified at build time. */
 function SceneryCredits() {
   const [manifest, setManifest] = useState<SceneryManifest | null>(null)
+  const [effects, setEffects] = useState<EffectsManifest | null>(null)
   useEffect(() => {
     let cancelled = false
     // A failed load is reported by the park view, which cannot render without the scenery.
     loadSceneryManifest().then(
       (loaded) => !cancelled && setManifest(loaded),
+      () => undefined,
+    )
+    loadEffectsManifest().then(
+      (loaded) => !cancelled && setEffects(loaded),
       () => undefined,
     )
     return () => {
@@ -2304,7 +2533,7 @@ function SceneryCredits() {
     <details className="scenery-credits" aria-label="Scenery credits">
       <summary>Scenery credits</summary>
       <p>
-        Trees, bushes and rocks outside the fence come from the asset-tooling{" "}
+        Trees, bushes, grass and rocks around and inside the park come from the asset-tooling{" "}
         <a
           href={`https://github.com/moritzbrantner/asset-tooling/releases/tag/${manifest.release}`}
           target="_blank"
@@ -2341,6 +2570,48 @@ function SceneryCredits() {
           </Fragment>
         ))}
       </div>
+      {effects && (
+        <>
+          <p>
+            Dust, leaf and splash particles come from the asset-tooling{" "}
+            <a
+              href={`https://github.com/moritzbrantner/asset-tooling/releases/tag/${effects.release}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {effects.release}
+            </a>{" "}
+            release, baked by{" "}
+            <a
+              href={`https://github.com/moritzbrantner/asset-tooling/blob/${effects.assetToolingCommit}/${effects.recipe.source}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {effects.recipe.source}
+            </a>{" "}
+            at asset-tooling <code>{effects.assetToolingCommit.slice(0, 7)}</code>. They are
+            cosmetic and off under reduced motion.
+          </p>
+          <p>Provenance: {effects.provenance}.</p>
+          <div className="finance-grid">
+            <span>Release tar</span>
+            <code title={effects.tarSha256}>{effects.tarSha256.slice(0, 12)}</code>
+            <span>Recipe</span>
+            <code title={effects.recipe.sha256}>{effects.recipe.sha256.slice(0, 12)}</code>
+            {EFFECT_PIECES.map((piece) => (
+              <Fragment key={piece}>
+                <span>
+                  {EFFECT_LABELS[piece]} · {effects.pieces[piece].key}/
+                  {effects.pieces[piece].variant}
+                </span>
+                <code title={effects.pieces[piece].sha256}>
+                  {effects.pieces[piece].sha256.slice(0, 12)}
+                </code>
+              </Fragment>
+            ))}
+          </div>
+        </>
+      )}
     </details>
   )
 }

@@ -8,6 +8,8 @@
 // `window.__zooParkView.resources()`. The incompatible contract is a real catalog document with
 // an unsupported schema version, served at the production catalog HTTP boundary.
 
+import { enterNewPark } from "./park-library-proof.mjs"
+
 const REMOUNTS = 12
 const PANEL = `[aria-label="Park recovery"]`
 
@@ -55,6 +57,7 @@ export async function runRendererLifetimeAcceptance(context) {
     const url = new URL(previewUrl)
     url.search = query
     await cdp.send("Page.navigate", { url: url.href })
+    await enterNewPark({ evaluate, sleep })
   }
   const resources = () => evaluate(`window.__zooParkView.resources()`)
   const lifetime = () => evaluate(`({...window.__zooRendererLifetime})`)
@@ -69,6 +72,11 @@ export async function runRendererLifetimeAcceptance(context) {
   await waitFor("the first park-view mount", mounted(1))
   assert(await context.clickButton("Ⅱ"), "#59: pause control missing")
   await sleep(500)
+  // #86: paused, no new particle bursts start; live ones finish and release their atlases.
+  await waitFor(
+    "particle bursts to finish",
+    `(window.__zooParkView.effects()?.liveAtlases ?? 0) === 0`,
+  )
   const baseline = await resources()
   assert(
     baseline.gpuGeometries > 0 && baseline.objects > 0,
@@ -136,7 +144,7 @@ export async function runRendererLifetimeAcceptance(context) {
   // --- 2. An incompatible content contract stops at a readable failure screen --------------------
   const catalogUrl = new URL("content/catalog.json", previewUrl).href
   const definition = await (await fetch(catalogUrl)).json()
-  definition.schema_version = 2
+  definition.schema_version = 999
   catalogBody = Buffer.from(JSON.stringify(definition)).toString("base64")
   await cdp.send("Fetch.enable", {
     patterns: [{ urlPattern: catalogUrl, requestStage: "Request" }],

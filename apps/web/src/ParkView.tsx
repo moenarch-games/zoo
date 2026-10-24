@@ -8,12 +8,16 @@ import {
 } from "@moritzbrantner/three-d-renderer"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 
+import { loadEffectsKit } from "./effects-kit"
 import type { Point, Snapshot } from "./game-types"
+import { ParkEffects, type ParkEffectsState } from "./park-effects"
 import {
   buildActorFrame,
   buildSceneryNodes,
   buildStaticNodes,
+  effectSources,
   sceneryKey,
+  type EffectSources,
   type PickAnchor,
   type SceneOverlay,
   type Vec3,
@@ -105,6 +109,8 @@ type ViewDebugHook = {
   drawCount: () => number
   /** Live shared-renderer caches and the GPU resources Three.js holds for this mount. */
   resources: () => RendererResources | null
+  /** Cosmetic particle bursts (#86): live/started per effect and the renderer's atlas count. */
+  effects: () => (ParkEffectsState & { reducedMotion: boolean; liveAtlases: number }) | null
 }
 
 type RendererResources = {
@@ -174,6 +180,9 @@ export default function ParkView(props: Props) {
     let work: RendererWorkObservations | null = null
     let bridge: ParkCameraBridge | null = null
     let kit: SceneryKit | null = null
+    let effects: ParkEffects | null = null
+    let sources: EffectSources = { foliage: [], ponds: [] }
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     let camera: CameraFrame | null = null
     let frameHandle = 0
     let viewport = { width: 1, height: 1 }
@@ -320,7 +329,7 @@ export default function ParkView(props: Props) {
           cameraChanged = true
         }
         const animate = !current.paused
-        if (sceneDirtyRef.current || animate || actorsMoving) {
+        if (sceneDirtyRef.current || animate || actorsMoving || effects?.active) {
           sceneDirtyRef.current = false
           actorsMoving = false
           for (const actor of actors.values()) {
@@ -334,6 +343,7 @@ export default function ParkView(props: Props) {
               buildStaticNodes(current.snapshot, current.overlay, kit),
               String(staticGeneration),
             )
+            sources = effectSources(current.snapshot)
             const key = sceneryKey(current.snapshot)
             if (scenery?.key !== key) {
               scenery = {
@@ -360,7 +370,20 @@ export default function ParkView(props: Props) {
             frame.nodes.length +
             instanceBatches.reduce((sum, batch) => sum + batch.instances.length, 0)
           drawCount = frame.nodes.length + instanceBatches.length
-          work = renderer.render({ camera, nodes: frame.nodes, instanceBatches })
+          // Cosmetic clock in seconds; omitted effects (none loaded) hold no effect resources.
+          const effectFrame = effects?.frame(
+            now / 1000,
+            frame.presence,
+            sources,
+            animate,
+            !reducedMotion.matches,
+          )
+          work = renderer.render({
+            camera,
+            nodes: frame.nodes,
+            instanceBatches,
+            ...(effectFrame ? { effects: effectFrame } : {}),
+          })
         } else if (cameraChanged) {
           work = renderer.renderCamera(camera)
         }
@@ -811,6 +834,13 @@ export default function ParkView(props: Props) {
                 gpuPrograms: gpu.info.programs?.length ?? 0,
               }
             : null,
+        effects: () =>
+          effects && {
+            live: { ...effects.state.live },
+            started: { ...effects.state.started },
+            reducedMotion: reducedMotion.matches,
+            liveAtlases: work?.liveEffectAtlasCount ?? 0,
+          },
       }
     }
 
@@ -820,6 +850,8 @@ export default function ParkView(props: Props) {
     }
 
     // The scenery pieces are required content: a missing or mismatched asset fails the view closed.
+    // The particle effects are cosmetic: without them the park still plays, so a load failure only
+    // warns and the view runs effect-free.
     void Promise.all([
       initScene(),
       loadSceneryKit().catch((error: unknown) => {
@@ -827,12 +859,17 @@ export default function ParkView(props: Props) {
           `Zoo scenery assets failed to load (${error instanceof Error ? error.message : String(error)})`,
         )
       }),
+      loadEffectsKit().catch((error: unknown) => {
+        console.warn("Zoo particle effects failed to load; running without them", error)
+        return null
+      }),
     ])
-      .then(([, loaded]) => {
+      .then(([, loaded, effectsKit]) => {
         if (disposed) {
           return
         }
         kit = loaded
+        effects = effectsKit && new ParkEffects(effectsKit)
         bridge = new ParkCameraBridge(parkWidth, parkHeight)
         bridgeRef.current = bridge
         renderer = createThreeSceneRenderer(canvas, { background: BACKGROUND, antialias: true })

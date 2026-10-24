@@ -21,7 +21,7 @@
 //! - History is session state: saves do not carry it and a load starts with none. Undo and redo
 //!   are recorded commands, so session replay reproduces them exactly.
 use super::{
-    ActionResult, Concession, ConcessionKind, ExpenseCategory, GameState, Habitat, PATH_COST,
+    ActionResult, Concession, ConcessionKind, ExpenseCategory, GameState, Habitat,
     PlacementEvaluation, Position, TileKind, content, gate::gate_access_message,
 };
 use serde::Serialize;
@@ -274,6 +274,15 @@ impl GameState {
         });
     }
 
+    /// The catalog price of `count` new path tiles.
+    fn path_tiles_cost(&self, count: usize) -> i64 {
+        self.catalog
+            .balance
+            .construction
+            .path_tile_cents
+            .saturating_mul(i64::try_from(count).unwrap_or(i64::MAX))
+    }
+
     /// Who stands on a path tile and would be stranded by removing it.
     fn path_occupant(&self, tile: Position) -> Option<&'static str> {
         if self.guests.iter().any(|g| g.x == tile.x && g.y == tile.y) {
@@ -338,7 +347,7 @@ impl GameState {
         if new_tiles.is_empty() {
             return ConstructionPreview::unchanged("path", "Path already exists");
         }
-        let cost = PATH_COST.saturating_mul(new_tiles.len() as i64);
+        let cost = self.path_tiles_cost(new_tiles.len());
         if self.cash_cents < cost {
             return ConstructionPreview::rejected(
                 "path",
@@ -987,7 +996,7 @@ impl GameState {
                 {
                     return Err("those tiles are no longer clear grass".to_owned());
                 }
-                PATH_COST.saturating_mul(tiles.len() as i64)
+                self.path_tiles_cost(tiles.len())
             }
             Change::BuildConcession { x, y, key, .. } => {
                 let plan = self.evaluate_concession(*x, *y, key);

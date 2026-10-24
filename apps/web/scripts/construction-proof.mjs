@@ -1,6 +1,7 @@
 // #92 transactional construction browser proof. Called by capture-park-view-proof.mjs on a fresh
 // park in the same production preview and headless Chromium. Every check drives real canvas
 // pointer, keyboard and touch input; prices are read from Rust's preview tooltip, not hardcoded.
+import { enterNewPark } from "./park-library-proof.mjs"
 
 export async function runConstructionAcceptance(context) {
   const {
@@ -84,6 +85,7 @@ export async function runConstructionAcceptance(context) {
   await cdp.send("Emulation.clearDeviceMetricsOverride")
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false })
   await cdp.send("Page.navigate", { url: previewUrl })
+  assert((await enterNewPark({ evaluate, sleep })) === "started", "#92: start screen did not start a new park")
   await waitFor(
     "the shared 3D park renderer",
     `Boolean(

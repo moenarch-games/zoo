@@ -71,9 +71,20 @@ export type PickAnchor =
   | { kind: "concession"; id: number; tile: Point; point: Vec3; radius: number }
   | { kind: "depot"; point: Vec3; radius: number }
 
+/** A presented actor position, the cue input for cosmetic effects (#86). */
+export type Presence = {
+  key: string
+  kind: "keeper" | "guest" | "animal"
+  x: number
+  z: number
+  /** Keepers only: zoo-core reports the keeper doing care work in a habitat. */
+  working: boolean
+}
+
 export type SceneFrame = {
   nodes: RendererSceneNode[]
   anchors: PickAnchor[]
+  presence: Presence[]
 }
 
 const IDENTITY: Quat = [0, 0, 0, 1]
@@ -384,16 +395,42 @@ function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
 const SCENERY_SHADOW: Record<SceneryPiece, number> = {
   "tree-round": 0.45,
   "tree-pine": 0.38,
+  "tree-acacia": 0.5,
   "bush-round": 0,
+  "grass-tuft": 0,
   "rock-round": 0,
+  "rock-boulder": 0,
 }
+
+/** Pieces whose foliage flutters leaves when someone walks past (#86). */
+const LEAFY: ReadonlySet<SceneryPiece> = new Set([
+  "tree-round",
+  "tree-pine",
+  "tree-acacia",
+  "bush-round",
+])
 
 /** Cumulative share of each piece in the near ring; the remainder are rocks. */
 const NEAR_SCENERY_MIX: ReadonlyArray<readonly [number, SceneryPiece]> = [
-  [0.45, "tree-round"],
-  [0.8, "tree-pine"],
-  [0.93, "bush-round"],
+  [0.4, "tree-round"],
+  [0.7, "tree-pine"],
+  [0.82, "bush-round"],
+  [0.9, "grass-tuft"],
+  [0.95, "rock-boulder"],
 ]
+
+/** Upper bound on decorative grass tufts per habitat, whatever its size. */
+const HABITAT_GRASS_CAP = 6
+
+/** One decorative scenery placement; cosmetic only, never read by the simulation. */
+type SceneryPlacement = {
+  piece: SceneryPiece
+  id: string
+  x: number
+  z: number
+  scale: number
+  yaw: number
+}
 
 function sceneryPiece(
   kit: SceneryKit,
@@ -416,8 +453,19 @@ function sceneryPiece(
   return shadow > 0 ? [blobShadow(`${id}:shadow`, x, z, shadow * scale), ...nodes] : nodes
 }
 
-function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] {
-  const nodes: RendererSceneNode[] = []
+const placementNodes = (kit: SceneryKit, placement: SceneryPlacement) =>
+  sceneryPiece(
+    kit,
+    placement.piece,
+    placement.id,
+    placement.x,
+    placement.z,
+    placement.scale,
+    placement.yaw,
+  )
+
+function sceneryPlacements(snapshot: Snapshot): SceneryPlacement[] {
+  const placements: SceneryPlacement[] = []
   const side = entranceSide(snapshot)
   const outward = sideNormal(side)
   const entrance = { x: snapshot.entrance.x + 0.5, z: snapshot.entrance.y + 0.5 }
@@ -446,7 +494,7 @@ function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] 
       const scale = 0.75 + hash(gx, gz, 5) * 0.6
       const piece = NEAR_SCENERY_MIX.find(([limit]) => variant < limit)?.[1] ?? "rock-round"
       const yaw = hash(gx, gz, 6) * Math.PI * 2
-      nodes.push(...sceneryPiece(kit, piece, `scenery:${gx}:${gz}`, x, z, scale, yaw))
+      placements.push({ piece, id: `scenery:${gx}:${gz}`, x, z, scale, yaw })
     }
   }
   // Sparse outer woodland (trees only) so framings that fit a narrow viewport by width, such as
@@ -469,10 +517,89 @@ function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] 
       const scale = 1 + hash(gx, gz, 14) * 0.6
       const piece: SceneryPiece = hash(gx, gz, 15) < 0.5 ? "tree-round" : "tree-pine"
       const yaw = hash(gx, gz, 16) * Math.PI * 2
-      nodes.push(...sceneryPiece(kit, piece, `scenery:far:${gx}:${gz}`, x, z, scale, yaw))
+      placements.push({ piece, id: `scenery:far:${gx}:${gz}`, x, z, scale, yaw })
     }
   }
-  return nodes
+  return placements
+}
+
+/** The decorative pond of a water-loving species' habitat, if it has one. */
+function habitatPond(habitat: Habitat): { x: number; z: number; radius: number } | null {
+  if (
+    habitat.species !== "flamingo" &&
+    habitat.species !== "capybara" &&
+    habitat.species !== "penguin"
+  ) {
+    return null
+  }
+  return {
+    x: habitat.x + habitat.width * 0.62,
+    z: habitat.y + habitat.height * 0.6,
+    radius: Math.min(habitat.width, habitat.height) * 0.28,
+  }
+}
+
+/** Decorative pieces inside a habitat, seeded by the habitat id and capped per habitat. */
+function habitatPlacements(habitat: Habitat): SceneryPlacement[] {
+  const pond = habitatPond(habitat)
+  return habitatPieces(habitat).filter(
+    (placement) =>
+      !pond || Math.hypot(placement.x - pond.x, placement.z - pond.z) > pond.radius + 0.2,
+  )
+}
+
+function habitatPieces(habitat: Habitat): SceneryPlacement[] {
+  const id = `habitat:${habitat.id}`
+  const placements: SceneryPlacement[] = []
+  const spot = (salt: number, index: number) => ({
+    x: habitat.x + 0.4 + hash(habitat.id, index, salt) * (habitat.width - 0.8),
+    z: habitat.y + 0.4 + hash(habitat.id, index, salt + 1) * (habitat.height - 0.8),
+    yaw: hash(habitat.id, index, salt + 2) * Math.PI * 2,
+  })
+  // One small rock and one boulder for texture.
+  const rock = spot(11, 0)
+  placements.push({
+    piece: "rock-round",
+    id: `${id}:rock:0`,
+    ...rock,
+    scale: 0.6 + hash(habitat.id, 0, 13) * 0.2,
+  })
+  const boulder = spot(11, 1)
+  placements.push({
+    piece: "rock-boulder",
+    id: `${id}:rock:1`,
+    ...boulder,
+    scale: 0.55 + hash(habitat.id, 1, 13) * 0.2,
+  })
+  // Grass tufts: about one per three tiles, never more than the cap.
+  const tufts = Math.min(HABITAT_GRASS_CAP, Math.floor((habitat.width * habitat.height) / 3))
+  for (let index = 0; index < tufts; index += 1) {
+    placements.push({
+      piece: "grass-tuft",
+      id: `${id}:grass:${index}`,
+      ...spot(21, index),
+      scale: 0.8 + hash(habitat.id, index, 24) * 0.5,
+    })
+  }
+  if (
+    habitat.species === "giraffe" ||
+    habitat.species === "zebra" ||
+    habitat.species === "elephant"
+  ) {
+    placements.push({
+      piece: "tree-acacia",
+      id: `${id}:acacia`,
+      x: habitat.x + habitat.width - 0.6,
+      z: habitat.y + habitat.height - 0.6,
+      scale: 1,
+      yaw: hash(habitat.id, 31) * Math.PI * 2,
+    })
+  }
+  return placements
+}
+
+function sceneryNodes(snapshot: Snapshot, kit: SceneryKit): RendererSceneNode[] {
+  return sceneryPlacements(snapshot).flatMap((placement) => placementNodes(kit, placement))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -984,7 +1111,6 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
   const nodes: RendererSceneNode[] = []
   const id = `habitat:${habitat.id}`
   const right = habitat.x + habitat.width
-  const bottom = habitat.y + habitat.height
 
   // Water trough against the north fence.
   const trough = model(`${id}:trough`, { x: habitat.x + 0.55, z: habitat.y + 0.3 })
@@ -998,16 +1124,10 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
     ),
   )
 
-  if (
-    habitat.species === "flamingo" ||
-    habitat.species === "capybara" ||
-    habitat.species === "penguin"
-  ) {
-    const pond = model(`${id}:pond`, {
-      x: habitat.x + habitat.width * 0.62,
-      z: habitat.y + habitat.height * 0.6,
-    })
-    const radius = Math.min(habitat.width, habitat.height) * 0.28
+  const water = habitatPond(habitat)
+  if (water) {
+    const pond = model(`${id}:pond`, { x: water.x, z: water.z })
+    const radius = water.radius
     nodes.push(
       pond.cylinder("rim", [0, 0.012, 0], radius + 0.08, 0.02, "#b9a987"),
       pond.cylinder(
@@ -1020,28 +1140,9 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
     )
   }
 
-  // A couple of zoo-scenery rocks per habitat for texture, seeded by the habitat id.
-  for (let index = 0; index < 2; index += 1) {
-    const rx = habitat.x + 0.4 + hash(habitat.id, index, 11) * (habitat.width - 0.8)
-    const rz = habitat.y + 0.4 + hash(habitat.id, index, 12) * (habitat.height - 0.8)
-    const scale = 0.6 + hash(habitat.id, index, 13) * 0.2
-    const yaw = hash(habitat.id, index) * Math.PI * 2
-    nodes.push(...sceneryPiece(kit, "rock-round", `${id}:rock:${index}`, rx, rz, scale, yaw))
-  }
-
-  if (
-    habitat.species === "giraffe" ||
-    habitat.species === "zebra" ||
-    habitat.species === "elephant"
-  ) {
-    const tx = right - 0.6
-    const tz = bottom - 0.6
-    const acacia = model(`${id}:acacia`, { x: tx, z: tz })
-    nodes.push(
-      blobShadow(`${id}:acacia:shadow`, tx, tz, 0.5),
-      acacia.cylinder("trunk", [0, 0.5, 0], 0.06, 1.0, "#7a5536"),
-      acacia.sphere("crown", [0, 1.08, 0], 0.55, "#6d9a3f", { scale: [1, 0.32, 1] }),
-    )
+  // zoo-scenery rocks, a boulder, grass tufts and (savanna species) an acacia.
+  for (const placement of habitatPlacements(habitat)) {
+    nodes.push(...placementNodes(kit, placement))
   }
 
   if (habitat.has_shelter) {
@@ -1184,7 +1285,7 @@ function animalFigure(m: Figure, species: SpeciesKey, stride: number): RendererS
   }
 }
 
-function animalNodes(animals: Animal[], input: SceneFrameInput) {
+function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presence[]) {
   const nodes: RendererSceneNode[] = []
   const anchors: PickAnchor[] = []
   for (const animal of animals) {
@@ -1205,6 +1306,7 @@ function animalNodes(animals: Animal[], input: SceneFrameInput) {
       blobShadow(`animal:${animal.id}:shadow`, x, z, size),
       ...animalFigure(m, animal.species, stride),
     )
+    presence.push({ key: `animal:${animal.id}`, kind: "animal", x, z, working: false })
     const height = ANIMAL_PICK_HEIGHT[animal.species] ?? 0.25
     anchors.push({
       kind: "animal",
@@ -1257,7 +1359,7 @@ function jitter(id: number, salt: number) {
   return (hash(id, salt) - 0.5) * 0.56
 }
 
-function guestNodes(guests: Guest[], input: SceneFrameInput) {
+function guestNodes(guests: Guest[], input: SceneFrameInput, presence: Presence[]) {
   const nodes: RendererSceneNode[] = []
   const anchors: PickAnchor[] = []
   for (const guest of guests) {
@@ -1291,12 +1393,17 @@ function guestNodes(guests: Guest[], input: SceneFrameInput) {
         ),
       )
     }
+    presence.push({ key, kind: "guest", x, z, working: false })
     anchors.push({ kind: "guest", id: guest.id, point: [x, 0.25, z], radius: 0.22 })
   }
   return { nodes, anchors }
 }
 
-function staffNodes(snapshot: Snapshot, input: SceneFrameInput): RendererSceneNode[] {
+function staffNodes(
+  snapshot: Snapshot,
+  input: SceneFrameInput,
+  presence: Presence[],
+): RendererSceneNode[] {
   const nodes: RendererSceneNode[] = []
   for (const janitor of snapshot.animal_care_depot.janitors) {
     const key = `janitor:${janitor.id}`
@@ -1344,6 +1451,13 @@ function staffNodes(snapshot: Snapshot, input: SceneFrameInput): RendererSceneNo
     }
     const key = `keeper:${keeper.id}`
     const [x, z] = input.resolveActor(key, keeper.x + 0.5, keeper.y + 0.5)
+    presence.push({
+      key,
+      kind: "keeper",
+      x,
+      z,
+      working: keeper.activity === "working" && keeper.habitat_id !== null,
+    })
     const yaw = hash(keeper.id, 11) * Math.PI * 2
     const bob =
       input.animate && (keeper.activity === "to_gate" || keeper.activity === "to_depot")
@@ -1499,6 +1613,34 @@ export function buildSceneryNodes(snapshot: Snapshot, kit: SceneryKit): Renderer
   return sceneryNodes(snapshot, kit)
 }
 
+/** Where cosmetic particle effects may start (#86): leafy scenery and habitat ponds. */
+export type EffectSources = {
+  /** Foliage that flutters leaves when someone passes; `height` is the crown height. */
+  foliage: { id: string; x: number; z: number; height: number }[]
+  ponds: { id: string; x: number; z: number; radius: number }[]
+}
+
+/** Effect sources for a snapshot; like scenery, they never feed back into the simulation. */
+export function effectSources(snapshot: Snapshot): EffectSources {
+  snapshot = presentationSnapshot(snapshot)
+  const foliage = [
+    ...sceneryPlacements(snapshot).filter((placement) => !placement.id.startsWith("scenery:far:")),
+    ...snapshot.habitats.flatMap(habitatPlacements),
+  ]
+    .filter((placement) => LEAFY.has(placement.piece))
+    .map(({ id, x, z, piece, scale }) => ({
+      id,
+      x,
+      z,
+      height: (piece === "bush-round" ? 0.35 : 1.05) * scale,
+    }))
+  const ponds = snapshot.habitats.flatMap((habitat) => {
+    const pond = habitatPond(habitat)
+    return pond ? [{ id: `habitat:${habitat.id}:pond`, ...pond }] : []
+  })
+  return { foliage, ponds }
+}
+
 /**
  * Nodes that depend only on the snapshot and interaction overlay (scenery excluded). Callers cache this per
  * snapshot/overlay identity so per-frame actor animation does not rebuild terrain and scenery.
@@ -1543,14 +1685,15 @@ export function buildStaticNodes(
 /** Animated actors and markers, rebuilt every rendered frame, plus screen-pick anchors. */
 export function buildActorFrame(input: SceneFrameInput): SceneFrame {
   const snapshot = presentationSnapshot(input.snapshot)
-  const animals = animalNodes(snapshot.animals, input)
-  const guests = guestNodes(snapshot.guests, input)
+  const presence: Presence[] = []
+  const animals = animalNodes(snapshot.animals, input, presence)
+  const guests = guestNodes(snapshot.guests, input, presence)
   const depot = snapshot.animal_care_depot
 
   const nodes = [
     ...animals.nodes,
     ...guests.nodes,
-    ...staffNodes(snapshot, input),
+    ...staffNodes(snapshot, input, presence),
     ...maintenanceNodes(snapshot, input),
   ]
 
@@ -1569,7 +1712,7 @@ export function buildActorFrame(input: SceneFrameInput): SceneFrame {
     ),
     { kind: "depot", point: [depot.x + 0.5, 0.5, depot.y + 0.5], radius: 0.55 },
   ]
-  return { nodes, anchors }
+  return { nodes, anchors, presence }
 }
 
 /** Resolve validated content IDs to the renderer's existing presentation profiles.
