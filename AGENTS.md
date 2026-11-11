@@ -56,3 +56,7 @@ Before merging gameplay changes:
 4. When foundation/configuration files covered by `.github/workflows/foundation-audit.yml` change, require that path-scoped `Foundation Fleet Audit` workflow as the coding-tooling check. Do not claim an equivalent local command exists unless one is added to the repository.
 5. Manually exercise the smallest affected playable loop on desktop and, when input is affected, a phone-sized touch viewport. Camera/rendering changes must exercise the full orbit and both allowed tilt bounds, confirming the complete park footprint stays inside the renderer frame while projected controls remain aligned.
 6. For pinned cross-repository contracts, verify the exact accepted revision rather than an unpinned branch tip.
+
+## Pull-request integration
+
+Follow the current shared `coding-agent-conventions` rule `GIT-006` for approved PR integration, including explicit merge-queue submission when ready. Preserve this repository's review, validation, dependency, and owner-approval requirements.
