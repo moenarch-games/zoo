@@ -1645,3 +1645,135 @@ dd {
   padding: 3px 0;
   font-size: 12px;
 }
+
+/* #99: land purchase and the non-binding expansion plan. The Land tool replaces the side
+   panel's other content with the parcel list. */
+.side-panel.land-mode > :not(.land-panel, .plan-panel) {
+  display: none;
+}
+
+.land-panel,
+.plan-panel {
+  padding: 0 10px 10px;
+}
+
+.land-panel .window-title,
+.plan-panel .window-title {
+  margin: 0 -10px 6px;
+}
+
+.land-parcels,
+.plan-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.land-parcel {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.land-parcel .shop-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.land-parcel .shop-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.land-parcel .shop-row.active {
+  background: #f6d36f;
+}
+
+.land-parcel .shop-row:disabled {
+  cursor: default;
+  background: #e2dcbd;
+  color: #4d5a52;
+}
+
+.land-parcel .shop-row strong {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+
+.land-show {
+  flex: none;
+  margin: 6px 0;
+}
+
+.land-restriction,
+.land-status[data-status="locked"],
+.land-status[data-status="unaffordable"] {
+  color: #9a3b2b !important;
+  font-weight: 700;
+}
+
+.land-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #79775d;
+  border-radius: 4px;
+  background: #eee8c7;
+  font-size: 11px;
+}
+
+.land-quote.invalid {
+  border-color: #b4553f;
+}
+
+.land-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.land-actions button[data-land-buy]:not(:disabled) {
+  background: #3fae6a;
+  color: white;
+  font-weight: 750;
+}
+
+.plan-items li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 6px;
+  border-left: 4px solid #7ec8f0;
+  background: #eee8c7;
+  font-size: 11px;
+}
+
+.plan-items li.invalid {
+  border-left-color: #e0a04f;
+}
+
+.plan-items li span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.plan-items small {
+  color: #667064;
+  font-size: 10px;
+}
+
+.plan-total {
+  margin: 6px 0 2px;
+  font-size: 11px;
+}
+
+button[data-plan-toggle].active {
+  background: #7ec8f0;
+  color: #24302b;
+}

@@ -9,6 +9,7 @@ export type Tool =
   | "reshape"
   | "zone"
   | "terrain"
+  | "land"
   | `facility:${string}`
 export type Speed = 0 | 1 | 2 | 4
 export type SpeciesKey = string
@@ -315,6 +316,8 @@ export type FinanceBreakdown = {
   keeper_wages_expense_cents: number
   janitor_wages_expense_cents: number
   mechanic_wages_expense_cents: number
+  /** Parcels bought (#99). */
+  land_expense_cents: number
 }
 
 export type FinanceDay = {
@@ -441,6 +444,53 @@ export type Snapshot = {
   /** Rust-owned current park problems, most severe and oldest first (#94). */
   alerts: Alert[]
   summary: DailySummary
+  /** Purchasable parcels, ownership and restrictions (#99). */
+  land: LandState
+}
+
+export type ParcelStatus = "owned" | "available" | "unaffordable" | "locked"
+
+/** One scenario-authored parcel as zoo-core presents it (#99). */
+export type Parcel = {
+  id: string
+  title: string
+  summary: string
+  areas: { x: number; y: number; width: number; height: number }[]
+  price_cents: number
+  owned: boolean
+  status: ParcelStatus
+  /** Why the parcel cannot be bought right now. */
+  restriction: string | null
+  /** The unlock condition, met or not. */
+  unlock: string | null
+  tiles: number
+  buildable_tiles: number
+  water_tiles: number
+  /** An existing public path or the entrance touches the parcel. */
+  path_frontage: boolean
+  price_per_buildable_tile_cents: number | null
+}
+
+export type LandState = {
+  parcels: Parcel[]
+  owned_tiles: number
+  total_tiles: number
+}
+
+/** Rust's quote for buying a selection of parcels together; `buy_land` needs its token. */
+export type LandQuote = {
+  ok: boolean
+  message: string
+  lines: {
+    id: string
+    title: string | null
+    price_cents: number
+    status: "available" | "owned" | "locked" | "unknown" | "duplicate"
+    reason: string | null
+  }[]
+  total_cents: number
+  cash_after_cents: number
+  quote: string
 }
 
 export type ActionResult = {
@@ -470,6 +520,8 @@ export type PlacementEvaluation = {
   warnings: string[]
   /** The grid corner where a drawn outline fails. */
   blocked_corner: Point | null
+  /** Unbought parcels the enclosure needs first (#99). */
+  land_parcels: string[]
 }
 
 /** Rust's plan for a path stroke, facility placement or demolition; commits re-plan it. */
@@ -484,6 +536,8 @@ export type ConstructionPreview = {
   blocked_tiles: Point[]
   affected: { kind: string; id: number | null; effect: string }[]
   undoable: boolean
+  /** Unbought parcels the footprint needs first (#99). */
+  land_parcels: string[]
 }
 
 export type ConstructionStep = {

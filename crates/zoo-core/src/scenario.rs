@@ -25,6 +25,7 @@ use super::{
     ActionResult, GameState, Position, TileKind,
     care::CareJobState,
     content::{self, Catalog},
+    land,
     session::{DomainEvent, fnv1a64},
     tutorial::Tutorial,
 };
@@ -76,6 +77,9 @@ pub(crate) struct Scenario {
     opening_focus: Position,
     #[serde(default)]
     objectives: Vec<ObjectiveDefinition>,
+    /// Land the park may buy inside its map (#99); every other tile starts owned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    land: Vec<land::ParcelDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -557,6 +561,7 @@ impl Scenario {
         if self.tutorial == TutorialMode::Guided && self.objectives.is_empty() {
             return Err("tutorial: a guided scenario needs objectives".to_owned());
         }
+        land::validate_parcels(self.land.iter(), width, height, [self.entrance, self.depot])?;
         Ok(())
     }
 
@@ -643,6 +648,13 @@ impl Scenario {
                 }
             }
         }
+        // Land comes before setup, so authored objects obey ownership like player construction.
+        state.land = self
+            .land
+            .iter()
+            .cloned()
+            .map(land::Parcel::unowned)
+            .collect();
         // Authored objects are free: build them on an unlimited budget, then set the
         // scenario's cash and a clean ledger.
         state.cash_cents = content::MAX_CENTS;
@@ -1022,7 +1034,17 @@ mod tests {
 
     #[test]
     fn invalid_scenarios_are_rejected_with_a_reason() {
-        let cases: [(&str, Box<Edit>); 9] = [
+        let cases: [(&str, Box<Edit>); 10] = [
+            (
+                "Outside owned land: buy Old Lot",
+                Box::new(|v| {
+                    // Authored objects obey ownership: the starting path crosses an unbought lot.
+                    v["land"] = serde_json::json!([{
+                        "id": "old-lot", "title": "Old Lot", "summary": "Under the path",
+                        "areas": [{"x": 5, "y": 10, "width": 2, "height": 1}], "price_cents": 100
+                    }])
+                }),
+            ),
             ("map: 4x20", Box::new(|v| v["map"]["width"] = 4.into())),
             ("map: 65x", Box::new(|v| v["map"]["width"] = 65.into())),
             (

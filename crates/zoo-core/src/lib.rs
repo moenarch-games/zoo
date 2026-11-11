@@ -6,6 +6,7 @@ mod content;
 mod enclosure;
 mod environment;
 mod gate;
+mod land;
 mod overlay;
 mod save;
 mod scenario;
@@ -264,6 +265,8 @@ enum ExpenseCategory {
     KeeperWages,
     JanitorWages,
     MechanicWages,
+    /// Buying park land (#99).
+    Land,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,6 +286,8 @@ struct FinanceLedger {
     keeper_wages_expense_cents: i64,
     janitor_wages_expense_cents: i64,
     mechanic_wages_expense_cents: i64,
+    /// Parcels bought (#99; save schema 11).
+    land_expense_cents: i64,
 }
 
 impl FinanceLedger {
@@ -324,6 +329,7 @@ impl FinanceLedger {
             ExpenseCategory::KeeperWages => self.keeper_wages_expense_cents += cents,
             ExpenseCategory::JanitorWages => self.janitor_wages_expense_cents += cents,
             ExpenseCategory::MechanicWages => self.mechanic_wages_expense_cents += cents,
+            ExpenseCategory::Land => self.land_expense_cents += cents,
         }
         true
     }
@@ -345,6 +351,7 @@ impl FinanceLedger {
             + self.keeper_wages_expense_cents
             + self.janitor_wages_expense_cents
             + self.mechanic_wages_expense_cents
+            + self.land_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -730,6 +737,8 @@ struct GameState {
     tutorial: tutorial::Tutorial,
     /// The park's current problems (#94); saved so first occurrences survive a reload.
     alerts: Vec<alerts::Alert>,
+    /// Purchasable parcels authored by the scenario (#99); every other tile is owned land.
+    land: Vec<land::Parcel>,
     /// Bounded construction undo/redo; session state, never saved (#92).
     #[serde(skip)]
     construction: construction::History,
@@ -824,6 +833,7 @@ impl GameState {
             next_work_zone_id: 1,
             tutorial: tutorial::Tutorial::off(),
             alerts: Vec::new(),
+            land: Vec::new(),
             construction: construction::History::default(),
             work: WorkCounters::default(),
         };
@@ -3315,6 +3325,7 @@ impl GameState {
             scenario: self.scenario_view(),
             alerts: self.alerts.clone(),
             summary: self.daily_summary(),
+            land: self.land_view(),
         }
     }
 }
@@ -3682,6 +3693,8 @@ struct Snapshot {
     scenario: scenario::ScenarioView,
     alerts: Vec<alerts::Alert>,
     summary: overlay::DailySummary,
+    /// Parcels, ownership, prices and restrictions (#99).
+    land: land::LandView,
 }
 
 #[derive(Serialize)]
@@ -3844,6 +3857,16 @@ impl ZooGame {
                 number("by")?,
                 text("access")?,
             ),
+            "buy_land" => {
+                let parcels = args["parcels"]
+                    .as_array()
+                    .ok_or_else(|| format!("{kind}: missing parcels"))?
+                    .iter()
+                    .map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<String>>>()
+                    .ok_or_else(|| format!("{kind}: parcels must be parcel IDs"))?;
+                self.buy_land(parcels, text("quote")?)
+            }
             "place_habitat_outline" => self.place_habitat_outline(points()?),
             "reshape_habitat" => self.reshape_habitat(number("habitat_id")?, points()?),
             "upgrade_fence" => self.upgrade_fence(number("habitat_id")?, text("fence")?),
@@ -4146,6 +4169,19 @@ impl ZooGame {
         self.command("build_plaza", args, |state| {
             state.build_plaza(ax, ay, bx, by, &access)
         })
+    }
+
+    /// Quotes buying the parcels `parcels` (stable parcel IDs) together (#99): each parcel's
+    /// price and status, the total, and the quote token `buy_land` needs.
+    pub fn evaluate_land_purchase(&self, parcels: Vec<String>) -> String {
+        serde_json::to_string(&self.state.quote_land(&parcels))
+            .expect("land quote serialization is infallible")
+    }
+
+    /// Buys the parcels `parcels` as one transaction when `quote` is still current.
+    pub fn buy_land(&mut self, parcels: Vec<String>, quote: String) -> String {
+        let args = serde_json::json!({ "parcels": parcels, "quote": quote });
+        self.command("buy_land", args, |state| state.buy_land(&parcels, &quote))
     }
 
     pub fn evaluate_concession(&self, x: u32, y: u32, kind: String) -> String {

@@ -40,5 +40,32 @@
       "goal": { "kind": "guests", "at_least": 8 },
       "focus": { "x": 4, "y": 8 }
     }
+  ],
+  "land": [
+    {
+      "id": "east-paddock",
+      "title": "East Paddock",
+      "summary": "Open dry pasture at the end of the main path: room for a large habitat with a short path, at nearly twice the lakeshore's price.",
+      "areas": [{ "x": 18, "y": 8, "width": 6, "height": 8 }],
+      "price_cents": 950000
+    },
+    {
+      "id": "lakeshore",
+      "title": "Lakeshore",
+      "summary": "The cheapest plot and the lake guests come to see, but the water leaves only strips of grass and no path reaches it yet.",
+      "areas": [{ "x": 18, "y": 0, "width": 6, "height": 8 }],
+      "price_cents": 500000
+    },
+    {
+      "id": "south-meadow",
+      "title": "South Meadow",
+      "summary": "The largest plot, beside the entrance and the food stand, but the town sells it only once the zoo has animals on show.",
+      "areas": [{ "x": 0, "y": 12, "width": 18, "height": 4 }],
+      "price_cents": 700000,
+      "unlock": {
+        "goal": { "kind": "stocked_habitats", "at_least": 1 },
+        "description": "opens once a habitat has animals"
+      }
+    }
   ]
 }

@@ -119,6 +119,8 @@ pub(crate) struct ConstructionPreview {
     pub(crate) affected: Vec<Affected>,
     /// Whether the committed action enters the undo history.
     undoable: bool,
+    /// Unowned parcels the footprint needs bought first (#99).
+    land_parcels: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,6 +147,22 @@ impl ConstructionPreview {
             blocked_tiles,
             affected: Vec::new(),
             undoable: false,
+            land_parcels: Vec::new(),
+        }
+    }
+
+    /// A footprint that reaches onto land the park has not bought (#99).
+    /// `cost_cents` is what the action would cost once the land is bought, for planning.
+    fn outside_land(
+        action: &'static str,
+        block: super::land::LandBlock,
+        tiles: Vec<Position>,
+        cost_cents: i64,
+    ) -> Self {
+        Self {
+            land_parcels: block.parcels,
+            cost_cents,
+            ..Self::rejected(action, block.message, tiles, block.tiles)
         }
     }
 
@@ -476,6 +494,26 @@ impl GameState {
             Ok(footprint) => footprint,
             Err(message) => return reject(message, Vec::new(), Vec::new()),
         };
+        if let Some(block) = self.land_block(&footprint) {
+            let owned = footprint
+                .iter()
+                .copied()
+                .filter(|tile| !block.tiles.contains(tile))
+                .collect();
+            let grass = footprint
+                .iter()
+                .filter(|tile| self.tile(tile.x, tile.y) == Some(TileKind::Grass))
+                .count();
+            return (
+                ConstructionPreview::outside_land(
+                    "path",
+                    block,
+                    owned,
+                    self.path_tiles_cost(grass),
+                ),
+                None,
+            );
+        }
         let mut built = Vec::new();
         let mut reclassified = Vec::new();
         let mut blocked = Vec::new();
@@ -657,6 +695,14 @@ impl GameState {
                 "{} is not available in this scenario",
                 definition.label
             ));
+        }
+        if let Some(block) = self.land_block(&tiles) {
+            return ConstructionPreview::outside_land(
+                "facility",
+                block,
+                Vec::new(),
+                definition.build_cost_cents,
+            );
         }
         match self.tile(x, y) {
             None => return reject("That tile is outside the park".to_owned()),

@@ -45,6 +45,8 @@ pub(crate) struct PlacementEvaluation {
     pub warnings: Vec<String>,
     /// The grid corner where a drawn outline fails, if it does.
     pub blocked_corner: Option<Position>,
+    /// Unowned parcels the enclosure needs bought first (#99).
+    pub land_parcels: Vec<String>,
 }
 
 impl PlacementEvaluation {
@@ -70,6 +72,7 @@ impl PlacementEvaluation {
             service_gate: None,
             warnings: Vec::new(),
             blocked_corner: None,
+            land_parcels: Vec::new(),
         }
     }
 
@@ -278,6 +281,7 @@ impl GameState {
             service_gate: None,
             warnings: Vec::new(),
             blocked_corner: None,
+            land_parcels: Vec::new(),
         };
         if width < MIN_HABITAT_DIMENSION || height < MIN_HABITAT_DIMENSION {
             return plan.reject(format!(
@@ -294,6 +298,16 @@ impl GameState {
         }
 
         let own = |tile: &Position| habitat.is_some_and(|habitat| habitat.contains(*tile));
+        let new_tiles: Vec<Position> = plan
+            .occupied_tiles
+            .iter()
+            .copied()
+            .filter(|tile| !own(tile))
+            .collect();
+        if let Some(block) = self.land_block(&new_tiles) {
+            plan.land_parcels = block.parcels;
+            return plan.reject(block.message);
+        }
         if plan
             .occupied_tiles
             .iter()
@@ -411,6 +425,7 @@ impl GameState {
         tiles: &[Position],
     ) -> bool {
         self.gate_access_tile(segment)
+            .filter(|access| self.owns(*access))
             .is_some_and(|access| match self.tile(access.x, access.y) {
                 Some(TileKind::Grass | TileKind::Path(_) | TileKind::Entrance) => true,
                 Some(TileKind::Habitat(id)) => id == habitat_id && !shape::contains(tiles, access),

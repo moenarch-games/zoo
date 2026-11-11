@@ -20,6 +20,7 @@ import type {
   Guest,
   Habitat,
   Keeper,
+  LandQuote,
   Objective,
   OverlayKind,
   OverlayView,
@@ -37,6 +38,14 @@ import type {
   WorkZoneEvaluation,
 } from "./game-types"
 import { HabitatDesignPanel, type HabitatBrush } from "./HabitatDesignPanel"
+import {
+  LandPanel,
+  parcelAt,
+  parcelCenter,
+  type PlanEvaluation,
+  type PlanItem,
+  PlanPanel,
+} from "./LandPanel"
 import {
   AlertList,
   DailySummaryView,
@@ -167,6 +176,8 @@ function toolHint(tool: Tool, snapshot: Snapshot | null) {
       return "Drag corner to corner to draw a work zone · tap a zone to select it · zones may not overlap."
     case "terrain":
       return "Drag inside the selected habitat to paint ground or water or set a height; tap to place a furnishing · Rust previews cost and welfare · Esc cancels."
+    case "land":
+      return "Tap a parcel to compare its price, space and access · select several to buy them together · Clear cancels the selection."
     case "select":
       return "Click to inspect · drag to pan · right-drag or two-finger twist to rotate · scroll or pinch to zoom."
   }
@@ -246,6 +257,12 @@ export default function App() {
   const [outline, setOutline] = useState<Point[]>([])
   const fenceStartRef = useRef<Point | null>(null)
   const fenceEndRef = useRef<Point | null>(null)
+  // Land (#99): the parcels selected for one purchase, and the non-binding expansion plan of
+  // prospective paths and habitats. Neither is saved; Rust quotes and evaluates both.
+  const [landSelection, setLandSelection] = useState<string[]>([])
+  const [planning, setPlanning] = useState(false)
+  const [plan, setPlan] = useState<PlanItem[]>([])
+  const planIdRef = useRef(0)
 
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [tool, setTool] = useState<Tool>("select")
@@ -784,6 +801,123 @@ export default function App() {
     return text === undefined ? null : (JSON.parse(text) as EnvironmentPreview)
   }, [brush, callGame, hoveredTile, selectedHabitatId, snapshot, stroke, tool])
 
+  // Land (#99): bought parcels leave the selection; Rust quotes the rest as one purchase.
+  useEffect(() => {
+    if (!snapshot) {
+      return
+    }
+    setLandSelection((current) => {
+      const next = current.filter((id) =>
+        snapshot.land.parcels.some((parcel) => parcel.id === id && !parcel.owned),
+      )
+      return next.length === current.length ? current : next
+    })
+  }, [snapshot])
+
+  const landQuote = useMemo<LandQuote | null>(() => {
+    if (!snapshot || landSelection.length === 0) {
+      return null
+    }
+    const text = callGame((game) => game.evaluate_land_purchase(landSelection))
+    return text === undefined ? null : (JSON.parse(text) as LandQuote)
+  }, [callGame, landSelection, snapshot])
+
+  // The expansion plan is re-evaluated by Rust against every snapshot; nothing is committed.
+  const planEvaluations = useMemo<PlanEvaluation[]>(() => {
+    if (!snapshot) {
+      return []
+    }
+    return plan.flatMap((item): PlanEvaluation[] => {
+      const text = callGame((game) => {
+        switch (item.kind) {
+          case "path":
+            return game.evaluate_path_stroke(Uint32Array.from(item.points), item.width, item.access)
+          case "plaza":
+            return game.evaluate_plaza(item.a.x, item.a.y, item.b.x, item.b.y, item.access)
+          case "habitat":
+            return game.evaluate_habitat_rect(item.a.x, item.a.y, item.b.x, item.b.y)
+          case "outline":
+            return game.evaluate_habitat_outline(Uint32Array.from(item.points))
+        }
+      })
+      if (text === undefined) {
+        return []
+      }
+      if (item.kind === "habitat" || item.kind === "outline") {
+        const evaluation = JSON.parse(text) as PlacementEvaluation
+        return [
+          {
+            item,
+            ok: evaluation.ok,
+            message: evaluation.message,
+            cost_cents: evaluation.cost_cents,
+            tiles: evaluation.occupied_tiles,
+            land_parcels: evaluation.land_parcels,
+          },
+        ]
+      }
+      const preview = JSON.parse(text) as ConstructionPreview
+      return [
+        {
+          item,
+          ok: preview.ok && preview.changes,
+          message: preview.ok && !preview.changes ? "Already built" : preview.message,
+          cost_cents: preview.cost_cents,
+          tiles: [...preview.tiles, ...preview.blocked_tiles],
+          land_parcels: preview.land_parcels,
+        },
+      ]
+    })
+  }, [callGame, plan, snapshot])
+
+  const addToPlan = (item: PlanItem) => {
+    setPlan((current) => [...current, item])
+    inform("Added to the plan · nothing was built or spent.")
+  }
+
+  const nextPlanId = () => {
+    planIdRef.current += 1
+    return planIdRef.current
+  }
+
+  const buildPlanItem = (item: PlanItem) => {
+    const game = gameRef.current
+    if (!game) {
+      return
+    }
+    const result = perform(() => {
+      switch (item.kind) {
+        case "path":
+          return game.build_path_stroke(Uint32Array.from(item.points), item.width, item.access)
+        case "plaza":
+          return game.build_plaza(item.a.x, item.a.y, item.b.x, item.b.y, item.access)
+        case "habitat":
+          return game.place_habitat_rect(item.a.x, item.a.y, item.b.x, item.b.y)
+        case "outline":
+          return game.place_habitat_outline(Uint32Array.from(item.points))
+      }
+    })
+    if (result.ok) {
+      setPlan((current) => current.filter((entry) => entry.id !== item.id))
+    }
+  }
+
+  const buyLand = () => {
+    const game = gameRef.current
+    if (!game || !landQuote) {
+      return
+    }
+    const result = perform(() => game.buy_land(landSelection, landQuote.quote))
+    if (result.ok) {
+      setLandSelection([])
+    }
+  }
+
+  const toggleParcel = (id: string) =>
+    setLandSelection((current) =>
+      current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
+    )
+
   // The scene and tooltip show an environment plan like any other construction plan.
   const scenePreview = useMemo<ConstructionPreview | null>(() => {
     if (constructionPreview || !environmentPreview) {
@@ -799,6 +933,7 @@ export default function App() {
       blocked_tiles: environmentPreview.blocking_tiles,
       affected: [],
       undoable: false,
+      land_parcels: [],
     }
   }, [constructionPreview, environmentPreview])
 
@@ -855,8 +990,19 @@ export default function App() {
       selectedZoneId,
       zonePreview,
       management: overlayView,
+      land: snapshot
+        ? { parcels: snapshot.land.parcels, selected: landSelection, active: tool === "land" }
+        : null,
+      plan: planEvaluations.map((entry) => ({
+        key: `${entry.item.id}`,
+        tiles: entry.tiles,
+        ok: entry.ok,
+      })),
     }),
     [
+      landSelection,
+      planEvaluations,
+      snapshot,
       scenePreview,
       gatePreview,
       ghostTiles,
@@ -913,6 +1059,10 @@ export default function App() {
         setTool("select")
       }
     } else {
+      if (planning) {
+        addToPlan({ id: nextPlanId(), kind: "outline", points: [...points] })
+        return
+      }
       perform(() => game.place_habitat_outline(points))
     }
   }
@@ -1043,6 +1193,10 @@ export default function App() {
       const end = fenceEndRef.current
       clearFenceGesture()
       if (commit && game && start && end) {
+        if (planning) {
+          addToPlan({ id: nextPlanId(), kind: "plaza", a: start, b: end, access: pathBrush.access })
+          return
+        }
         perform(() => game.build_plaza(start.x, start.y, end.x, end.y, pathBrush.access))
       } else if (!commit) {
         inform("Plaza cancelled · nothing was built.")
@@ -1053,6 +1207,16 @@ export default function App() {
       const points = Uint32Array.from(strokeRef.current.flatMap((tile) => [tile.x, tile.y]))
       clearStroke()
       if (commit && game && points.length > 0) {
+        if (planning) {
+          addToPlan({
+            id: nextPlanId(),
+            kind: "path",
+            points: [...points],
+            width: pathBrush.width,
+            access: pathBrush.access,
+          })
+          return
+        }
         perform(() => game.build_path_stroke(points, pathBrush.width, pathBrush.access))
       } else if (!commit) {
         inform("Path stroke cancelled · nothing was built.")
@@ -1095,6 +1259,10 @@ export default function App() {
       const far = tap
         ? { x: start.x + habitatSize.width - 1, y: start.y + habitatSize.height - 1 }
         : end
+      if (planning) {
+        addToPlan({ id: nextPlanId(), kind: "habitat", a: start, b: far })
+        return
+      }
       perform(() => game.place_habitat_rect(start.x, start.y, far.x, far.y))
     }
   }
@@ -1522,6 +1690,21 @@ export default function App() {
       return
     }
 
+    if (tool === "land") {
+      const parcel = target ? parcelAt(snapshot.land, target) : null
+      if (!parcel) {
+        inform("This tile is already the park's own land.")
+      } else if (parcel.owned) {
+        inform(`${parcel.title} is owned land.`)
+      } else {
+        toggleParcel(parcel.id)
+        inform(
+          `${parcel.title} · ${money(parcel.price_cents)} · ${parcel.restriction ?? parcel.summary}`,
+        )
+      }
+      return
+    }
+
     if (tool.startsWith("facility:") && target) {
       perform(() => game.place_concession(target.x, target.y, tool.slice(9)))
     }
@@ -1751,6 +1934,9 @@ export default function App() {
     clearStroke()
     clearFenceGesture()
     setTool("select")
+    setLandSelection([])
+    setPlan([])
+    setPlanning(false)
     setSelectedHabitatId(null)
     setSelectedGuestId(null)
     setSelectedAnimalId(null)
@@ -2188,8 +2374,36 @@ export default function App() {
             tool === "zone" && zoneEdit !== null ? " zone-edit-mode" : ""
           }${
             tool === "terrain" ? " design-mode" : ""
-          }${workspaceTab !== null ? " behind-workspace" : ""}`}
+          }${tool === "land" ? " land-mode" : ""}${workspaceTab !== null ? " behind-workspace" : ""}`}
         >
+          {tool === "land" && (
+            <LandPanel
+              land={snapshot.land}
+              selection={landSelection}
+              quote={landQuote}
+              onToggle={toggleParcel}
+              onClear={() => {
+                setLandSelection([])
+                inform("Selection cleared · nothing was bought.")
+              }}
+              onBuy={buyLand}
+              onShow={(parcel) => requestCamera(parcelCenter(parcel))}
+              onClose={() => setTool("select")}
+            />
+          )}
+          {plan.length > 0 && (
+            <PlanPanel
+              plan={planEvaluations}
+              land={snapshot.land}
+              planning={planning}
+              onBuild={buildPlanItem}
+              onRemove={(item) => setPlan((current) => current.filter((entry) => entry !== item))}
+              onClear={() => {
+                setPlan([])
+                inform("Plan cleared · nothing was built.")
+              }}
+            />
+          )}
           {snapshot.scenario.objectives.length > 0 &&
             (snapshot.tutorial.status === "active" || snapshot.tutorial.status === "off") && (
               <ObjectiveChecklist
@@ -3136,6 +3350,7 @@ export default function App() {
                 >
                   ▭ Plaza
                 </button>
+                <PlanToggle planning={planning} onToggle={() => setPlanning((on) => !on)} />
                 {constructionPreview && (
                   <span
                     className={`path-preview ${constructionPreview.ok ? "valid" : "invalid"}`}
@@ -3158,6 +3373,7 @@ export default function App() {
                     {shape === "rect" ? "▭ Rectangle" : "⌐ Outline"}
                   </button>
                 ))}
+                <PlanToggle planning={planning} onToggle={() => setPlanning((on) => !on)} />
               </div>
             )}
             {outlineMode && (
@@ -3254,6 +3470,14 @@ export default function App() {
                 onClick={() => setTool(`facility:${offer.key}`)}
               />
             ))}
+          {snapshot.land.parcels.length > 0 && (
+            <ToolButton
+              active={tool === "land"}
+              icon="⛳"
+              label="Land"
+              onClick={() => setTool("land")}
+            />
+          )}
           <ToolButton
             active={tool === "bulldoze"}
             icon="⌫"
@@ -3277,6 +3501,21 @@ export default function App() {
         </nav>
       </footer>
     </main>
+  )
+}
+
+/** Plan mode (#99): finished path and habitat gestures join the plan instead of building. */
+function PlanToggle({ planning, onToggle }: { planning: boolean; onToggle: () => void }) {
+  return (
+    <button
+      data-plan-toggle
+      className={planning ? "active" : ""}
+      aria-pressed={planning}
+      title="Plan without spending: gestures are added to the expansion plan"
+      onClick={onToggle}
+    >
+      ✎ Plan
+    </button>
   )
 }
 
