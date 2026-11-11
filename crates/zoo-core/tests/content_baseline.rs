@@ -27,6 +27,16 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
             stand.remove(key);
         }
     }
+    // #99 adds a land-purchase ledger line, always zero here.
+    for day in ["current_day", "previous_day"] {
+        if let Some(breakdown) = snapshot["finance"]
+            .get_mut(day)
+            .and_then(|day| day.get_mut("breakdown"))
+            .and_then(Value::as_object_mut)
+        {
+            assert_eq!(breakdown.remove("land_expense_cents"), Some(json!(0)));
+        }
+    }
     json!({
         "cash_cents": snapshot["cash_cents"],
         "habitats": snapshot["habitats"],

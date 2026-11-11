@@ -13,6 +13,7 @@ const FIXTURE_V7: &str = "tests/fixtures/save-v7.json";
 const FIXTURE_V8: &str = "tests/fixtures/save-v8.json";
 const FIXTURE_V9: &str = "tests/fixtures/save-v9.json";
 const FIXTURE_V10: &str = "tests/fixtures/save-v10.json";
+const FIXTURE_V11: &str = "tests/fixtures/save-v11.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -37,9 +38,26 @@ fn content_without_environment(content: &mut Value) {
     }
 }
 
+/// Undoes the schema 10 → 11 migration (#99) on a document whose park owns its whole map: the
+/// park forgets its (empty) land and its ledgers lose the land-purchase line.
+fn land_removed(value: &mut Value) {
+    let park = value["park"].as_object_mut().unwrap();
+    assert_eq!(park.remove("land").unwrap(), serde_json::json!([]));
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            assert_eq!(
+                ledger.remove("land_expense_cents").unwrap(),
+                serde_json::json!(0)
+            );
+        }
+    }
+    value["schema_version"] = 10.into();
+}
+
 /// Undoes the schema 9 → 10 migration (#98) on a document without staff-only paths: every
 /// public path tile is a plain `"path"` again.
 fn paths_unclassified(value: &mut Value) {
+    land_removed(value);
     for tile in value["park"]["tiles"].as_array_mut().unwrap() {
         assert_ne!(
             *tile,
@@ -477,19 +495,17 @@ fn the_schema_v9_fixture_migrates_every_path_to_public() {
 }
 
 #[test]
-fn the_current_schema_fixture_still_loads_unchanged() {
-    if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&mid_run().save_json());
-        std::fs::write(
-            FIXTURE_V10,
-            serde_json::to_string_pretty(&value).unwrap() + "\n",
-        )
-        .unwrap();
-    }
+fn the_schema_v10_fixture_migrates_to_a_park_that_owns_its_whole_map() {
     let fixture = std::fs::read_to_string(FIXTURE_V10).unwrap();
+    let original = json(&fixture);
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
-    assert_eq!(json(&game.save_json()), json(&fixture));
+    let mut saved = json(&game.save_json());
+    land_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    assert_eq!(view["land"]["parcels"], serde_json::json!([]));
+    assert_eq!(view["land"]["owned_tiles"], view["land"]["total_tiles"]);
     // Saved path classifications restore (#98): a staff-only route and a widened plaza.
     let view = json(&game.snapshot_json());
     let access = |x: u64, y: u64| {
@@ -505,6 +521,62 @@ fn the_current_schema_fixture_still_loads_unchanged() {
     assert_eq!(access(11, 9), "public");
     let diagnostics = json(&game.diagnostics_json());
     assert_eq!(diagnostics["start"]["scenario"], "save");
+    game.tick(60);
+}
+
+/// The partly-prepared lakeside after buying the East Paddock (#99), with a path into it and a
+/// second, stocked and staffed habitat on the new land.
+fn expanded() -> ZooGame {
+    let mut game = ZooGame::new();
+    ok(game.start_scenario("partly-prepared"));
+    let parcels = vec!["east-paddock".to_owned()];
+    let quote = json(&game.evaluate_land_purchase(parcels.clone()));
+    ok(game.buy_land(parcels, quote["quote"].as_str().unwrap().to_owned()));
+    ok(game.build_path_stroke(vec![12, 8, 22, 8], 1, "public".to_owned()));
+    ok(game.place_habitat_rect(19, 9, 22, 12));
+    ok(game.create_work_zone(3, 6, 23, 10));
+    ok(game.hire_keeper());
+    ok(game.assign_keeper_zone(1, 1));
+    ok(game.buy_animal_feed());
+    ok(game.adopt(2, "capybara".to_owned()));
+    ok(game.adopt(2, "capybara".to_owned()));
+    for _ in 0..6 {
+        game.tick(37);
+    }
+    game
+}
+
+#[test]
+fn the_current_schema_fixture_still_loads_unchanged() {
+    if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
+        let value = json(&expanded().save_json());
+        std::fs::write(
+            FIXTURE_V11,
+            serde_json::to_string_pretty(&value).unwrap() + "\n",
+        )
+        .unwrap();
+    }
+    let fixture = std::fs::read_to_string(FIXTURE_V11).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    assert_eq!(json(&game.save_json()), json(&fixture));
+    // Saved land restores (#99): the bought paddock stays owned and the rest stays for sale.
+    let view = json(&game.snapshot_json());
+    let status = |id: &str| {
+        view["land"]["parcels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|parcel| parcel["id"] == id)
+            .unwrap()["status"]
+            .clone()
+    };
+    assert_eq!(status("east-paddock"), "owned");
+    assert_eq!(status("lakeshore"), "available");
+    assert_eq!(view["habitats"].as_array().unwrap().len(), 2);
+    let built = json(&game.evaluate_path_stroke(vec![18, 7], 1, "public".to_owned()));
+    assert_eq!(built["ok"], false);
+    assert_eq!(built["land_parcels"], serde_json::json!(["lakeshore"]));
     game.tick(60);
 }
 

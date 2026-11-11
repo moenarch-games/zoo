@@ -173,6 +173,7 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["keeper_wages_expense_cents", "Keeper wages"],
   ["janitor_wages_expense_cents", "Janitor wages"],
   ["mechanic_wages_expense_cents", "Mechanic wages"],
+  ["land_expense_cents", "Land purchases"],
 ]
 
 export function DailySummaryView({

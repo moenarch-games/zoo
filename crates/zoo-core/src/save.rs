@@ -53,6 +53,7 @@ const MIGRATIONS: &[Migration] = &[
     drop_content_schema_version,
     v8_add_habitat_environments,
     v9_classify_paths,
+    v10_add_land,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -163,6 +164,22 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 11 (#99) adds purchasable land. Earlier parks had no parcels, so the park owns every
+/// tile of its map; their ledgers gain an empty land-purchase line.
+fn v10_add_land(mut value: Value) -> Result<Value, SaveError> {
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| SaveError::new("invalid_save", "park: missing or not an object"))?;
+    park.insert("land".to_owned(), json!([]));
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            ledger.insert("land_expense_cents".to_owned(), json!(0));
+        }
+    }
     Ok(value)
 }
 
@@ -618,6 +635,7 @@ impl GameState {
 
     fn save_violation_result(&self) -> Result<(), String> {
         self.scenario_violation()?;
+        self.land_violation()?;
         if let Some(violation) = self.environment_save_violation() {
             return Err(violation);
         }

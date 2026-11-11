@@ -414,3 +414,66 @@
     display: none;
   }
 }
+
+@media (max-width: 900px) {
+  /* #99: the Land tool's sheet keeps the parcel list short so the map stays tappable above it;
+     a parcel's long summary returns on desktop. */
+  .workspace .side-panel:has(> .land-panel, > .plan-panel) {
+    display: block;
+    max-height: min(32dvh, 270px);
+  }
+
+  .land-panel .land-facts {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The selection's total and Buy come first, so they stay in view above the list. */
+  .land-quote {
+    flex-direction: row;
+    align-items: center;
+    margin: 0 0 4px;
+    padding: 4px 6px;
+  }
+
+  .land-quote > span {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .land-actions button {
+    min-height: 44px;
+  }
+
+  /* With nothing selected the sheet otherwise keeps only the guide card. */
+  .workspace .side-panel:has(> .land-panel, > .plan-panel) > :is(.land-panel, .plan-panel) {
+    display: block;
+  }
+
+  .workspace .side-panel.land-mode > :not(.land-panel, .plan-panel) {
+    display: none;
+  }
+
+  .land-panel .shop-row {
+    min-height: 44px;
+    margin: 4px 0;
+    padding: 6px 8px;
+  }
+
+  .land-panel .land-parcel .shop-row small:not(.land-facts, .land-restriction, .land-status) {
+    display: none;
+  }
+
+  /* Owned parcels and the camera shortcuts drop out so the sheet fits without scrolling. */
+  .land-panel > .guest-thought,
+  .land-panel .land-parcel.owned,
+  .land-panel .land-show {
+    display: none;
+  }
+
+  .plan-items button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

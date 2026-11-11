@@ -12,6 +12,7 @@ import type {
   Habitat,
   HabitatObject,
   OverlayView,
+  Parcel,
   PlacementEvaluation,
   Point,
   Snapshot,
@@ -61,6 +62,11 @@ export type SceneOverlay = {
   zonePreview: WorkZoneEvaluation | null
   /** The active management overlay (#94), graded by zoo-core. */
   management: OverlayView | null
+  /** Purchasable parcels (#99); unbought land is always marked, and the Land tool colours
+   * every parcel by its zoo-core status and highlights the selection. */
+  land: { parcels: Parcel[]; selected: string[]; active: boolean } | null
+  /** The non-binding expansion plan (#99): the tiles of each Rust-evaluated item. */
+  plan: { key: string; tiles: Point[]; ok: boolean }[]
 }
 
 /** Resolves the presented (smoothed) ground position for a moving actor. */
@@ -1732,6 +1738,8 @@ function toolColor(tool: Tool): Hex {
       return "#f6d36f"
     case "zone":
       return "#9fd0f6"
+    case "land":
+      return "#4f8fd6"
     case "select":
       return "#ffffff"
     default:
@@ -1901,6 +1909,93 @@ function managementNodes(view: OverlayView | null): RendererSceneNode[] {
   return nodes
 }
 
+const LAND_COLORS: Record<Parcel["status"], Hex> = {
+  owned: "#3fae6a",
+  available: "#4f8fd6",
+  unaffordable: "#e3b23c",
+  locked: "#8a8a8a",
+}
+
+/**
+ * Land (#99). Unbought parcels always wear a muted tint so the park's edge is readable; with the
+ * Land tool every parcel takes its zoo-core status colour, and selected parcels are raised and
+ * marked at their corners. This is decoration only: ownership and placement stay in zoo-core.
+ */
+function landNodes(land: SceneOverlay["land"]): RendererSceneNode[] {
+  if (!land) {
+    return []
+  }
+  const nodes: RendererSceneNode[] = []
+  for (const parcel of land.parcels) {
+    if (parcel.owned && !land.active) {
+      continue
+    }
+    const selected = land.selected.includes(parcel.id)
+    let color: Hex = LAND_COLORS[parcel.status]
+    let opacity = parcel.owned ? 0.18 : 0.42
+    if (!land.active) {
+      color = "#4a5a3a"
+      opacity = 0.32
+    } else if (selected) {
+      color = "#f6d36f"
+      opacity = 0.6
+    }
+    for (const area of parcel.areas) {
+      for (let y = area.y; y < area.y + area.height; y += 1) {
+        for (let x = area.x; x < area.x + area.width; x += 1) {
+          nodes.push(
+            node(
+              `land:${parcel.id}:${x}:${y}`,
+              [x + 0.5, selected ? 0.075 : 0.06, y + 0.5],
+              boxGeometry([0.98, 0.02, 0.98]),
+              color,
+              { opacity },
+            ),
+          )
+        }
+      }
+      // Corner posts mark the parcel boundary; the selection's are taller.
+      const corners: [number, number][] = [
+        [area.x, area.y],
+        [area.x + area.width, area.y],
+        [area.x, area.y + area.height],
+        [area.x + area.width, area.y + area.height],
+      ]
+      const height = selected ? 0.8 : 0.4
+      for (const [index, [x, z]] of corners.entries()) {
+        nodes.push(
+          node(
+            `land:${parcel.id}:${area.x}:${area.y}:post:${index}`,
+            [x, height / 2, z],
+            boxGeometry([0.08, height, 0.08]),
+            land.active ? color : "#d8cfa8",
+          ),
+        )
+      }
+    }
+  }
+  return nodes
+}
+
+/** The expansion plan (#99): blueprint tiles for valid items, amber for ones that cannot build. */
+function planNodes(plan: SceneOverlay["plan"]): RendererSceneNode[] {
+  const nodes: RendererSceneNode[] = []
+  for (const item of plan) {
+    for (const tile of item.tiles) {
+      nodes.push(
+        node(
+          `plan:${item.key}:${tile.x}:${tile.y}`,
+          [tile.x + 0.5, 0.065, tile.y + 0.5],
+          boxGeometry([0.9, 0.02, 0.9]),
+          item.ok ? "#7ec8f0" : "#e0a04f",
+          { opacity: 0.5 },
+        ),
+      )
+    }
+  }
+  return nodes
+}
+
 // ---------------------------------------------------------------------------------------------
 
 /** Identity of everything outside the park that scenery depends on: park size and gate. */
@@ -1963,6 +2058,8 @@ export function buildStaticNodes(
     ...litterNodes(snapshot),
     ...overlayNodes(overlay),
     ...managementNodes(overlay.management),
+    ...landNodes(overlay.land),
+    ...planNodes(overlay.plan),
   ]
   if (overlay.selectedDepot) {
     nodes.push(
