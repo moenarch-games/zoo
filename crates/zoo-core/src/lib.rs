@@ -244,6 +244,9 @@ struct Keeper {
     activity: care::KeeperActivity,
     /// The outside gate tile the keeper entered its habitat through, used to walk back out.
     exit: Option<Position>,
+    /// A feed crate collected from the depot: for the current feeding job, or being walked
+    /// back after an interrupted one (#104).
+    carrying_feed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1096,6 +1099,7 @@ impl GameState {
             y: self.depot.y,
             activity: care::KeeperActivity::AtDepot,
             exit: None,
+            carrying_feed: false,
         });
         ActionResult::ok(format!("Keeper #{id} hired at the animal-care depot"))
     }
@@ -3087,6 +3091,7 @@ impl GameState {
             mechanic_hire_cost_cents: self.catalog.balance.staff.mechanic.hire_cents,
             mechanic_hourly_wage_cents: self.catalog.balance.staff.mechanic.hourly_wage_cents,
             maintenance_repair_cost_cents: self.catalog.balance.maintenance_repair_cents,
+            care_backlog: self.care_backlog_view(),
             keepers: self
                 .keepers
                 .iter()
@@ -3491,6 +3496,8 @@ struct KeeperView {
     job_id: Option<u32>,
     /// The habitat of the keeper's current job.
     habitat_id: Option<u32>,
+    /// Whether the keeper carries a feed crate (#104).
+    carrying_feed: bool,
     /// Remaining walk from the keeper's tile to its destination; empty when blocked.
     route: Vec<Position>,
     status: String,
@@ -3540,6 +3547,8 @@ struct AnimalCareDepotView {
     mechanic_hire_cost_cents: i64,
     mechanic_hourly_wage_cents: i64,
     maintenance_repair_cost_cents: i64,
+    /// The park's care backlog and where its feed is (#104).
+    care_backlog: care::CareBacklogView,
     keepers: Vec<KeeperView>,
     janitors: Vec<JanitorView>,
     mechanics: Vec<MechanicView>,
@@ -5743,7 +5752,7 @@ mod tests {
             work_minutes: 10,
             state: care::CareJobState::Due,
             keeper_ids: Vec::new(),
-            supplies_reserved: false,
+            supply: care::JobSupply::None,
             resolved_minute: None,
         });
         id
@@ -5918,7 +5927,7 @@ mod tests {
     }
 
     #[test]
-    fn reassigning_a_keeper_mid_job_keeps_the_running_job_intact() {
+    fn reassigning_a_keeper_mid_job_hands_the_job_back_to_its_zone() {
         let mut state = empty_two_habitat_park();
         assert!(state.create_work_zone(0, 0, 5, 13).ok);
         assert!(state.create_work_zone(6, 0, 19, 13).ok);
@@ -5928,14 +5937,23 @@ mod tests {
         state.tick(1);
         assert_eq!(job(&state, first).keeper_ids, [1]);
 
+        // #104: a keeper is never eligible in two zones, so moving it interrupts zone #1's
+        // job instead of letting it finish there.
         assert!(state.assign_keeper_zone(1, 2).ok);
-        assert!(state.set_keeper_schedule(1, "feeding", 0, 1440).ok);
-        let second = push_inspection(&mut state, 1, 3, 0);
+        state.tick(1);
+        assert_eq!(job(&state, first).state, care::CareJobState::Due);
+        assert!(job(&state, first).keeper_ids.is_empty());
+        assert_eq!(state.keepers[0].activity.job_id(), None);
+        assert!(
+            state
+                .pending_events
+                .iter()
+                .any(|event| event.kind == "care_job_interrupted")
+        );
+        // With no zone #1 keeper left, the job is missed when its grace hour lapses.
         state.tick(60);
-        assert_eq!(job(&state, first).state, care::CareJobState::Completed);
-        assert_eq!(job(&state, first).keeper_ids, [1]);
-        // Future zone #1 inspection work is no longer this keeper's.
-        assert_eq!(job(&state, second).state, care::CareJobState::Missed);
+        assert_eq!(job(&state, first).state, care::CareJobState::Missed);
+        assert!(job(&state, first).keeper_ids.is_empty());
         assert!(state.invariant_violation().is_none());
     }
 
@@ -5959,14 +5977,17 @@ mod tests {
         };
 
         // Capybara feeding falls due every two hours from 07:00; the park opens at 09:00. The
-        // keeper takes a crate at dispatch, so the depot stock drops before food is delivered.
+        // keeper stands at the depot, so it collects the crate at dispatch (#104): the shelf
+        // drops before food is delivered and the crate is in its hands.
         state.tick(1);
         assert_eq!(feeding(&state).state, care::CareJobState::InProgress);
         assert_eq!(state.feed_crates, before - 1);
         assert!(state.habitats[0].food < 100);
+        assert!(state.keepers[0].carrying_feed);
 
-        // Depot -> (2, 7) -> gate access (3, 7) -> inside (3, 8): three 3-minute steps, then
-        // fifteen minutes of feeding.
+        // Depot -> (2, 7) -> gate access (3, 7) -> inside (3, 8), then through the habitat to the
+        // feeding station at its centre: at least four 3-minute steps, then fifteen minutes of
+        // feeding there.
         let mut minutes = 1;
         while feeding(&state).state != care::CareJobState::Completed {
             assert_eq!(state.keepers[0].deliveries_completed, 0);
@@ -5974,18 +5995,21 @@ mod tests {
                 state.keepers[0].activity,
                 care::KeeperActivity::Working { .. }
             ) {
-                assert_eq!((state.keepers[0].x, state.keepers[0].y), (3, 8));
+                let spot = state.habitats[0].care_spot(content::CareCategory::Feeding);
+                assert_eq!((state.keepers[0].x, state.keepers[0].y), (spot.x, spot.y));
             }
             state.tick(1);
             minutes += 1;
-            assert!(minutes <= 30, "feeding never completed");
+            assert!(minutes <= 45, "feeding never completed");
         }
-        assert!(minutes > 3 * 2 + 15, "completed after {minutes} min");
+        assert!(minutes > 3 * 4 + 15, "completed after {minutes} min");
+        assert!(!state.keepers[0].carrying_feed);
+        assert_eq!(state.feed_crates, before - 1);
         assert_eq!(state.habitats[0].food, 100);
         assert_eq!(state.keepers[0].deliveries_completed, 1);
 
         // Nothing else is due, so the keeper walks back out through the gate to the depot.
-        state.tick(12);
+        state.tick(18);
         assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
         assert_eq!(
             (state.keepers[0].x, state.keepers[0].y),
@@ -6089,6 +6113,45 @@ mod tests {
     }
 
     #[test]
+    fn a_crew_blocked_past_the_grace_hour_hands_back_its_job_and_crate() {
+        let mut state = GameState::default();
+        assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
+        let habitat_id = state.habitats[0].id;
+        staff_habitat(&mut state, habitat_id);
+        assert!(state.adopt(habitat_id, "capybara").ok);
+        state.habitats[0].food = 40;
+        // Dispatched at 09:00 with the crate collected at the depot, one step out.
+        state.tick(4);
+        assert!(state.keepers[0].carrying_feed);
+        assert_eq!(state.feed_crates, FEED_BATCH_CRATES - 1);
+        assert!(state.bulldoze(3, ENTRANCE_Y).ok);
+
+        // Blocked inside the grace hour, the crew waits with its crate for the path to return.
+        state.tick(50);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::InProgress);
+        assert!(state.keepers[0].carrying_feed);
+        let view = serde_json::to_value(state.snapshot()).unwrap();
+        let job = &view["habitats"][0]["care_jobs"][0];
+        assert_eq!(job["phase"], "blocked", "{job}");
+        assert!(
+            job["waiting_reason"]
+                .as_str()
+                .unwrap()
+                .contains("no path to habitat")
+        );
+
+        // Past it, the job is missed and the crate walks back onto the shelf.
+        state.tick(15);
+        assert_eq!(feeding_job(&state).state, care::CareJobState::Missed);
+        assert!(feeding_job(&state).keeper_ids.is_empty());
+        assert_eq!(state.keepers[0].activity, care::KeeperActivity::AtDepot);
+        assert!(!state.keepers[0].carrying_feed);
+        assert_eq!(state.feed_crates, FEED_BATCH_CRATES);
+        assert!(state.habitats[0].food < 100);
+        assert!(state.invariant_violation().is_none());
+    }
+
+    #[test]
     fn demolishing_a_habitat_mid_walk_returns_the_keeper_and_its_feed() {
         let mut state = GameState::default();
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
@@ -6148,7 +6211,16 @@ mod tests {
         ) {
             state.tick(1);
         }
-        assert_eq!((state.keepers[0].x, state.keepers[0].y), (6, 10));
+        // It entered through the moved gate and works at the feeding station inside (#104).
+        let spot = state.habitats[0].care_spot(content::CareCategory::Feeding);
+        assert_ne!(spot, Position { x: 6, y: 10 });
+        assert_eq!(
+            Position {
+                x: state.keepers[0].x,
+                y: state.keepers[0].y
+            },
+            spot
+        );
         assert_eq!(state.keepers[0].exit, Some(Position { x: 7, y: 10 }));
     }
 

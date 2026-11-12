@@ -18,6 +18,8 @@ const CRITICAL_WELFARE: u32 = 25;
 const LOW_FEED_CRATES: u32 = 2;
 /// Litter left this long is a backlog even with janitors hired.
 const LITTER_BACKLOG_MINUTES: u64 = 120;
+/// Due care waiting this long for a crew is late (half its grace hour).
+const CARE_LATE_MINUTES: u64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +47,10 @@ pub(crate) enum AlertCode {
     ViewpointCrowded,
     LitterBacklog,
     KeeperNeedsZone,
+    /// Scheduled care half an hour past due with no crew under way (#104).
+    CareLate,
+    /// Scheduled care that expired unserved within the last day (#104).
+    CareMissed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -414,6 +420,36 @@ impl GameState {
                     action,
                 );
             }
+            if let Some((message, action)) = self.care_late(habitat, now) {
+                raise(
+                    AlertCode::CareLate,
+                    Severity::Warning,
+                    subject,
+                    gate_access.unwrap_or(center),
+                    message,
+                    action,
+                );
+            }
+            let missed = self
+                .care_jobs
+                .iter()
+                .filter(|job| job.habitat_id == habitat.id && job.state == CareJobState::Missed)
+                .count();
+            if missed > 0 {
+                raise(
+                    AlertCode::CareMissed,
+                    Severity::Warning,
+                    subject,
+                    center,
+                    format!(
+                        "Habitat #{} missed {missed} scheduled care job{} in the last day; its \
+                         animals went without. Add keepers to its zone or lower other priorities.",
+                        habitat.id,
+                        if missed == 1 { "" } else { "s" }
+                    ),
+                    AlertAction::InspectHabitat,
+                );
+            }
             if habitat.welfare < LOW_WELFARE {
                 let (part, score) = Self::lowest_welfare_part(habitat);
                 raise(
@@ -706,6 +742,31 @@ impl GameState {
             ))
         });
         self.alerts = alerts;
+    }
+
+    /// The habitat's oldest due job that has waited [`CARE_LATE_MINUTES`] for a crew, said
+    /// with the specific reason it waits and the fix for it (#104).
+    fn care_late(&self, habitat: &Habitat, now: u64) -> Option<(String, AlertAction)> {
+        let job = self
+            .care_jobs
+            .iter()
+            .filter(|job| {
+                job.habitat_id == habitat.id
+                    && job.state == CareJobState::Due
+                    && now >= job.due_minute + CARE_LATE_MINUTES
+            })
+            .min_by_key(|job| (job.due_minute, job.id))?;
+        let wait = self.care_wait(job)?;
+        Some((
+            format!(
+                "Habitat #{} {} is {} min late: {}.",
+                habitat.id,
+                job.category.key(),
+                now - job.due_minute,
+                wait.message
+            ),
+            wait.action,
+        ))
     }
 
     /// Open care work the zone's keepers have not finished: due or in progress.

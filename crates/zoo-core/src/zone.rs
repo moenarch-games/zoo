@@ -4,7 +4,8 @@
 //! containing its service gate's fence tile, so one gate resolves to zero or one zone. Each
 //! keeper has at most one zone; a keeper without one is idle and flagged as needing a zone.
 //! The keeper scheduler (#134) only gives a keeper habitat jobs from its own zone. Zone, gate
-//! and keeper edits change future eligibility; a job already under way runs to completion.
+//! and keeper edits change eligibility at once: a dispatched job whose crew no longer works
+//! the zone holding its gate is handed back to the scheduler (#104).
 use super::{ActionResult, GameState, Habitat, Position};
 use serde::{Deserialize, Serialize};
 
@@ -436,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_job_completes_after_its_zone_is_deleted() {
+    fn deleting_a_zone_interrupts_its_running_job_and_returns_the_carried_crate() {
         let mut state = GameState::default();
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let id = state.habitats[0].id;
@@ -454,14 +455,22 @@ mod tests {
             })
             .expect("a care job is dispatched");
 
+        assert!(state.keepers[0].carrying_feed);
+        let shelf = state.feed_crates;
+
+        // #104: the keeper no longer works the habitat's zone, so the job is handed back and
+        // the crate walks back to the depot shelf; nothing is fed remotely.
         let deleted = state.delete_work_zone(1);
         assert!(deleted.ok);
         for _ in 0..120 {
             state.tick(1);
         }
         let job = state.care_jobs.iter().find(|job| job.id == job_id).unwrap();
-        assert_eq!(job.state, CareJobState::Completed);
-        assert!(state.habitats[0].food > 10, "the delivery refilled food");
+        assert_eq!(job.state, CareJobState::Missed);
+        assert!(state.habitats[0].food <= 10, "nothing was delivered");
+        assert!(!state.keepers[0].carrying_feed);
+        assert_eq!(state.keepers[0].activity, KeeperActivity::AtDepot);
+        assert_eq!(state.feed_crates, shelf + 1);
         assert!(state.keeper_view(&state.keepers[0]).needs_zone);
     }
 }

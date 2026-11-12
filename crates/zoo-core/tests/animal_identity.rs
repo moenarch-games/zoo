@@ -133,8 +133,18 @@ fn reshaping_keeps_every_animal_inside_the_new_fence() {
         ok(game.adopt(1, "capybara".to_owned()));
     }
     game.tick(90);
-    // Shrink to the western 4×5 block.
-    ok(game.reshape_habitat(1, vec![3, 8, 7, 8, 7, 13, 3, 13, 3, 8]));
+    // Shrink to the western 4×5 block, once no keeper works on the cut-off tiles (keepers
+    // walk to care spots inside the habitat, #104).
+    let shrink = vec![3, 8, 7, 8, 7, 13, 3, 13, 3, 8];
+    let mut minutes = 0;
+    while !json(&game.reshape_habitat(1, shrink.clone()))["ok"]
+        .as_bool()
+        .unwrap()
+    {
+        game.tick(1);
+        minutes += 1;
+        assert!(minutes < 120, "a keeper never left the cut-off tiles");
+    }
     for animal in animals(&game) {
         let (x, y) = (animal["x"].as_u64().unwrap(), animal["y"].as_u64().unwrap());
         assert!((3..7).contains(&x) && (8..13).contains(&y), "{animal}");

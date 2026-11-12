@@ -1712,7 +1712,11 @@ function staffNodes(
     })
     const yaw = hash(keeper.id, 11) * Math.PI * 2
     const bob =
-      input.animate && (keeper.activity === "to_gate" || keeper.activity === "to_depot")
+      input.animate &&
+      (keeper.activity === "collecting_stock" ||
+        keeper.activity === "to_gate" ||
+        keeper.activity === "to_care_spot" ||
+        keeper.activity === "to_depot")
         ? Math.abs(Math.sin(input.timeSeconds * 9 + keeper.id)) * 0.03
         : 0
     nodes.push(
@@ -1724,6 +1728,17 @@ function staffNodes(
       }),
       node(`${key}:marker`, [x, 0.62, z], sphereGeometry(0.05), "#ffb347"),
     )
+    if (keeper.carrying_feed) {
+      // The feed crate zoo-core says this keeper carries (#104).
+      nodes.push(
+        model(`${key}:crate`, { x, z }, yaw).box(
+          "crate",
+          [0, 0.3, 0.09],
+          [0.11, 0.09, 0.09],
+          "#a7743a",
+        ),
+      )
+    }
     if (keeper.habitat_id !== null && keeper.habitat_id === input.overlay.selectedHabitatId) {
       for (const [index, step] of keeper.route.slice(1).entries()) {
         nodes.push(

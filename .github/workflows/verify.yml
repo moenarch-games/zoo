@@ -106,6 +106,7 @@ jobs:
             apps/web/test-results/land-*.png
             apps/web/test-results/stands-*.png
             apps/web/test-results/visits-*.png
+            apps/web/test-results/keepers-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Upload playable web preview
