@@ -25,6 +25,7 @@ export type WorkspaceTab =
   | "guests"
   | "staff"
   | "facilities"
+  | "prices"
   | "finances"
 
 /** Something a row or alert can focus: the alert subjects, plus guests and work zones. */
@@ -46,6 +47,7 @@ const TABS: { tab: WorkspaceTab; label: string }[] = [
   { tab: "guests", label: "Guests" },
   { tab: "staff", label: "Staff" },
   { tab: "facilities", label: "Facilities" },
+  { tab: "prices", label: "Prices" },
   { tab: "finances", label: "Finances" },
 ]
 
@@ -54,6 +56,14 @@ export function money(cents: number) {
   return `${sign}$${(Math.abs(cents) / 100).toLocaleString(undefined, {
     maximumFractionDigits: 0,
   })}`
+}
+
+/** A price with its cents, e.g. "$12" or "$3.50". */
+export function price(cents: number) {
+  const whole = Math.trunc(cents / 100)
+  const rest = Math.abs(cents % 100)
+  const sign = cents < 0 && whole === 0 ? "-" : ""
+  return rest === 0 ? `${sign}$${whole}` : `${sign}$${whole}.${String(rest).padStart(2, "0")}`
 }
 
 /** A park minute (since day 1, 00:00) as "Day 2 08:15". */
@@ -201,6 +211,7 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["land_expense_cents", "Land purchases"],
   ["vendor_wages_expense_cents", "Vendor wages"],
   ["stand_stock_expense_cents", "Stand stock"],
+  ["marketing_expense_cents", "Marketing"],
 ]
 
 export function DailySummaryView({
@@ -239,9 +250,10 @@ export function DailySummaryView({
       </Drill>
       <Drill label="Admissions" value={String(summary.admissions)}>
         <p>
-          {summary.admissions} guests × {money(summary.admission_price_cents)} ={" "}
-          {money(summary.admissions_income_cents)} today; {snapshot.guest_count} in the park now in{" "}
-          {snapshot.visits.groups_in_park} groups.
+          {summary.admissions} people admitted for {money(summary.admissions_income_cents)} today
+          (admission now {price(summary.admission_price_cents)});{" "}
+          {snapshot.pricing.turned_away_today} turned away; {snapshot.guest_count} in the park now
+          in {snapshot.visits.groups_in_park} groups.
         </p>
       </Drill>
       <Drill label="Visits ended" value={String(summary.exits)}>
@@ -527,6 +539,7 @@ export function ManagementWorkspace({
   onJump,
   onAction,
   actionLabel,
+  prices,
 }: {
   snapshot: Snapshot
   tab: WorkspaceTab
@@ -535,6 +548,8 @@ export function ManagementWorkspace({
   onJump: (target: JumpTarget, focus: Point) => void
   onAction: (alert: Alert) => void
   actionLabel: (alert: Alert) => string | null
+  /** The pricing panel (#106), composed by the app with its commands. */
+  prices: ReactNode
 }) {
   const label = (key: string | null) =>
     key === null
@@ -851,6 +866,7 @@ export function ManagementWorkspace({
             ]}
           />
         )}
+        {tab === "prices" && prices}
         {tab === "finances" && (
           <DataTable
             label="Ledger"

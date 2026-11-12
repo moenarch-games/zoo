@@ -1,10 +1,12 @@
 import type { LostDemand, StandOperations } from "./game-types"
-import { money } from "./ManagementWorkspace"
+import { money, price } from "./ManagementWorkspace"
+import { PriceInput } from "./PricingPanel"
 
 const LOST_REASONS: [keyof LostDemand, string][] = [
   ["queue_full", "queue full"],
   ["gave_up", "gave up waiting"],
-  ["unaffordable", "too expensive"],
+  ["unaffordable", "short of money"],
+  ["too_expensive", "too dear"],
   ["closed", "closed"],
   ["unstaffed", "no vendor"],
   ["out_of_stock", "sold out"],
@@ -29,6 +31,7 @@ export type StandCommands = {
   setOpen: (open: boolean) => void
   restock: () => void
   setAutoRestock: (auto: boolean) => void
+  setPrice: (cents: number) => void
 }
 
 /**
@@ -49,6 +52,21 @@ export function StandRows({
       <div className={takesGuests ? "" : "zone-warning"}>
         <dt>Service</dt>
         <dd data-stand-status={stand.status}>{stand.status_label}</dd>
+      </div>
+      <div>
+        <dt>Price</dt>
+        <dd data-stand-price={stand.price_cents}>
+          <PriceInput
+            label="Stand price"
+            name="stand-price"
+            cents={stand.price_cents}
+            onCommit={commands.setPrice}
+          />
+          <small>
+            Usually {price(stand.reference_price_cents)} · {stand.today.lost.too_expensive} found it
+            too dear today
+          </small>
+        </dd>
       </div>
       <div className={stand.vendors === 0 ? "zone-warning" : ""}>
         <dt>Vendors</dt>

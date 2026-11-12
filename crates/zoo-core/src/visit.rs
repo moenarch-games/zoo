@@ -24,6 +24,7 @@ use super::{
     GUEST_CONTINUE_MAX_HUNGER, GUEST_CONTINUE_MAX_THIRST, GUEST_CONTINUE_MIN_ENERGY,
     GUEST_CONTINUE_MIN_HAPPINESS, GUEST_CONTINUE_MIN_VALUE, GameState, Guest, GuestState,
     MIN_ENGAGING_HABITAT_WELFARE, Mover, Position, ViewingOccupancy, ViewingSpot, animal, comfort,
+    pricing::{self, GateOutcome},
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -69,6 +70,9 @@ pub(crate) struct ProfileRules {
     pub walk_weight: i64,
     /// Score lost when every viewpoint of a habitat is full.
     pub crowd_weight: i64,
+    /// The most the group pays, in percent of what it thinks the park (or a stand's item) is
+    /// worth, before its own seeded tolerance (#106).
+    pub price_tolerance: u32,
 }
 
 impl Profile {
@@ -85,6 +89,7 @@ impl Profile {
                 favorite_weight: 10,
                 walk_weight: 3,
                 crowd_weight: 30,
+                price_tolerance: 100,
             },
             Self::Enthusiast => ProfileRules {
                 min_size: 1,
@@ -95,6 +100,7 @@ impl Profile {
                 favorite_weight: 60,
                 walk_weight: 1,
                 crowd_weight: 10,
+                price_tolerance: 130,
             },
             Self::Stroller => ProfileRules {
                 min_size: 2,
@@ -105,6 +111,7 @@ impl Profile {
                 favorite_weight: 20,
                 walk_weight: 2,
                 crowd_weight: 20,
+                price_tolerance: 110,
             },
         }
     }
@@ -301,11 +308,19 @@ fn compare_spots(left: (&ViewingSpot, u32), right: (&ViewingSpot, u32)) -> Order
 impl GameState {
     /// One breadth-first walk for `mover` from `start`, counted as one path search.
     pub(crate) fn distance_field(&self, mover: Mover, start: Position) -> DistanceField {
+        if self.walkable(mover, start) {
+            self.count_path_search();
+        }
+        self.walk_distance_field(mover, start)
+    }
+
+    /// The same walk, uncounted: presentation queries use it so a snapshot never changes the
+    /// simulation work counters.
+    pub(crate) fn walk_distance_field(&self, mover: Mover, start: Position) -> DistanceField {
         let mut reached = HashMap::new();
         if !self.walkable(mover, start) {
             return DistanceField { reached };
         }
-        self.count_path_search();
         reached.insert((start.x, start.y), (0, None));
         let mut queue = VecDeque::from([start]);
         while let Some(current) = queue.pop_front() {
@@ -447,13 +462,16 @@ impl GameState {
         keys
     }
 
-    /// Minutes of arrivals the next group's admission stands for.
+    /// Minutes of arrivals the next group at the gate stands for (shorter during a campaign).
     pub(crate) fn next_arrival_minutes(&self) -> u32 {
-        group_plan(self.visits.groups_arrived.saturating_add(1)).1 * ARRIVAL_MINUTES_PER_GUEST
+        group_plan(self.visits.groups_arrived.saturating_add(1)).1
+            * self.arrival_minutes_per_guest()
     }
 
-    /// A group arrives when it can reach an attraction: one admission line for all of its
-    /// people, then one guest record per person, each walking from the entrance.
+    /// A group comes to the gate when it can reach an attraction and decides there (#106). An
+    /// admitted group pays one admission line for all of its people, then each person becomes a
+    /// guest record walking from the entrance; a group turned away pays nothing and nobody
+    /// enters. Either way it takes its place in the arrival sequence.
     pub(crate) fn try_spawn_group(&mut self) {
         let start = self.entrance;
         let group_id = self.next_group_id;
@@ -472,17 +490,29 @@ impl GameState {
         else {
             return;
         };
-        let price = self.catalog.balance.admission_price_cents;
+        // The gate (#106): the group decides once, before anyone enters or pays.
+        let (value, _) = self.experience_value(&field, &occupancy);
+        let decision = self.gate_decision(arrival, profile, size, value);
+        let price = self.pricing.admission_cents;
+        if decision.outcome != GateOutcome::Admitted {
+            self.visits.groups_arrived = arrival;
+            self.record_gate(arrival, profile, size, &decision, 0);
+            self.emit("group_turned_away", None);
+            return;
+        }
         let Some(admission) = price.checked_mul(i64::from(size)) else {
             return;
         };
-        if !self.earn(admission, super::IncomeCategory::Admissions) {
+        // One ledger line for the whole group; a free park records none.
+        if admission > 0 && !self.earn(admission, super::IncomeCategory::Admissions) {
             return;
         }
+        self.record_gate(arrival, profile, size, &decision, admission);
+        let arrival_value = pricing::arrival_value(price, value);
         self.next_group_id += 1;
         let mut planned = occupancy;
         let mut members = Vec::new();
-        for _ in 0..size {
+        for budget in &decision.budgets {
             let id = self.next_guest_id;
             let route = self
                 .viewing_route_in(choice.habitat_id, &field, &planned)
@@ -491,9 +521,14 @@ impl GameState {
                 *planned.entry((end.x, end.y)).or_default() += 1;
             }
             self.guests.push(Guest::arriving(
-                id,
-                group_id,
-                start,
+                Arrival {
+                    id,
+                    group_id,
+                    start,
+                    // What is left of the budget after admission is the spending money.
+                    cash_cents: budget - price,
+                    value_perception: arrival_value,
+                },
                 choice.habitat_id,
                 route,
             ));
@@ -510,7 +545,7 @@ impl GameState {
             waiting_minutes: 0,
             plan: choice.plan,
         });
-        self.visits.groups_arrived = self.visits.groups_arrived.saturating_add(1);
+        self.visits.groups_arrived = arrival;
         self.emit("group_arrived", Some(group_id));
     }
 
@@ -980,14 +1015,24 @@ impl GameState {
     }
 }
 
+/// Who walks in through the gate: identity, start tile and what the gate left them (#106).
+pub(crate) struct Arrival {
+    pub id: u32,
+    pub group_id: u32,
+    pub start: Position,
+    pub cash_cents: i64,
+    pub value_perception: u32,
+}
+
 impl Guest {
-    fn arriving(
-        id: u32,
-        group_id: u32,
-        start: Position,
-        habitat: u32,
-        route: Vec<Position>,
-    ) -> Self {
+    fn arriving(arrival: Arrival, habitat: u32, route: Vec<Position>) -> Self {
+        let Arrival {
+            id,
+            group_id,
+            start,
+            cash_cents,
+            value_perception,
+        } = arrival;
         Self {
             id,
             x: start.x,
@@ -996,7 +1041,7 @@ impl Guest {
             energy: 90,
             hunger: 18,
             thirst: 16,
-            value_perception: 68,
+            value_perception,
             minutes_in_park: 0,
             target_habitat: habitat,
             state: GuestState::Arriving,
@@ -1012,7 +1057,7 @@ impl Guest {
             visit: None,
             unmet_need: None,
             next_need_check: 0,
-            cash_cents: super::stand::guest_budget(id),
+            cash_cents,
             group_id,
             crowd_minutes: 0,
             exit: None,

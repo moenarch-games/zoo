@@ -240,6 +240,8 @@ export type LostDemand = {
   queue_full: number
   gave_up: number
   unaffordable: number
+  /** The price was above what the guest thought fair: a price complaint (#106). */
+  too_expensive: number
   closed: number
   unstaffed: number
   out_of_stock: number
@@ -272,6 +274,9 @@ export type StandOperations = {
     | "unreachable"
   status_label: string
   open: boolean
+  /** The price now, and the authored reference price guests judge it against (#106). */
+  price_cents: number
+  reference_price_cents: number
   vendors: number
   max_vendors: number
   vendor_hourly_wage_cents: number
@@ -544,6 +549,8 @@ export type FinanceBreakdown = {
   /** Stand vendors' wages and stock deliveries (#102). */
   vendor_wages_expense_cents: number
   stand_stock_expense_cents: number
+  /** Marketing campaigns (#106). */
+  marketing_expense_cents: number
 }
 
 export type FinanceDay = {
@@ -681,6 +688,8 @@ export type Snapshot = {
   land: LandState
   /** Groups, arrivals, exit reasons and crowded tiles (#103). */
   visits: VisitsState
+  /** Prices, the gate, observed demand and marketing (#106). */
+  pricing: PricingState
 }
 
 export type ParcelStatus = "owned" | "available" | "unaffordable" | "locked"
@@ -976,4 +985,84 @@ export type EnvironmentPreview = {
   blocking_tiles: Point[]
   assessment: HabitatAssessment | null
   welfare_target: number | null
+}
+
+export type GateOutcome = "admitted" | "closed" | "too_expensive" | "over_budget"
+
+/** Arrivals at the gate over a period (#106): potential arrivals, admissions and rejections. */
+export type GateCounts = {
+  groups_at_gate: number
+  people_at_gate: number
+  groups_admitted: number
+  people_admitted: number
+  turned_away_closed: number
+  turned_away_too_expensive: number
+  turned_away_over_budget: number
+  admission_cents: number
+}
+
+export type GateNote = {
+  arrival: number
+  minute: number
+  profile: VisitorProfile
+  size: number
+  price_cents: number
+  value_cents: number
+  willing_cents: number
+  outcome: GateOutcome
+}
+
+/** zoo-core's forecast for one admission price, with its assumptions (#106). */
+export type AdmissionForecast = {
+  price_cents: number
+  sample_groups: number
+  sample_people: number
+  accepting_groups: number
+  accepting_people: number
+  admission_cents: number
+  assumptions: string
+}
+
+export type AdmissionEvaluation =
+  | { ok: true; forecast: AdmissionForecast }
+  | { ok: false; message: string }
+
+export type StandPrice = {
+  id: number
+  kind: string
+  label: string
+  price_cents: number
+  reference_price_cents: number
+  served_today: number
+  revenue_today_cents: number
+  too_expensive_today: number
+  unaffordable_today: number
+  lost_today: number
+  contribution_today_cents: number
+  contribution_total_cents: number
+}
+
+/** Prices, the gate, observed demand and marketing (#106). */
+export type PricingState = {
+  open: boolean
+  admission_price_cents: number
+  max_admission_cents: number
+  max_stand_price_cents: number
+  experience_value_cents: number
+  valued_habitats: number
+  today: GateCounts
+  total: GateCounts
+  turned_away_today: number
+  price_complaints_today: number
+  poor_value_exits_today: number
+  average_value: number | null
+  income_today_cents: number
+  profit_today_cents: number
+  forecast: AdmissionForecast
+  recent: GateNote[]
+  stands: StandPrice[]
+  campaign: { ends_in_minutes: number } | null
+  campaign_cost_cents: number
+  campaign_minutes: number
+  campaign_arrival_boost_percent: number
 }

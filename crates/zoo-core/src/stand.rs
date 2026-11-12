@@ -20,8 +20,9 @@
 //! recovered need and satisfaction, the wear on the stand and the wrapper the guest drops.
 //! Ending a visit any other way leaves stock, money and needs as they were. When the stand
 //! turned the guest away (closed, broken down, without a vendor, sold out with nothing on
-//! order, a full queue, a price the guest cannot pay, or no patience left) the stand records
-//! the lost sale and its reason; demolition and path cuts end the errand without one.
+//! order, a full queue, a price the guest cannot pay or thinks too dear (#106), or no patience
+//! left) the stand records the lost sale and its reason; demolition and path cuts end the
+//! errand without one.
 //!
 //! The resupply policy: with automatic restocking on, a stand at a quarter of its stock or less
 //! orders a refill to full. The delivery arrives a fixed time later and is paid on arrival at
@@ -33,7 +34,9 @@ use super::{
     MAINTENANCE_FAILURE_THRESHOLD, MAINTENANCE_SERVICE_THRESHOLD, MAINTENANCE_WEAR_PER_SALE, Mover,
     Position,
     comfort::{self, Need, Resume, Visit},
+    construction::dollars,
     content::{self, StandService},
+    pricing,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -54,7 +57,8 @@ const DEGRADED_EXTRA_MINUTES: u32 = 2;
 const MINUTES_PER_TILE: u32 = 3;
 const LOST_SALE_HAPPINESS: u32 = 2;
 
-/// Spending money a guest arrives with: a deterministic spread over five budgets.
+/// The spending money guests arrived with before #106, for the schema 13 migration. Guests now
+/// draw their whole budget at the gate (`pricing::member_budget`).
 pub(crate) fn guest_budget(guest_id: u32) -> i64 {
     1_000 + i64::from(guest_id % 5) * 300
 }
@@ -69,6 +73,8 @@ pub(crate) struct LostDemand {
     pub gave_up: u32,
     /// The guest could not afford the price.
     pub unaffordable: u32,
+    /// The price was above what the guest thought the item worth: a price complaint (#106).
+    pub too_expensive: u32,
     /// The stand was closed by the player.
     pub closed: u32,
     /// The stand had no vendor.
@@ -80,11 +86,12 @@ pub(crate) struct LostDemand {
 }
 
 impl LostDemand {
-    fn total(&self) -> u32 {
+    pub(crate) fn total(&self) -> u32 {
         [
             self.queue_full,
             self.gave_up,
             self.unaffordable,
+            self.too_expensive,
             self.closed,
             self.unstaffed,
             self.out_of_stock,
@@ -99,6 +106,7 @@ impl LostDemand {
             LostReason::QueueFull => &mut self.queue_full,
             LostReason::GaveUp => &mut self.gave_up,
             LostReason::Unaffordable => &mut self.unaffordable,
+            LostReason::TooExpensive => &mut self.too_expensive,
             LostReason::Closed => &mut self.closed,
             LostReason::Unstaffed => &mut self.unstaffed,
             LostReason::OutOfStock => &mut self.out_of_stock,
@@ -106,6 +114,15 @@ impl LostDemand {
         };
         *counter = counter.saturating_add(1);
     }
+}
+
+/// What a guest can and will pay at a stand (#106).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Buyer {
+    /// Spending money left.
+    pub cash: i64,
+    /// The most it pays, in percent of a stand's reference price.
+    pub tolerance: u32,
 }
 
 /// The stand (by concession index) that turned a guest away and why, if any did.
@@ -116,6 +133,7 @@ pub(crate) enum LostReason {
     QueueFull,
     GaveUp,
     Unaffordable,
+    TooExpensive,
     Closed,
     Unstaffed,
     OutOfStock,
@@ -156,6 +174,11 @@ impl StandLedger {
         *field = field.saturating_add(cents);
     }
 
+    /// Revenue less stock, wages, upkeep and repairs.
+    pub(crate) fn contribution_cents(&self) -> i64 {
+        self.revenue_cents.saturating_sub(self.operating_cents())
+    }
+
     fn view(&self) -> StandLedgerView {
         let operating = self.operating_cents();
         StandLedgerView {
@@ -170,7 +193,7 @@ impl StandLedger {
             upkeep_cents: self.upkeep_cents,
             repair_cents: self.repair_cents,
             operating_cents: operating,
-            contribution_cents: self.revenue_cents.saturating_sub(operating),
+            contribution_cents: self.contribution_cents(),
         }
     }
 }
@@ -189,6 +212,9 @@ pub(crate) enum StandExpense {
 pub(crate) struct StandState {
     /// Whether the player has the stand open.
     pub open: bool,
+    /// The player's price, `0..=pricing::MAX_STAND_PRICE_CENTS` (#106); a new stand starts at
+    /// its definition's reference price.
+    pub price_cents: i64,
     /// Vendors posted to the stand, `0..=max_vendors`.
     pub vendors: u32,
     pub stock: u32,
@@ -203,10 +229,11 @@ pub(crate) struct StandState {
 }
 
 impl StandState {
-    /// A new stand opens with one vendor and full stock.
-    pub(crate) fn new(service: &StandService) -> Self {
+    /// A new stand opens with one vendor, full stock and its reference price.
+    pub(crate) fn new(service: &StandService, price_cents: i64) -> Self {
         Self {
             open: true,
+            price_cents,
             vendors: 1,
             stock: service.stock_capacity,
             auto_restock: true,
@@ -266,6 +293,9 @@ pub(crate) struct StandView {
     status: &'static str,
     status_label: String,
     open: bool,
+    /// The price now, and the authored reference price guests judge it against (#106).
+    price_cents: i64,
+    reference_price_cents: i64,
     vendors: u32,
     max_vendors: u32,
     vendor_hourly_wage_cents: i64,
@@ -404,7 +434,7 @@ impl GameState {
         &self,
         need: Need,
         start: Position,
-        cash: i64,
+        buyer: Buyer,
         heading: &[u32],
     ) -> Result<(usize, Vec<Position>), Refusal> {
         let Some(kind) = need.stand() else {
@@ -427,8 +457,8 @@ impl GameState {
             let load = ops.queue.len() as u32 + heading[index];
             let reason = if let Some(reason) = availability.lost_reason() {
                 Some(reason)
-            } else if stand.definition.price_cents > cash {
-                Some(LostReason::Unaffordable)
+            } else if let Some(reason) = self.price_refusal(index, buyer) {
+                Some(reason)
             } else if ops.queue.len() as u32 >= service.queue_capacity {
                 Some(LostReason::QueueFull)
             } else {
@@ -473,6 +503,7 @@ impl GameState {
             need,
             minutes: 0,
             resume,
+            price_cents: 0,
         });
         guest.state = GuestState::WalkingToFacility;
         guest.route = route;
@@ -480,10 +511,79 @@ impl GameState {
     }
 
     /// A refused detour: the stand that turned the guest away records the lost sale.
-    pub(crate) fn refuse_stand(&mut self, refused: Refusal) {
+    pub(crate) fn refuse_stand(&mut self, guest_index: usize, refused: Refusal) {
         if let Some((index, reason)) = refused {
             self.record_lost(index, reason);
+            self.price_complaint(guest_index, reason);
         }
+    }
+
+    /// The stand's price now.
+    pub(crate) fn stand_price(&self, index: usize) -> i64 {
+        let stand = &self.concessions[index];
+        stand
+            .stand
+            .as_ref()
+            .map_or(stand.definition.price_cents, |ops| ops.price_cents)
+    }
+
+    /// Why `buyer` will not pay the stand's price now, if it will not (#106): more than its
+    /// spending money, or more than its tolerance of the stand's reference price.
+    fn price_refusal(&self, index: usize, buyer: Buyer) -> Option<LostReason> {
+        let price = self.stand_price(index);
+        let reference = self.concessions[index].definition.price_cents;
+        if price > buyer.cash {
+            Some(LostReason::Unaffordable)
+        } else if price > pricing::percent_of(reference, buyer.tolerance) {
+            Some(LostReason::TooExpensive)
+        } else {
+            None
+        }
+    }
+
+    fn buyer(&self, guest_index: usize) -> Buyer {
+        let guest = &self.guests[guest_index];
+        Buyer {
+            cash: guest.cash_cents,
+            tolerance: self.stand_tolerance(guest),
+        }
+    }
+
+    /// A guest who found a price too steep thinks a little less of its visit.
+    fn price_complaint(&mut self, guest_index: usize, reason: LostReason) {
+        if reason == LostReason::TooExpensive {
+            let guest = &mut self.guests[guest_index];
+            guest.value_perception = guest
+                .value_perception
+                .saturating_sub(pricing::STAND_COMPLAINT_VALUE);
+        }
+    }
+
+    /// Sets a stand's price (#106). Guests already at a window keep the price they agreed.
+    pub(crate) fn set_stand_price(&mut self, stand_id: u32, cents: f64) -> ActionResult {
+        let index = match self.stand_index_checked(stand_id) {
+            Ok(index) => index,
+            Err(error) => return error,
+        };
+        let label = self.stand_label(index);
+        let cents = match pricing::validate_price(cents, pricing::MAX_STAND_PRICE_CENTS, "A price")
+        {
+            Ok(cents) => cents,
+            Err(message) => return ActionResult::error(message),
+        };
+        let Some(ops) = self.concessions[index].stand.as_mut() else {
+            return ActionResult::error("Select a food or drink stand first");
+        };
+        if ops.price_cents == cents {
+            return ActionResult::ok(format!("{label} already charges {}", dollars(cents)));
+        }
+        let before = ops.price_cents;
+        ops.price_cents = cents;
+        ActionResult::ok(format!(
+            "{label} price {} → {}",
+            dollars(before),
+            dollars(cents)
+        ))
     }
 
     /// Walking guests beside a stand buy on impulse: a drink first, then food, each once per
@@ -511,7 +611,7 @@ impl GameState {
             if wanted.is_empty() {
                 continue;
             }
-            let cash = guest.cash_cents;
+            let buyer = self.buyer(index);
             let adjacent: Vec<usize> = self
                 .neighbors(position)
                 .into_iter()
@@ -531,7 +631,7 @@ impl GameState {
                     let usable = need.stand() == Some(stand.kind)
                         && self.stand_availability(stand_index) == Availability::Open
                         && (ops.queue.len() as u32) < service.queue_capacity
-                        && stand.definition.price_cents <= cash
+                        && self.price_refusal(stand_index, buyer).is_none()
                         && self.concession_customer_tiles(stand.id).contains(&position);
                     usable.then_some((need, stand_index))
                 })
@@ -585,6 +685,7 @@ impl GameState {
     /// Ends a guest's visit without a sale and records why against the stand.
     fn lose_sale(&mut self, guest_index: usize, stand_index: usize, reason: LostReason) {
         self.record_lost(stand_index, reason);
+        self.price_complaint(guest_index, reason);
         let guest = &mut self.guests[guest_index];
         guest.happiness = guest.happiness.saturating_sub(LOST_SALE_HAPPINESS);
         self.end_visit(guest_index, true);
@@ -696,7 +797,6 @@ impl GameState {
             }
             return;
         }
-        let price = self.concessions[index].definition.price_cents;
         let mut waiting = Vec::new();
         for guest_id in queue {
             let Some(guest_index) = self.guest_position_by_id(guest_id) else {
@@ -716,10 +816,12 @@ impl GameState {
                 waiting.push(guest_index);
                 continue;
             }
-            if self.guests[guest_index].cash_cents < price {
-                self.lose_sale(guest_index, index, LostReason::Unaffordable);
+            // The guest decides at the window and agrees today's price (#106).
+            if let Some(reason) = self.price_refusal(index, self.buyer(guest_index)) {
+                self.lose_sale(guest_index, index, reason);
                 continue;
             }
+            let price = self.stand_price(index);
             let waited = self.guests[guest_index]
                 .visit
                 .map_or(0, |visit| PATIENCE_MINUTES.saturating_sub(visit.minutes));
@@ -734,6 +836,7 @@ impl GameState {
             guest.state = GuestState::UsingFacility;
             if let Some(visit) = guest.visit.as_mut() {
                 visit.minutes = 0;
+                visit.price_cents = price;
             }
         }
         for guest_index in waiting {
@@ -751,7 +854,11 @@ impl GameState {
     /// cannot be applied (no stock, no money, a full ledger), nothing is and the sale is lost.
     fn complete_sale(&mut self, index: usize, guest_index: usize) {
         let stand = &self.concessions[index];
-        let price = stand.definition.price_cents;
+        // The price agreed at the window (#106), whatever the stand charges now.
+        let price = self.guests[guest_index]
+            .visit
+            .map_or(stand.definition.price_cents, |visit| visit.price_cents);
+        let reference = stand.definition.price_cents;
         let kind = stand.kind;
         let stand_id = stand.id;
         let degraded = stand.condition <= MAINTENANCE_SERVICE_THRESHOLD;
@@ -815,7 +922,10 @@ impl GameState {
         }
         let happiness = if degraded { 1 } else { 3 };
         guest.happiness = guest.happiness.saturating_add(happiness).min(100);
-        guest.value_perception = guest.value_perception.saturating_add(2).min(100);
+        // A fair price feels good; paying over the reference price does not (#106).
+        if price <= reference {
+            guest.value_perception = guest.value_perception.saturating_add(2).min(100);
+        }
         if let Some(visit) = visit
             && guest.unmet_need == Some(visit.need)
         {
@@ -1019,6 +1129,8 @@ impl GameState {
             status,
             status_label,
             open: ops.open,
+            price_cents: ops.price_cents,
+            reference_price_cents: stand.definition.price_cents,
             vendors: ops.vendors,
             max_vendors: service.max_vendors,
             vendor_hourly_wage_cents: self.catalog.balance.staff.vendor.hourly_wage_cents,

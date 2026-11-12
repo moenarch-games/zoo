@@ -59,6 +59,7 @@ const MIGRATIONS: &[Migration] = &[
     v12_add_staffed_stands,
     v13_add_visitor_groups,
     v14_physical_keeper_care,
+    v15_add_pricing,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -169,6 +170,78 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 16 (#106) gives the player prices. The park opens at the admission price its embedded
+/// catalog charged, with an empty gate record (older parks never counted groups turned away)
+/// and no campaign; every stand charges its definition's price, which was the only price; a
+/// guest already at a stand's window agreed that price and every other visit has agreed none;
+/// stand ledgers count no price complaints yet and finance ledgers no marketing.
+fn v15_add_pricing(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let admission = value
+        .pointer("/content/balance/admission_price_cents")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid("content/balance/admission_price_cents: missing"))?;
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    park.insert(
+        "pricing".to_owned(),
+        serde_json::to_value(super::pricing::Pricing::new(admission))
+            .expect("pricing serialization"),
+    );
+    let mut stand_prices = std::collections::HashMap::new();
+    for stand in park
+        .get_mut("concessions")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/concessions: missing or not an array"))?
+    {
+        let price = stand
+            .pointer("/definition/price_cents")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| invalid("park/concessions: entry has no definition price"))?;
+        let id = stand.get("id").and_then(Value::as_u64);
+        let Some(ops) = stand.get_mut("stand").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        ops.insert("price_cents".to_owned(), json!(price));
+        for period in ["today", "total"] {
+            ops.get_mut(period)
+                .and_then(|ledger| ledger.get_mut("lost"))
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| invalid("park/concessions: stand ledger has no lost demand"))?
+                .insert("too_expensive".to_owned(), json!(0));
+        }
+        if let Some(id) = id {
+            stand_prices.insert(id, price);
+        }
+    }
+    for guest in park
+        .get_mut("guests")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/guests: missing or not an array"))?
+    {
+        let serving = guest.get("state").and_then(Value::as_str) == Some("using_facility");
+        let Some(visit) = guest.get_mut("visit").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let agreed = visit
+            .get("facility_id")
+            .and_then(Value::as_u64)
+            .and_then(|id| stand_prices.get(&id))
+            .filter(|_| serving)
+            .copied()
+            .unwrap_or(0);
+        visit.insert("price_cents".to_owned(), json!(agreed));
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            ledger.insert("marketing_expense_cents".to_owned(), json!(0));
+        }
+    }
     Ok(value)
 }
 

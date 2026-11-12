@@ -18,6 +18,7 @@ const FIXTURE_V12: &str = "tests/fixtures/save-v12.json";
 const FIXTURE_V13: &str = "tests/fixtures/save-v13.json";
 const FIXTURE_V14: &str = "tests/fixtures/save-v14.json";
 const FIXTURE_V15: &str = "tests/fixtures/save-v15.json";
+const FIXTURE_V16: &str = "tests/fixtures/save-v16.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -48,10 +49,60 @@ fn content_without_environment(content: &mut Value) {
 /// park its (empty) facility service queue.
 const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
 
+/// Undoes the schema 15 → 16 migration (#106) on a document saved straight after loading: the
+/// park charged its catalog's admission price, was open, had counted nobody at the gate and
+/// run no campaign; stands charged their definition price; a guest at a window had agreed that
+/// price and no other visit any; no ledger had price complaints or marketing.
+fn pricing_removed(value: &mut Value) {
+    let admission = value["content"]["balance"]["admission_price_cents"].clone();
+    let park = value["park"].as_object_mut().unwrap();
+    let pricing = park.remove("pricing").unwrap();
+    assert_eq!(pricing["admission_cents"], admission);
+    assert_eq!(pricing["open"], true);
+    assert_eq!(pricing["today"]["groups_at_gate"], 0);
+    assert_eq!(pricing["total"]["people_at_gate"], 0);
+    assert_eq!(pricing["recent"], serde_json::json!([]));
+    assert_eq!(pricing["campaign"], Value::Null);
+    let mut prices = std::collections::HashMap::new();
+    for stand in park["concessions"].as_array_mut().unwrap() {
+        let price = stand["definition"]["price_cents"].clone();
+        let id = stand["id"].clone();
+        let Some(ops) = stand["stand"].as_object_mut() else {
+            continue;
+        };
+        assert_eq!(ops.remove("price_cents").unwrap(), price);
+        for period in ["today", "total"] {
+            let lost = ops[period]["lost"].as_object_mut().unwrap();
+            assert_eq!(lost.remove("too_expensive").unwrap(), 0);
+        }
+        prices.insert(id.to_string(), price);
+    }
+    for guest in park["guests"].as_array_mut().unwrap() {
+        let serving = guest["state"] == "using_facility";
+        let Some(visit) = guest["visit"].as_object_mut() else {
+            continue;
+        };
+        let agreed = visit.remove("price_cents").unwrap();
+        let expected = prices
+            .get(&visit["facility_id"].to_string())
+            .filter(|_| serving)
+            .cloned()
+            .unwrap_or_else(|| 0.into());
+        assert_eq!(agreed, expected, "{visit:?}");
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park[key].as_object_mut() {
+            assert_eq!(ledger.remove("marketing_expense_cents").unwrap(), 0);
+        }
+    }
+    value["schema_version"] = 15.into();
+}
+
 /// Undoes the schema 14 → 15 migration (#104) on a document saved straight after loading: a
 /// job's supplies were a flag (a carried crate or prepaid cleaning), and only the worker of an
 /// in-progress feeding job that held its crate carried feed.
 fn physical_care_removed(value: &mut Value) {
+    pricing_removed(value);
     let park = value["park"].as_object_mut().unwrap();
     let mut carriers = Vec::new();
     for job in park["care_jobs"].as_array_mut().unwrap() {
@@ -955,17 +1006,117 @@ fn the_schema_v14_fixture_migrates_to_physical_keeper_supplies() {
     assert_eq!(game.session_status(), "running");
 }
 
+/// Schema 15 parks had one price per stand and the catalog's admission (#106): they open at
+/// exactly those prices, a guest already at a window keeps the price it agreed, and the park
+/// runs on, admitting the next group at the catalog price out of its seeded budget.
+#[test]
+fn the_schema_v15_fixture_migrates_to_player_prices() {
+    let fixture = std::fs::read_to_string(FIXTURE_V15).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    pricing_removed(&mut saved);
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
+
+    let view = json(&game.snapshot_json());
+    assert_eq!(view["pricing"]["admission_price_cents"], 1200);
+    assert_eq!(view["pricing"]["open"], true);
+    let arrived = view["guest_count"].as_u64().unwrap();
+    let mut admitted = 0;
+    for _ in 0..240 {
+        game.tick(1);
+        admitted = json(&game.snapshot_json())["pricing"]["total"]["people_admitted"]
+            .as_u64()
+            .unwrap();
+        if admitted > 0 {
+            break;
+        }
+    }
+    assert!(
+        admitted > 0,
+        "nobody was admitted after loading ({arrived} inside)"
+    );
+    let view = json(&game.snapshot_json());
+    assert_eq!(
+        view["pricing"]["total"]["admission_cents"]
+            .as_i64()
+            .unwrap(),
+        1200 * admitted as i64
+    );
+    assert_eq!(game.session_status(), "running");
+}
+
+/// The cared-for park with player prices (#106): a dearer ticket, a running campaign, and a
+/// stand repriced while a guest it is serving keeps the price it agreed.
+fn priced() -> ZooGame {
+    let mut game = cared();
+    ok(game.set_admission_price(1_500.0));
+    ok(game.start_marketing_campaign());
+    for _ in 0..600 {
+        let save = json(&game.save_json());
+        let serving = save["park"]["guests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|guest| {
+                let visit = &guest["visit"];
+                (guest["state"] == "using_facility" && visit["price_cents"].as_i64() > Some(0))
+                    .then(|| {
+                        (
+                            visit["facility_id"].as_u64().unwrap(),
+                            visit["price_cents"].as_i64().unwrap(),
+                        )
+                    })
+            });
+        if let Some((stand, price)) = serving {
+            ok(game.set_stand_price(stand as u32, (price + 100) as f64));
+            return game;
+        }
+        game.tick(1);
+    }
+    panic!("no guest was ever served at a stand");
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&cared().save_json());
+        let value = json(&priced().save_json());
         std::fs::write(
-            FIXTURE_V15,
+            FIXTURE_V16,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V15).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V16).unwrap();
+    let saved = json(&fixture);
+    let pricing = &saved["park"]["pricing"];
+    assert_eq!(
+        pricing["admission_cents"], 1_500,
+        "the fixture holds a player price"
+    );
+    assert!(
+        pricing["campaign"].is_object(),
+        "the fixture holds a running campaign"
+    );
+    let agreed = saved["park"]["guests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|guest| {
+            guest["state"] == "using_facility" && guest["visit"]["price_cents"].as_i64() > Some(0)
+        })
+        .expect("the fixture holds a guest at a stand window");
+    let stand = saved["park"]["concessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|stand| stand["id"] == agreed["visit"]["facility_id"])
+        .unwrap();
+    assert_eq!(
+        stand["stand"]["price_cents"].as_i64().unwrap(),
+        agreed["visit"]["price_cents"].as_i64().unwrap() + 100,
+        "the fixture holds a sale agreed before a price change"
+    );
     assert!(
         json(&fixture)["park"]["keepers"]
             .as_array()

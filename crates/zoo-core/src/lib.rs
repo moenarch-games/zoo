@@ -9,6 +9,7 @@ mod environment;
 mod gate;
 mod land;
 mod overlay;
+mod pricing;
 mod save;
 mod scenario;
 mod session;
@@ -323,6 +324,8 @@ enum ExpenseCategory {
     VendorWages,
     /// Stock delivered to stands (#102).
     StandStock,
+    /// Marketing campaigns (#106).
+    Marketing,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,6 +350,8 @@ struct FinanceLedger {
     /// Stand vendors' wages and stock deliveries (#102; save schema 13).
     vendor_wages_expense_cents: i64,
     stand_stock_expense_cents: i64,
+    /// Marketing campaigns (#106; save schema 16).
+    marketing_expense_cents: i64,
 }
 
 impl FinanceLedger {
@@ -391,6 +396,7 @@ impl FinanceLedger {
             ExpenseCategory::Land => self.land_expense_cents += cents,
             ExpenseCategory::VendorWages => self.vendor_wages_expense_cents += cents,
             ExpenseCategory::StandStock => self.stand_stock_expense_cents += cents,
+            ExpenseCategory::Marketing => self.marketing_expense_cents += cents,
         }
         true
     }
@@ -415,6 +421,7 @@ impl FinanceLedger {
             + self.land_expense_cents
             + self.vendor_wages_expense_cents
             + self.stand_stock_expense_cents
+            + self.marketing_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -793,6 +800,8 @@ struct GameState {
     next_group_id: u32,
     /// Arrivals and exit reasons (#103).
     visits: visit::VisitRecord,
+    /// Admission and stand prices, the gate and marketing (#106).
+    pricing: pricing::Pricing,
     cash_cents: i64,
     feed_crates: u32,
     day: u32,
@@ -883,6 +892,7 @@ impl GameState {
         depot: Position,
         scenario: scenario::ScenarioIdentity,
     ) -> Self {
+        let admission = catalog.balance.admission_price_cents;
         let mut state = Self {
             catalog,
             width,
@@ -905,6 +915,7 @@ impl GameState {
             groups: Vec::new(),
             next_group_id: 1,
             visits: visit::VisitRecord::default(),
+            pricing: pricing::Pricing::new(admission),
             cash_cents: 5_000_000,
             feed_crates: 0,
             day: 1,
@@ -1256,6 +1267,7 @@ impl GameState {
                 // Construction undo spans one in-game day; refunds never cross the ledger.
                 self.construction.clear();
                 self.visits.today = visit::ExitCounts::default();
+                self.pricing.today = pricing::GateCounts::default();
                 for stand in &mut self.concessions {
                     stand.sales_today = 0;
                     if let Some(ops) = stand.stand.as_mut() {
@@ -1264,6 +1276,7 @@ impl GameState {
                 }
             }
 
+            self.advance_campaign();
             self.spawn_accumulator += 1;
             self.upkeep_accumulator += 1;
             self.movement_accumulator += 1;
@@ -1337,6 +1350,9 @@ impl GameState {
             return Some("tile grid does not match the park dimensions".to_owned());
         }
         if let Some(violation) = self.animal_violation() {
+            return Some(violation);
+        }
+        if let Some(violation) = self.pricing_violation() {
             return Some(violation);
         }
         fn ordered(name: &str, ids: impl Iterator<Item = u32>, next: u32) -> Option<String> {
@@ -3270,7 +3286,10 @@ impl GameState {
                     y: stand.y,
                     kind: stand.definition.key.clone(),
                     build_cost_cents: stand.definition.build_cost_cents,
-                    price_cents: stand.definition.price_cents,
+                    price_cents: stand
+                        .stand
+                        .as_ref()
+                        .map_or(stand.definition.price_cents, |ops| ops.price_cents),
                     sales_today: stand.sales_today,
                     total_sales: stand.total_sales,
                     total_revenue_cents: stand.total_revenue_cents,
@@ -3415,7 +3434,7 @@ impl GameState {
             complaints: self.complaint_summary(),
             construction: self.construction_view(),
             finance: FinanceView::new(
-                self.catalog.balance.admission_price_cents,
+                self.pricing.admission_cents,
                 self.day,
                 self.finance_today,
                 self.finance_previous,
@@ -3426,6 +3445,7 @@ impl GameState {
             summary: self.daily_summary(),
             land: self.land_view(),
             visits: self.visits_view(),
+            pricing: self.pricing_view(),
         }
     }
 }
@@ -3825,6 +3845,8 @@ struct Snapshot {
     land: land::LandView,
     /// Groups, arrivals, exit reasons and crowded tiles (#103).
     visits: visit::VisitsView,
+    /// Prices, the gate, demand and marketing (#106).
+    pricing: pricing::PricingView,
 }
 
 #[derive(Serialize)]
@@ -4014,6 +4036,16 @@ impl ZooGame {
             "set_stand_auto_restock" => {
                 self.set_stand_auto_restock(number("stand_id")?, flag("auto")?)
             }
+            // A refused non-finite price was recorded as null; it replays as the same refusal.
+            "set_stand_price" => self.set_stand_price(
+                number("stand_id")?,
+                args["cents"].as_f64().unwrap_or(f64::NAN),
+            ),
+            "set_admission_price" => {
+                self.set_admission_price(args["cents"].as_f64().unwrap_or(f64::NAN))
+            }
+            "set_park_open" => self.set_park_open(flag("open")?),
+            "start_marketing_campaign" => self.start_marketing_campaign(),
             "place_habitat_rect" => {
                 self.place_habitat_rect(number("ax")?, number("ay")?, number("bx")?, number("by")?)
             }
@@ -4386,6 +4418,48 @@ impl ZooGame {
         self.command("set_stand_auto_restock", args, |state| {
             state.set_stand_auto_restock(stand_id, auto)
         })
+    }
+
+    /// Sets a food or drink stand's price in whole cents (#106). Guests already being served
+    /// pay the price they agreed.
+    pub fn set_stand_price(&mut self, stand_id: u32, cents: f64) -> String {
+        let args = serde_json::json!({ "stand_id": stand_id, "cents": cents });
+        self.command("set_stand_price", args, |state| {
+            state.set_stand_price(stand_id, cents)
+        })
+    }
+
+    /// Sets the admission price per person in whole cents (#106).
+    pub fn set_admission_price(&mut self, cents: f64) -> String {
+        let args = serde_json::json!({ "cents": cents });
+        self.command("set_admission_price", args, |state| {
+            state.set_admission_price(cents)
+        })
+    }
+
+    /// Opens or closes the park gate (#106).
+    pub fn set_park_open(&mut self, open: bool) -> String {
+        let args = serde_json::json!({ "open": open });
+        self.command("set_park_open", args, |state| state.set_park_open(open))
+    }
+
+    /// Pays for a one-day marketing campaign that brings groups more often (#106).
+    pub fn start_marketing_campaign(&mut self) -> String {
+        self.command(
+            "start_marketing_campaign",
+            serde_json::json!({}),
+            GameState::start_marketing_campaign,
+        )
+    }
+
+    /// The admission forecast for a candidate price, or why the price is invalid (#106).
+    /// Changes nothing.
+    pub fn evaluate_admission_price(&self, cents: f64) -> String {
+        match self.state.evaluate_admission_price(cents) {
+            Ok(forecast) => serde_json::json!({ "ok": true, "forecast": forecast }),
+            Err(message) => serde_json::json!({ "ok": false, "message": message }),
+        }
+        .to_string()
     }
 
     pub fn evaluate_habitat_rect(&self, ax: u32, ay: u32, bx: u32, by: u32) -> String {

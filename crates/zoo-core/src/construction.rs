@@ -797,7 +797,10 @@ impl GameState {
             .expect("planned concession definition");
         let kind = ConcessionKind::parse(&definition.service).expect("planned concession kind");
         let label = definition.label.clone();
-        let stand = definition.stand.as_ref().map(stand::StandState::new);
+        let stand = definition
+            .stand
+            .as_ref()
+            .map(|service| stand::StandState::new(service, definition.price_cents));
         self.restore_concession(Concession {
             stand,
             id,

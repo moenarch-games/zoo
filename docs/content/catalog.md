@@ -9,9 +9,11 @@ owned, validated definitions. Reset retains that park's catalog.
 
 Species keys and facility keys are content identities, separate from runtime
 entity IDs and localized labels. Species purchase, appeal, social and space rules
-and stand construction/sale prices are consumed from the immutable per-park
+and stand construction and reference sale prices (a new stand's starting price and
+what guests judge its price against, #106) are consumed from the immutable per-park
 bundle, as are each species' per-animal and each stand's hourly upkeep. The
-`balance` section holds the park-wide numbers: admission price, path and habitat
+`balance` section holds the park-wide numbers: the starting admission price (the
+player sets it in play, #106), path and habitat
 construction, habitat care actions, feed batches, maintenance repairs, staff hire
 costs and hourly wages, and per-habitat upkeep. Every money
 field is validated with its field path (for example
