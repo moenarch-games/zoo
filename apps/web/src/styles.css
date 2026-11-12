@@ -1825,3 +1825,20 @@ button[data-plan-toggle].active {
   flex-wrap: wrap;
   gap: 2px 8px;
 }
+
+/* #104: the care backlog above the open task table. */
+.care-backlog {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+}
+
+.care-backlog dt {
+  font-weight: 600;
+}
+
+.care-backlog dd {
+  margin: 0;
+}

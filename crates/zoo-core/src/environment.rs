@@ -17,7 +17,7 @@
 //! fence-side tile or create a slope steeper than [`MAX_SLOPE_STEP`].
 use super::{
     ActionResult, ExpenseCategory, GameState, Habitat, Position,
-    content::{HabitatObjectType, ObjectRole, Surface},
+    content::{CareCategory, HabitatObjectType, ObjectRole, Surface},
     shape,
 };
 use serde::{Deserialize, Serialize};
@@ -178,6 +178,26 @@ impl RoamArea {
         from
     }
 
+    /// A shortest walk through the area from `from` to `to`, both included; `None` when either
+    /// lies outside the area or no step sequence connects them (#104: keepers inside a habitat).
+    pub(crate) fn path(&self, from: Position, to: Position) -> Option<Vec<Position>> {
+        if !self.contains(from) || !self.contains(to) {
+            return None;
+        }
+        let mut walk = vec![from];
+        let mut here = from;
+        // Each step is a shortest step, so the walk is bounded by the area's size.
+        while here != to {
+            let next = self.step_towards(here, to);
+            if next == here || walk.len() > self.tiles.len() {
+                return None;
+            }
+            walk.push(next);
+            here = next;
+        }
+        Some(walk)
+    }
+
     /// The tiles animals choose targets from: those clear of the fence, or every reachable
     /// tile when none are.
     pub(crate) fn pool(&self) -> &[Position] {
@@ -335,6 +355,47 @@ impl Habitat {
             *capacity = capacity.saturating_add(object.definition.capacity);
         }
         assessment
+    }
+
+    /// Where a keeper performs one category of care inside the habitat (#104): the feeding
+    /// station is the reachable tile nearest the habitat's centre; cleaning starts at the
+    /// reachable tile farthest from the gate, where waste collects; inspection checks the
+    /// first reachable shelter and enrichment services the first reachable enrichment item,
+    /// each falling back to the feeding station. Ties go to row-major order, so the spot is
+    /// deterministic, and it is always reachable from the gate.
+    pub(crate) fn care_spot(&self, category: CareCategory) -> Position {
+        let area = self.roam_area();
+        let (x, y, width, height) = shape::bounds(&self.tiles);
+        let station = area.nearest(Position {
+            x: x + width / 2,
+            y: y + height / 2,
+        });
+        let object = |role: ObjectRole| {
+            self.environment
+                .objects
+                .iter()
+                .filter(|object| object.definition.role == role && area.contains(object.position))
+                .min_by_key(|object| object.id)
+                .map_or(station, |object| object.position)
+        };
+        match category {
+            CareCategory::Feeding => station,
+            CareCategory::Cleaning => {
+                let gate = self.gate_tile();
+                area.pool()
+                    .iter()
+                    .copied()
+                    .max_by_key(|tile| {
+                        (
+                            tile.x.abs_diff(gate.x) + tile.y.abs_diff(gate.y),
+                            std::cmp::Reverse((tile.y, tile.x)),
+                        )
+                    })
+                    .unwrap_or(station)
+            }
+            CareCategory::Inspection => object(ObjectRole::Shelter),
+            CareCategory::Enrichment => object(ObjectRole::Enrichment),
+        }
     }
 
     pub(crate) fn has_reachable_shelter(&self) -> bool {

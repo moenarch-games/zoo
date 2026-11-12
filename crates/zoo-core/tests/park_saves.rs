@@ -17,6 +17,7 @@ const FIXTURE_V11: &str = "tests/fixtures/save-v11.json";
 const FIXTURE_V12: &str = "tests/fixtures/save-v12.json";
 const FIXTURE_V13: &str = "tests/fixtures/save-v13.json";
 const FIXTURE_V14: &str = "tests/fixtures/save-v14.json";
+const FIXTURE_V15: &str = "tests/fixtures/save-v15.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -47,10 +48,42 @@ fn content_without_environment(content: &mut Value) {
 /// park its (empty) facility service queue.
 const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
 
+/// Undoes the schema 14 → 15 migration (#104) on a document saved straight after loading: a
+/// job's supplies were a flag (a carried crate or prepaid cleaning), and only the worker of an
+/// in-progress feeding job that held its crate carried feed.
+fn physical_care_removed(value: &mut Value) {
+    let park = value["park"].as_object_mut().unwrap();
+    let mut carriers = Vec::new();
+    for job in park["care_jobs"].as_array_mut().unwrap() {
+        let job = job.as_object_mut().unwrap();
+        let supply = job.remove("supply").unwrap();
+        let reserved = match supply.as_str().unwrap() {
+            "feed_carried" => {
+                assert_eq!(job["category"], "feeding");
+                if job["state"] == "in_progress" {
+                    carriers.push(job["keeper_ids"][0].clone());
+                }
+                true
+            }
+            "cleaning_prepaid" => true,
+            "none" => false,
+            other => panic!("schema 14 held no {other} supply"),
+        };
+        job.insert("supplies_reserved".to_owned(), reserved.into());
+    }
+    for keeper in park["keepers"].as_array_mut().unwrap() {
+        let keeper = keeper.as_object_mut().unwrap();
+        let carrying = keeper.remove("carrying_feed").unwrap();
+        assert_eq!(carrying, carriers.contains(&keeper["id"]), "{keeper:?}");
+    }
+    value["schema_version"] = 14.into();
+}
+
 /// Undoes the schema 13 → 14 migration (#103) on a document saved straight after loading:
 /// every guest was its own group of one (IDs in guest order, admitted alone, no plan), started
 /// uncrowded with no exit decided, and the visit record counted those arrivals and no exits.
 fn groups_removed(value: &mut Value) {
+    physical_care_removed(value);
     let park = value["park"].as_object_mut().unwrap();
     let groups = park.remove("groups").unwrap();
     let groups = groups.as_array().unwrap();
@@ -871,17 +904,76 @@ fn the_schema_v13_fixture_migrates_to_visitor_groups() {
     );
 }
 
+/// The staffed park run on until a keeper carries a collected feed crate (#104).
+fn cared() -> ZooGame {
+    let mut game = staffed();
+    for _ in 0..600 {
+        let save = json(&game.save_json());
+        let carrying = save["park"]["keepers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|keeper| keeper["carrying_feed"] == true);
+        if carrying {
+            return game;
+        }
+        game.tick(1);
+    }
+    panic!("no keeper ever carried a feed crate");
+}
+
+/// Schema 14 parks took supplies at dispatch (#104): the in-progress feeding's crate is in its
+/// worker's hands, earlier reserved cleanings were prepaid, and the park runs on, feeding
+/// with the crate it already carries rather than taking another.
+#[test]
+fn the_schema_v14_fixture_migrates_to_physical_keeper_supplies() {
+    let fixture = std::fs::read_to_string(FIXTURE_V14).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    let park = &saved["park"];
+    let carried = park["care_jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["state"] == "in_progress")
+        .unwrap();
+    assert_eq!(carried["supply"], "feed_carried");
+    assert_eq!(park["keepers"][0]["carrying_feed"], true);
+    let shelf = park["feed_crates"].as_u64().unwrap();
+    physical_care_removed(&mut saved);
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
+
+    // The carried crate is fed: the shelf is untouched by that job and the keeper's hands
+    // empty once it completes.
+    game.tick(5);
+    let view = json(&game.snapshot_json());
+    let keeper = &view["animal_care_depot"]["keepers"][0];
+    assert_eq!(keeper["carrying_feed"], false, "{keeper}");
+    assert!(view["animal_care_depot"]["feed_crates"].as_u64().unwrap() <= shelf);
+    game.tick(180);
+    assert_eq!(game.session_status(), "running");
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&staffed().save_json());
+        let value = json(&cared().save_json());
         std::fs::write(
-            FIXTURE_V14,
+            FIXTURE_V15,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V14).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V15).unwrap();
+    assert!(
+        json(&fixture)["park"]["keepers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|keeper| keeper["carrying_feed"] == true),
+        "the fixture holds a carried feed crate"
+    );
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));

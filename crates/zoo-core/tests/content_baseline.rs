@@ -72,7 +72,8 @@ fn protected_six_species_facility_command_tick_oracle() {
     let actual = json!(rows);
     // #102 deliberately changes stand behaviour (queues, service time, vendor wages, stock), so
     // the oracle was re-recorded with ZOO_WRITE_CONTENT_BASELINE=1 at that change. #103 did the
-    // same: guests arrive in groups and choose habitats by profile.
+    // same: guests arrive in groups and choose habitats by profile. #104 did too: keepers
+    // collect feed at the depot and walk to care spots inside habitats.
     if std::env::var_os("ZOO_WRITE_CONTENT_BASELINE").is_some() {
         std::fs::write(
             "tests/fixtures/content-command-baseline.json",

@@ -277,7 +277,14 @@ fn reshapes_replay_exactly_from_the_session_log() {
     ok(game.place_habitat_outline(vec![10, 8, 14, 8, 14, 10, 12, 10, 12, 12, 10, 12, 10, 8]));
     ok(game.reshape_habitat(1, EXPANDED.to_vec()));
     game.tick(30);
-    ok(game.undo_construction());
+    // Undo once no keeper works on the added tiles (keepers walk to care spots, #104); the
+    // refused attempts are part of the log too.
+    let mut minutes = 30;
+    while json(&game.undo_construction())["ok"] != true {
+        game.tick(1);
+        minutes += 1;
+        assert!(minutes < 180, "a keeper never left the added tiles");
+    }
     game.tick(30);
     let content = ZooGame::new().content_json();
     let replayed = ZooGame::replay(&content, &game.diagnostics_json()).expect("replays");

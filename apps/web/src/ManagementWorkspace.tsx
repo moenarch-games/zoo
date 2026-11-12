@@ -7,6 +7,7 @@ import { useId, useMemo, useState, type ReactNode } from "react"
 import type {
   Alert,
   AlertSubject,
+  CarePhase,
   FinanceBreakdown,
   Janitor,
   OverlayKind,
@@ -158,6 +159,18 @@ const COMPLAINT_LABELS = {
   needs_toilet: "No toilet",
   needs_rest: "No seat",
 } as const
+
+/** Player-facing names of zoo-core's care job phases (#104). */
+const CARE_PHASE_LABELS: Record<CarePhase, string> = {
+  queued: "Queued",
+  blocked: "Blocked",
+  collecting_stock: "Collecting stock",
+  traveling: "Traveling",
+  reserved: "Crew reserved",
+  servicing: "Servicing",
+  completed: "Completed",
+  missed: "Missed",
+}
 
 /** A janitor's current job: path litter or a toilet/bin service task (#101). */
 function janitorAssignment(target: Janitor["target"]) {
@@ -575,9 +588,12 @@ export function ManagementWorkspace({
           key: `job:${job.id}`,
           task: `${job.category} job #${job.id}`,
           where: `Habitat #${habitat.id}`,
-          state: job.state === "due" ? "Due" : "In progress",
-          waiting: job.waiting_reason ?? "",
-          age: job.expires_in_minutes,
+          state: CARE_PHASE_LABELS[job.phase],
+          waiting:
+            job.route_tiles === null
+              ? (job.waiting_reason ?? "")
+              : `${job.waiting_reason ?? ""}${job.waiting_reason ? " · " : ""}${job.route_tiles} tiles to walk`,
+          age: job.waited_minutes,
           at: habitatCenter(habitat),
           target: { kind: "habitat" as const, id: habitat.id },
         })),
@@ -751,6 +767,7 @@ export function ManagementWorkspace({
               ]}
             />
             <h3>Open tasks</h3>
+            <CareBacklogSummary backlog={depot.care_backlog} />
             <DataTable
               label="Tasks"
               rows={tasks}
@@ -762,6 +779,13 @@ export function ManagementWorkspace({
                 { key: "where", label: "Where", value: (row) => row.where },
                 { key: "state", label: "State", value: (row) => row.state },
                 { key: "waiting", label: "Note", value: (row) => row.waiting },
+                {
+                  key: "age",
+                  label: "Waited",
+                  value: (row) => row.age,
+                  render: (row) => `${row.age} min`,
+                  numeric: true,
+                },
               ]}
             />
           </>
@@ -907,5 +931,45 @@ export function OverlayLegend({
         </ul>
       )}
     </section>
+  )
+}
+
+/** The park's care backlog as zoo-core counts it: open work, its oldest wait, recent outcomes
+ * and where the feed is (#104). */
+function CareBacklogSummary({
+  backlog,
+}: {
+  backlog: Snapshot["animal_care_depot"]["care_backlog"]
+}) {
+  return (
+    <dl
+      className="care-backlog"
+      aria-label="Care backlog"
+      data-care-open={backlog.open}
+      data-care-blocked={backlog.blocked}
+      data-care-oldest-wait={backlog.oldest_wait_minutes}
+      data-care-completed={backlog.completed_recent}
+      data-care-missed={backlog.missed_recent}
+    >
+      <dt>Open care</dt>
+      <dd>
+        {backlog.open} ({backlog.queued} queued · {backlog.blocked} blocked · {backlog.in_progress}{" "}
+        under way)
+      </dd>
+      <dt>Oldest wait</dt>
+      <dd>{backlog.oldest_wait_minutes} min</dd>
+      <dt>Last day</dt>
+      <dd>
+        {backlog.completed_recent} done · {backlog.missed_recent} missed
+      </dd>
+      <dt>Feed</dt>
+      <dd>
+        {backlog.feed_on_shelf} on shelf · {backlog.feed_reserved} reserved · {backlog.feed_carried}{" "}
+        carried
+        {backlog.supply_shortages > 0
+          ? ` · ${backlog.supply_shortages} jobs short of supplies`
+          : ""}
+      </dd>
+    </dl>
   )
 }

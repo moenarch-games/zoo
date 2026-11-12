@@ -32,7 +32,7 @@
 use super::{
     GameState, GuestState, JanitorTarget, MAX_GUEST_HABITATS_PER_VISIT, PathAccess, Position,
     TileKind, animal,
-    care::CareJobState,
+    care::{self, CareJobState, JobSupply},
     content::{self, Catalog},
     environment, scenario, shape,
 };
@@ -58,6 +58,7 @@ const MIGRATIONS: &[Migration] = &[
     v11_add_guest_comfort,
     v12_add_staffed_stands,
     v13_add_visitor_groups,
+    v14_physical_keeper_care,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -175,6 +176,62 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
 /// each becomes a group of one (IDs in guest order, admitted alone) with the profile its group
 /// ID draws, no favourite species and no plan yet; guests start uncrowded with no exit decided,
 /// and the visit record counts those groups as arrived with no exits yet.
+/// Schema 15 (#104) makes keeper supplies physical. Schema 14 took a job's feed crate off the
+/// shelf (or paid its cleaning) at dispatch, so a job that had reserved supplies holds them
+/// already: a feeding job's crate is carried by its worker (who gains `carrying_feed`), and a
+/// cleaning job's supplies are prepaid, never charged again. Every other job holds nothing.
+fn v14_physical_keeper_care(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let mut carriers = HashSet::new();
+    for job in park
+        .get_mut("care_jobs")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/care_jobs: missing or not an array"))?
+    {
+        let job = job
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/care_jobs: entry is not an object"))?;
+        let reserved = job
+            .remove("supplies_reserved")
+            .and_then(|reserved| reserved.as_bool())
+            .ok_or_else(|| invalid("park/care_jobs: entry has no supplies_reserved"))?;
+        let category = job.get("category").and_then(Value::as_str);
+        let supply = match (reserved, category) {
+            (true, Some("feeding")) => "feed_carried",
+            (true, Some("cleaning")) => "cleaning_prepaid",
+            _ => "none",
+        };
+        if supply == "feed_carried"
+            && job.get("state").and_then(Value::as_str) == Some("in_progress")
+            && let Some(worker) = job
+                .get("keeper_ids")
+                .and_then(Value::as_array)
+                .and_then(|crew| crew.first())
+                .and_then(Value::as_u64)
+        {
+            carriers.insert(worker);
+        }
+        job.insert("supply".to_owned(), json!(supply));
+    }
+    for keeper in park
+        .get_mut("keepers")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/keepers: missing or not an array"))?
+    {
+        let keeper = keeper
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/keepers: entry is not an object"))?;
+        let id = keeper.get("id").and_then(Value::as_u64);
+        let carrying = id.is_some_and(|id| carriers.contains(&id));
+        keeper.insert("carrying_feed".to_owned(), json!(carrying));
+    }
+    Ok(value)
+}
+
 fn v13_add_visitor_groups(mut value: Value) -> Result<Value, SaveError> {
     let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
     let park = value
@@ -1099,6 +1156,68 @@ impl GameState {
                 && job.keeper_ids.len() != job.required_keepers as usize
             {
                 return Err(format!("care job {} has an incomplete crew", job.id));
+            }
+            // Supplies are held only by dispatched jobs, and a carried crate is in its
+            // worker's hands (#104).
+            let worker = job
+                .keeper_ids
+                .first()
+                .and_then(|id| self.keepers.iter().find(|k| k.id == *id));
+            let in_progress = job.state == CareJobState::InProgress;
+            match job.supply {
+                JobSupply::FeedReserved if !in_progress => {
+                    return Err(format!(
+                        "care job {} holds supplies while not dispatched",
+                        job.id
+                    ));
+                }
+                JobSupply::Cleaning | JobSupply::CleaningPrepaid
+                    if job.state == CareJobState::Due =>
+                {
+                    return Err(format!(
+                        "care job {} holds supplies while not dispatched",
+                        job.id
+                    ));
+                }
+                JobSupply::FeedCarried
+                    if in_progress && !worker.is_some_and(|keeper| keeper.carrying_feed) =>
+                {
+                    return Err(format!("care job {} lost its carried feed crate", job.id));
+                }
+                _ => {}
+            }
+        }
+        if self.reserved_feed_crates() > self.feed_crates {
+            return Err("more feed crates are reserved than the depot holds".to_owned());
+        }
+        for keeper in &self.keepers {
+            let job = keeper
+                .activity
+                .job_id()
+                .and_then(|id| self.care_jobs.iter().find(|job| job.id == id));
+            let works = |supply: JobSupply| {
+                job.is_some_and(|job| {
+                    job.supply == supply && job.keeper_ids.first() == Some(&keeper.id)
+                })
+            };
+            if matches!(
+                keeper.activity,
+                care::KeeperActivity::CollectingStock { .. }
+            ) && !works(JobSupply::FeedReserved)
+            {
+                return Err(format!(
+                    "keeper {} collects stock for no reservation",
+                    keeper.id
+                ));
+            }
+            if keeper.carrying_feed
+                && keeper.activity != care::KeeperActivity::ToDepot
+                && !works(JobSupply::FeedCarried)
+            {
+                return Err(format!(
+                    "keeper {} carries a feed crate for no job",
+                    keeper.id
+                ));
             }
         }
         let litter_ids: HashSet<u32> = self.litter.iter().map(|t| t.id).collect();

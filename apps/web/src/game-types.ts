@@ -74,9 +74,44 @@ export type CareJob = {
   state: "due" | "in_progress" | "completed" | "missed"
   /** The reserved crew; the first keeper does the care work, any other manages the animals. */
   keeper_ids: number[]
-  /** Why a due job has no keeper yet. */
+  /** Why a due job has no keeper yet, or why its dispatched crew cannot move. */
   waiting_reason: string | null
   expires_in_minutes: number
+  /** Rust-owned lifecycle stage (#104); `queued` waits for busy keepers, `blocked` for a fix. */
+  phase: CarePhase
+  /** The job's hold on supplies: reserved at the depot, carried, or bought on completion. */
+  supply: "none" | "feed_reserved" | "feed_carried" | "cleaning" | "cleaning_prepaid"
+  /** Minutes since the job fell due while it is open. */
+  waited_minutes: number
+  /** Tiles left on the crew's current walk (or depot to gate while due); null without a route. */
+  route_tiles: number | null
+  /** Where inside the habitat the care is performed. */
+  care_spot: Point | null
+}
+
+export type CarePhase =
+  | "queued"
+  | "blocked"
+  | "collecting_stock"
+  | "traveling"
+  | "reserved"
+  | "servicing"
+  | "completed"
+  | "missed"
+
+/** The park's care backlog and where its feed is (#104). */
+export type CareBacklog = {
+  open: number
+  queued: number
+  blocked: number
+  in_progress: number
+  oldest_wait_minutes: number
+  completed_recent: number
+  missed_recent: number
+  feed_on_shelf: number
+  feed_reserved: number
+  feed_carried: number
+  supply_shortages: number
 }
 
 export type ServiceGate = FenceSegment & {
@@ -300,8 +335,21 @@ export type Keeper = Point & {
   shift_end_minute: number
   on_shift: boolean
   deliveries_completed: number
-  /** `awaiting_crew`: inside the gate, waiting for the rest of a dangerous-habitat crew. */
-  activity: "at_depot" | "to_gate" | "awaiting_crew" | "working" | "to_depot"
+  /**
+   * `collecting_stock`: walking to the depot for a feed crate; `awaiting_crew`: inside the gate,
+   * waiting for the rest of a dangerous-habitat crew; `to_care_spot`: walking inside the habitat
+   * to the feeder or task location.
+   */
+  activity:
+    | "at_depot"
+    | "collecting_stock"
+    | "to_gate"
+    | "awaiting_crew"
+    | "to_care_spot"
+    | "working"
+    | "to_depot"
+  /** Whether the keeper carries a feed crate. */
+  carrying_feed: boolean
   job_id: number | null
   /** The habitat of the current job. */
   habitat_id: number | null
@@ -351,6 +399,7 @@ export type AnimalCareDepot = Point & {
   mechanic_hire_cost_cents: number
   mechanic_hourly_wage_cents: number
   maintenance_repair_cost_cents: number
+  care_backlog: CareBacklog
   keepers: Keeper[]
   janitors: Janitor[]
   mechanics: Mechanic[]
