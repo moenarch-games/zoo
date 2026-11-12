@@ -8,6 +8,7 @@ import {runCirculationAcceptance} from "./circulation-proof.mjs"
 import {runLandExpansionAcceptance} from "./land-expansion-proof.mjs"
 import {runGuestComfortAcceptance} from "./guest-comfort-proof.mjs"
 import {runStaffedStandsAcceptance} from "./staffed-stands-proof.mjs"
+import {runVisitorItinerariesAcceptance} from "./visitor-itineraries-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -552,6 +553,10 @@ try {
 
   // #102: a busy one-vendor stand turns guests away; more vendors raise its throughput.
   await runStaffedStandsAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
+
+  // #103: guests leave for an explained reason, recover once it is fixed; one group is followed
+  // through several habitats, a service stop and its exit.
+  await runVisitorItinerariesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()
