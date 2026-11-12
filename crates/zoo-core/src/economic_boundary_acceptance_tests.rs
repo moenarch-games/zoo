@@ -5,7 +5,10 @@ fn snapshot(state: &GameState) -> String {
     format!("{state:?}")
 }
 fn attraction() -> GameState {
-    let mut state = GameState::default();
+    let mut state = GameState {
+        visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+        ..GameState::default()
+    };
     assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
     staff_habitat(&mut state, 1);
     assert!(state.adopt(1, "capybara").ok);
@@ -72,7 +75,7 @@ fn failed_sale_does_not_credit_money_restore_guest_or_create_side_effects() {
     for boundary in 0..5 {
         let mut state = attraction();
         assert!(state.place_concession(1, ENTRANCE_Y - 1, "drink").ok);
-        state.try_spawn_guest();
+        state.try_spawn_group();
         assert_eq!(state.guests.len(), 1);
         let guest = &mut state.guests[0];
         guest.x = 1;
@@ -130,7 +133,7 @@ fn guest_identifier_exhaustion_does_not_charge_admission() {
     let mut state = attraction();
     state.next_guest_id = u32::MAX;
     let before = snapshot(&state);
-    state.try_spawn_guest();
+    state.try_spawn_group();
     assert_eq!(snapshot(&state), before);
     assert!(state.guests.is_empty());
     assert_eq!(state.next_guest_id, u32::MAX);

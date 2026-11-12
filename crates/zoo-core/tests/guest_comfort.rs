@@ -119,7 +119,8 @@ fn step_until(game: &mut ZooGame, minutes: u32, mut done: impl FnMut(&Value) -> 
 #[test]
 fn only_a_reachable_toilet_meets_the_need() {
     let mut game = park();
-    game.tick(80);
+    // The first group (two people, #103) arrives after two arrival intervals.
+    game.tick(104);
     set_guests(&mut game, "bladder", 70);
     let with_need: Vec<u64> = guests(&view(&game))
         .iter()
@@ -396,7 +397,7 @@ fn dirty_toilets_and_full_bins_get_janitor_work_once_and_recover_only_when_servi
 fn an_interrupted_janitor_releases_the_job_and_resumes_after_the_path_returns() {
     let mut game = park();
     accepted(game.place_concession(12, 6, "toilet".to_owned()));
-    game.tick(30);
+    game.tick(54);
     edit(&mut game, |park| {
         for stand in park["concessions"].as_array_mut().unwrap() {
             if stand["definition"]["key"] == "toilet" {

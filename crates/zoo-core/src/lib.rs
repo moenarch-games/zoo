@@ -15,6 +15,7 @@ mod session;
 mod shape;
 mod stand;
 mod tutorial;
+mod visit;
 mod zone;
 
 use content::{Catalog, Facility, Species};
@@ -80,7 +81,7 @@ const MAINTENANCE_WEAR_PER_SALE: u32 = 2;
 const MAINTENANCE_SERVICE_THRESHOLD: u32 = 60;
 const MAINTENANCE_FAILURE_THRESHOLD: u32 = 20;
 const FEED_DELIVERY_THRESHOLD: u32 = 90;
-const MAX_GUEST_HABITATS_PER_VISIT: usize = 3;
+const MAX_GUEST_HABITATS_PER_VISIT: usize = 4;
 const MIN_ENGAGING_HABITAT_WELFARE: u32 = 40;
 const GUEST_CONTINUE_MIN_HAPPINESS: u32 = 45;
 const GUEST_CONTINUE_MIN_ENERGY: u32 = 35;
@@ -732,19 +733,15 @@ struct Guest {
     next_need_check: u64,
     /// Spending money left for stands (#102); never negative.
     cash_cents: i64,
+    /// The group this guest decides with (#103).
+    group_id: u32,
+    /// Minutes spent on crowded tiles or over-full viewpoints (#103).
+    crowd_minutes: u32,
+    /// Why the guest is walking out, once it has decided to leave (#103).
+    exit: Option<visit::ExitCause>,
 }
 
 impl Guest {
-    fn wants_another_habitat(&self) -> bool {
-        self.visited_habitats.len() < MAX_GUEST_HABITATS_PER_VISIT
-            && self.happiness >= GUEST_CONTINUE_MIN_HAPPINESS
-            && self.energy >= GUEST_CONTINUE_MIN_ENERGY
-            && self.hunger <= GUEST_CONTINUE_MAX_HUNGER
-            && self.thirst <= GUEST_CONTINUE_MAX_THIRST
-            && self.value_perception >= GUEST_CONTINUE_MIN_VALUE
-            && self.bladder < comfort::BLADDER_DESPERATE
-    }
-
     fn on_errand(&self) -> bool {
         matches!(
             self.state,
@@ -788,6 +785,11 @@ struct GameState {
     /// Janitor work at toilets and bins (#101): at most one open task per facility.
     facility_service: Vec<comfort::ServiceTask>,
     guests: Vec<Guest>,
+    /// Visitor groups in the park, by ID (#103); every guest belongs to exactly one.
+    groups: Vec<visit::Group>,
+    next_group_id: u32,
+    /// Arrivals and exit reasons (#103).
+    visits: visit::VisitRecord,
     cash_cents: i64,
     feed_crates: u32,
     day: u32,
@@ -842,6 +844,10 @@ struct WorkCounters {
     topology_revision: u64,
     /// Guest routes and staff assignments a topology edit invalidated and re-planned.
     route_invalidations: u64,
+    /// Group itinerary choices made (#103); each costs one breadth-first walk.
+    itinerary_decisions: Cell<u64>,
+    /// Habitats scored across those choices.
+    itinerary_candidates: Cell<u64>,
 }
 
 impl std::fmt::Debug for WorkCounters {
@@ -893,6 +899,9 @@ impl GameState {
             maintenance: Vec::new(),
             facility_service: Vec::new(),
             guests: Vec::new(),
+            groups: Vec::new(),
+            next_group_id: 1,
+            visits: visit::VisitRecord::default(),
             cash_cents: 5_000_000,
             feed_crates: 0,
             day: 1,
@@ -1242,6 +1251,7 @@ impl GameState {
                 self.finance_today = FinanceLedger::default();
                 // Construction undo spans one in-game day; refunds never cross the ledger.
                 self.construction.clear();
+                self.visits.today = visit::ExitCounts::default();
                 for stand in &mut self.concessions {
                     stand.sales_today = 0;
                     if let Some(ops) = stand.stand.as_mut() {
@@ -1254,9 +1264,9 @@ impl GameState {
             self.upkeep_accumulator += 1;
             self.movement_accumulator += 1;
 
-            if self.spawn_accumulator >= 24 {
+            if self.spawn_accumulator >= self.next_arrival_minutes() {
                 self.spawn_accumulator = 0;
-                self.try_spawn_guest();
+                self.try_spawn_group();
             }
             if self.upkeep_accumulator >= 60 {
                 self.upkeep_accumulator = 0;
@@ -1284,6 +1294,7 @@ impl GameState {
             }
             self.advance_animal_welfare();
             self.advance_guest_needs();
+            self.advance_crowding();
             self.advance_comfort_visits();
             self.advance_stands();
 
@@ -1296,6 +1307,7 @@ impl GameState {
             }
 
             self.advance_viewing();
+            self.advance_groups();
             self.update_alerts();
         }
     }
@@ -1389,9 +1401,17 @@ impl GameState {
                 self.next_work_zone_id,
             )
         })
+        .or_else(|| {
+            ordered(
+                "group",
+                self.groups.iter().map(|g| g.id),
+                self.next_group_id,
+            )
+        })
         .or_else(|| self.work_zone_violation())
         .or_else(|| self.comfort_violation())
         .or_else(|| self.stand_violation())
+        .or_else(|| self.visit_violation())
     }
 
     fn advance_habitat_care(&mut self) {
@@ -1418,67 +1438,6 @@ impl GameState {
                 habitat.welfare = habitat.welfare.saturating_sub(1).max(target);
             }
         }
-    }
-
-    fn try_spawn_guest(&mut self) {
-        let start = Position {
-            x: self.entrance.x,
-            y: self.entrance.y,
-        };
-        let viewing_occupancy = self.viewing_occupancy();
-        let mut candidates: Vec<(u32, Vec<Position>)> = self
-            .habitats
-            .iter()
-            .filter(|habitat| habitat.stocked())
-            .filter_map(|habitat| {
-                self.viewing_route_with_occupancy(habitat, start, &viewing_occupancy)
-                    .map(|route| (habitat.id, route))
-            })
-            .collect();
-        if candidates.is_empty() {
-            return;
-        }
-
-        // Choose only among reachable attractions and reuse the selected search result.
-        let choice = (self.next_guest_id as usize) % candidates.len();
-        let (target_habitat, route) = candidates.swap_remove(choice);
-
-        if self.next_guest_id == u32::MAX
-            || !self.earn(
-                self.catalog.balance.admission_price_cents,
-                IncomeCategory::Admissions,
-            )
-        {
-            return;
-        }
-        self.guests.push(Guest {
-            id: self.next_guest_id,
-            x: start.x,
-            y: start.y,
-            happiness: 78,
-            energy: 90,
-            hunger: 18,
-            thirst: 16,
-            value_perception: 68,
-            minutes_in_park: 0,
-            target_habitat,
-            state: GuestState::Arriving,
-            route,
-            route_index: 0,
-            viewing_minutes: 0,
-            arrival_steps: 2,
-            bought_food: false,
-            bought_drink: false,
-            visited_habitats: Vec::new(),
-            cleanliness_concern: false,
-            bladder: comfort::ARRIVAL_BLADDER,
-            visit: None,
-            unmet_need: None,
-            next_need_check: 0,
-            cash_cents: stand::guest_budget(self.next_guest_id),
-        });
-        self.emit("guest_arrived", Some(self.next_guest_id));
-        self.next_guest_id += 1;
     }
 
     fn advance_guest_needs(&mut self) {
@@ -1529,36 +1488,6 @@ impl GameState {
             .map_or(0, |habitat| {
                 4 + habitat.welfare / 20 + habitat.appeal().min(300) / 30
             })
-    }
-
-    fn next_engaging_habitat(
-        &self,
-        guest: &Guest,
-        start: Position,
-        viewing_occupancy: &ViewingOccupancy,
-    ) -> Option<(u32, Vec<Position>)> {
-        let mut candidates: Vec<&Habitat> = self
-            .habitats
-            .iter()
-            .filter(|habitat| habitat.stocked())
-            .filter(|habitat| habitat.welfare >= MIN_ENGAGING_HABITAT_WELFARE)
-            .filter(|habitat| !guest.visited_habitats.contains(&habitat.id))
-            .collect();
-
-        candidates.sort_by(|left, right| {
-            let left_score = left.appeal().saturating_add(left.welfare.saturating_mul(2));
-            let right_score = right
-                .appeal()
-                .saturating_add(right.welfare.saturating_mul(2));
-            right_score
-                .cmp(&left_score)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-
-        candidates.into_iter().find_map(|habitat| {
-            self.viewing_route_with_occupancy(habitat, start, viewing_occupancy)
-                .map(|route| (habitat.id, route))
-        })
     }
 
     /// Every path-graph edit (building, widening, reclassifying or removing path, and the
@@ -1680,12 +1609,21 @@ impl GameState {
                 GuestState::WalkingToHabitat => {
                     let target_habitat = self.guests[index].target_habitat;
                     let experience_bonus = self.habitat_experience_bonus(target_habitat);
+                    // Late to a group that is already waiting: a short look, then catch up.
+                    let group_waiting = self.group_waiting(index);
                     let guest = &mut self.guests[index];
-                    if !guest.visited_habitats.contains(&target_habitat) {
-                        guest.visited_habitats.push(target_habitat);
-                    }
                     guest.state = GuestState::Viewing;
-                    guest.viewing_minutes = 24 + (experience_bonus / 2).min(10);
+                    if guest.visited_habitats.contains(&target_habitat) {
+                        // Back with the group after an errand: ready to move on together.
+                        guest.viewing_minutes = 0;
+                        continue;
+                    }
+                    guest.visited_habitats.push(target_habitat);
+                    guest.viewing_minutes = if group_waiting {
+                        visit::CATCH_UP_VIEWING_MINUTES
+                    } else {
+                        24 + (experience_bonus / 2).min(10)
+                    };
                     guest.happiness = guest.happiness.saturating_add(experience_bonus).min(100);
                     guest.value_perception = guest
                         .value_perception
@@ -1706,6 +1644,7 @@ impl GameState {
                 self.release_facility_slot(*id);
                 self.emit("guest_left", Some(*id));
             }
+            self.record_exits(&leave_ids);
             self.guests.retain(|guest| !leave_ids.contains(&guest.id));
         }
         self.join_passing_stands();
@@ -1726,7 +1665,7 @@ impl GameState {
             })
             .collect();
 
-        let mut decisions = Vec::new();
+        // A guest whose viewing time is up is ready; its group decides in `advance_groups`.
         for (index, spot) in conditions {
             let guest = &mut self.guests[index];
             if guest
@@ -1743,46 +1682,6 @@ impl GameState {
             }
 
             guest.viewing_minutes = guest.viewing_minutes.saturating_sub(1);
-            if guest.viewing_minutes == 0 {
-                decisions.push((
-                    index,
-                    Position {
-                        x: guest.x,
-                        y: guest.y,
-                    },
-                ));
-            }
-        }
-
-        for (index, start) in decisions {
-            let next_habitat = {
-                let guest = &self.guests[index];
-                if guest.wants_another_habitat() {
-                    self.next_engaging_habitat(guest, start, &viewing_occupancy)
-                } else {
-                    None
-                }
-            };
-
-            if let Some((habitat_id, route)) = next_habitat {
-                let guest = &mut self.guests[index];
-                guest.target_habitat = habitat_id;
-                guest.state = GuestState::WalkingToHabitat;
-                guest.route = route;
-                guest.route_index = 0;
-                continue;
-            }
-
-            let exit = Position {
-                x: self.entrance.x,
-                y: self.entrance.y,
-            };
-            if let Some(route) = self.path_between(Mover::Guest, start, exit) {
-                let guest = &mut self.guests[index];
-                guest.state = GuestState::WalkingToExit;
-                guest.route = route;
-                guest.route_index = 0;
-            }
         }
     }
 
@@ -2648,6 +2547,7 @@ impl GameState {
         &self,
         guest: &Guest,
         viewing_occupancy: &ViewingOccupancy,
+        crowded_tile: bool,
     ) -> &'static str {
         if guest.route.is_empty()
             && matches!(
@@ -2657,10 +2557,31 @@ impl GameState {
         {
             return "The path to the animals is blocked.";
         }
-        if (guest.route.is_empty() && guest.state == GuestState::WalkingToExit)
-            || (guest.state == GuestState::Viewing && guest.viewing_minutes == 0)
-        {
+        if guest.ready() {
+            let together = self
+                .group_index(guest.group_id)
+                .is_some_and(|group| self.groups[group].members.len() > 1);
+            return if together {
+                "I'm waiting for the rest of my group."
+            } else {
+                "The path to the exit is blocked."
+            };
+        }
+        if guest.route.is_empty() && guest.state == GuestState::WalkingToExit {
             return "The path to the exit is blocked.";
+        }
+        if guest.state == GuestState::WalkingToExit
+            && let Some(exit) = &guest.exit
+        {
+            return match exit.reason {
+                visit::ExitReason::Satisfied => "What a lovely visit! Time to go home.",
+                visit::ExitReason::NeedsUnmet => "I'm leaving: I couldn't get what I needed.",
+                visit::ExitReason::TooCrowded => "It's far too crowded; I'm going home.",
+                visit::ExitReason::PoorValue => "This wasn't worth the price; I'm leaving.",
+                visit::ExitReason::NoReachableAttraction => {
+                    "There's nothing else I can get to; I'm leaving."
+                }
+            };
         }
         if let Some(visit) = guest.visit {
             return match (guest.state, visit.need) {
@@ -2710,6 +2631,9 @@ impl GameState {
                 return "It's too crowded to get a good view.";
             }
         }
+        if crowded_tile {
+            return "It's so crowded here.";
+        }
         if guest.cleanliness_concern {
             return "The paths need cleaning.";
         }
@@ -2737,7 +2661,11 @@ impl GameState {
     #[cfg(test)]
     fn guest_thought(&self, guest: &Guest) -> &'static str {
         let viewing_occupancy = self.viewing_occupancy();
-        self.guest_thought_with_occupancy(guest, &viewing_occupancy)
+        self.guest_thought_with_occupancy(
+            guest,
+            &viewing_occupancy,
+            self.guest_on_crowded_tile(guest),
+        )
     }
 
     fn viewing_route_with_occupancy(
@@ -3348,6 +3276,7 @@ impl GameState {
             )
             .collect();
 
+        let tile_counts = self.tile_guest_counts();
         let guests = self
             .guests
             .iter()
@@ -3364,7 +3293,13 @@ impl GameState {
                 habitats_viewed: guest.visited_habitats.len() as u32,
                 state: guest.state,
                 thought: self
-                    .guest_thought_with_occupancy(guest, &viewing_occupancy)
+                    .guest_thought_with_occupancy(
+                        guest,
+                        &viewing_occupancy,
+                        tile_counts
+                            .get(&(guest.x, guest.y))
+                            .is_some_and(|count| *count > visit::PATH_COMFORT_GUESTS),
+                    )
                     .to_owned(),
                 comfort: comfort::GuestComfortView {
                     bladder: guest.bladder,
@@ -3372,6 +3307,13 @@ impl GameState {
                     unmet_need: guest.unmet_need,
                 },
                 cash_cents: guest.cash_cents,
+                visited_habitats: guest.visited_habitats.clone(),
+                group: self.guest_group_view(guest),
+                crowd_minutes: guest.crowd_minutes,
+                crowded: tile_counts
+                    .get(&(guest.x, guest.y))
+                    .is_some_and(|count| *count > visit::PATH_COMFORT_GUESTS),
+                exit: guest.exit.clone(),
             })
             .collect();
 
@@ -3478,6 +3420,7 @@ impl GameState {
             alerts: self.alerts.clone(),
             summary: self.daily_summary(),
             land: self.land_view(),
+            visits: self.visits_view(),
         }
     }
 }
@@ -3732,6 +3675,15 @@ struct GuestView {
     comfort: comfort::GuestComfortView,
     /// Spending money left for stands (#102).
     cash_cents: i64,
+    /// The habitats this guest has watched, in order (#103).
+    visited_habitats: Vec<u32>,
+    /// The guest's group, profile and current plan (#103).
+    group: Option<visit::GuestGroupView>,
+    /// Minutes spent in crowds so far, and whether the guest stands in one now (#103).
+    crowd_minutes: u32,
+    crowded: bool,
+    /// Why the guest is leaving, once decided (#103).
+    exit: Option<visit::ExitCause>,
 }
 
 #[derive(Serialize)]
@@ -3862,6 +3814,8 @@ struct Snapshot {
     summary: overlay::DailySummary,
     /// Parcels, ownership, prices and restrictions (#99).
     land: land::LandView,
+    /// Groups, arrivals, exit reasons and crowded tiles (#103).
+    visits: visit::VisitsView,
 }
 
 #[derive(Serialize)]
@@ -4281,6 +4235,8 @@ impl ZooGame {
             "path_searches": state.work.path_searches.get(),
             "topology_revision": state.work.topology_revision,
             "route_invalidations": state.work.route_invalidations,
+            "itinerary_decisions": state.work.itinerary_decisions.get(),
+            "itinerary_candidates": state.work.itinerary_candidates.get(),
         });
         self.session.bundle(clock, entities, work)
     }
@@ -5068,7 +5024,7 @@ mod tests {
         // Visible from the path at x 5 but not from the crowded tile at x 4.
         state.habitats[0].animals[0].position = Position { x: 6, y: 9 };
         assert!(state.place_path(5, ENTRANCE_Y).ok);
-        state.try_spawn_guest();
+        state.try_spawn_group();
 
         let mut template = state.guests[0].clone();
         state.guests.clear();
@@ -5142,6 +5098,9 @@ mod tests {
             unmet_need: None,
             next_need_check: 0,
             cash_cents: 0,
+            group_id: 1,
+            crowd_minutes: 0,
+            exit: None,
         };
         state.guests.push(guest.clone());
         guest.id = 2;
@@ -5173,7 +5132,7 @@ mod tests {
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
         assert!(state.adopt(habitat_id, "capybara").ok);
-        state.try_spawn_guest();
+        state.try_spawn_group();
 
         let mut template = state.guests[0].clone();
         state.guests.clear();
@@ -5213,7 +5172,11 @@ mod tests {
 
     #[test]
     fn guests_visibly_arrive_through_the_entrance() {
-        let mut state = GameState::default();
+        let mut state = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
@@ -5236,7 +5199,11 @@ mod tests {
 
     #[test]
     fn engaged_guests_continue_to_distinct_reachable_habitats() {
-        let mut state = GameState::default();
+        let mut state = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(state.place_habitat_rect(5, 5, 8, 7).ok);
         let first_id = state.habitats[0].id;
         staff_habitat(&mut state, first_id);
@@ -5269,7 +5236,11 @@ mod tests {
 
     #[test]
     fn dirty_paths_reduce_guest_engagement_without_changing_routing() {
-        let mut clean = GameState::default();
+        let mut clean = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(clean.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = clean.habitats[0].id;
         staff_habitat(&mut clean, habitat_id);
@@ -5298,7 +5269,11 @@ mod tests {
 
     #[test]
     fn severe_needs_end_a_visit_before_another_reachable_habitat() {
-        let mut state = GameState::default();
+        let mut state = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(state.place_habitat_rect(5, 5, 8, 7).ok);
         let first_id = state.habitats[0].id;
         staff_habitat(&mut state, first_id);
@@ -5328,8 +5303,11 @@ mod tests {
 
         let guest = state.guests.iter_mut().find(|guest| guest.id == 1).unwrap();
         guest.thirst = GUEST_CONTINUE_MAX_THIRST + 1;
+        // The park could not meet it (#103: an unmet pressing need ends the visit).
+        guest.unmet_need = Some(comfort::Need::Drink);
         guest.viewing_minutes = 1;
         state.advance_viewing();
+        state.advance_groups();
 
         let guest = state.guests.iter().find(|guest| guest.id == 1).unwrap();
         assert_eq!(guest.state, GuestState::WalkingToExit);
@@ -5359,7 +5337,11 @@ mod tests {
 
     #[test]
     fn guests_buy_food_and_drinks_from_pathside_stands() {
-        let mut state = GameState::default();
+        let mut state = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
         staff_habitat(&mut state, habitat_id);
@@ -6649,7 +6631,11 @@ mod tests {
 
     #[test]
     fn finance_ledger_reconciles_current_economy_categories() {
-        let mut state = GameState::default();
+        let mut state = GameState {
+            // One guest at a time (#103).
+            visits: visit::VisitRecord::before(visit::arrival_of_size(1, 1)),
+            ..GameState::default()
+        };
         assert!(state.place_habitat(3, 8, HabitatOrientation::Horizontal).ok);
         let habitat_id = state.habitats[0].id;
 
@@ -6663,7 +6649,7 @@ mod tests {
 
         state.habitats[0].water = 40;
         assert!(state.refill_water(habitat_id).ok);
-        state.try_spawn_guest();
+        state.try_spawn_group();
         assert_eq!(state.guests.len(), 1);
         state.charge_upkeep();
 
@@ -6764,5 +6750,8 @@ mod tests {
     }
     mod circulation {
         include!("circulation_tests.rs");
+    }
+    mod visits {
+        include!("visit_tests.rs");
     }
 }

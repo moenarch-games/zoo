@@ -1364,11 +1364,12 @@ impl GameState {
             .filter(|guest| guest.target_habitat == id)
             .map(|guest| guest.id)
             .collect();
-        for guest_id in departing {
+        for guest_id in &departing {
             // A departing guest gives back any toilet or bench slot it held (#101).
-            self.release_facility_slot(guest_id);
-            self.emit("guest_left", Some(guest_id));
+            self.release_facility_slot(*guest_id);
+            self.emit("guest_left", Some(*guest_id));
         }
+        self.forget_guests(&departing);
         self.guests.retain(|guest| guest.target_habitat != id);
         habitat
     }

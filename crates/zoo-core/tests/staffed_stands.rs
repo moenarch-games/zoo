@@ -43,7 +43,8 @@ fn park() -> ZooGame {
 /// The park after guests have arrived, all hungry enough to make a detour.
 fn hungry_park(arrival_minutes: u32) -> ZooGame {
     let mut game = park();
-    game.tick(arrival_minutes);
+    // The first group (two people, #103) arrives one arrival interval after a lone guest would.
+    game.tick(arrival_minutes + 24);
     set_guests(&mut game, "hunger", 60);
     game
 }
@@ -63,10 +64,13 @@ fn add_guests(game: &mut ZooGame, count: u64) {
             .as_array()
             .unwrap()
             .iter()
-            .find(|guest| guest["visit"].is_null() && guest["state"] != "arriving")
+            // An idle guest past the gate if there is one, else one just arriving.
+            .filter(|guest| guest["visit"].is_null())
+            .min_by_key(|guest| guest["state"] == "arriving")
             .expect("an idle guest")
             .clone();
         let next = park["next_guest_id"].as_u64().unwrap();
+        let next_group = park["next_group_id"].as_u64().unwrap();
         for offset in 0..count {
             let mut guest = template.clone();
             guest["id"] = (next + offset).into();
@@ -74,9 +78,24 @@ fn add_guests(game: &mut ZooGame, count: u64) {
             guest["route"] = serde_json::json!([]);
             guest["route_index"] = 0.into();
             guest["cash_cents"] = 2_000.into();
+            // Each comes alone (#103).
+            guest["group_id"] = (next_group + offset).into();
             park["guests"].as_array_mut().unwrap().push(guest);
+            park["groups"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "id": next_group + offset,
+                    "profile": "stroller",
+                    "favorite_species": null,
+                    "admitted": 1,
+                    "members": [next + offset],
+                    "waiting_minutes": 0,
+                    "plan": "",
+                }));
         }
         park["next_guest_id"] = (next + count).into();
+        park["next_group_id"] = (next_group + count).into();
     });
 }
 
@@ -298,7 +317,15 @@ fn an_unaffordable_purchase_changes_no_money_stock_or_need() {
     set_guests(&mut game, "cash_cents", 100);
     let before = view(&game);
     let cash = number(&before["cash_cents"]);
-    game.tick(60);
+    let mut unmet = false;
+    for _ in 0..60 {
+        game.tick(1);
+        unmet |= view(&game)["guests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|guest| !guest["comfort"]["unmet_need"].is_null());
+    }
     let now = view(&game);
     let stand = food(&now);
     assert_eq!(number(&stand["total_sales"]), 0);
@@ -314,15 +341,12 @@ fn an_unaffordable_purchase_changes_no_money_stock_or_need() {
             assert!(number(&guest["hunger"]) >= 60, "{guest}");
         }
     }
-    assert!(
-        now["guests"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|guest| !guest["comfort"]["unmet_need"].is_null())
-    );
+    // A guest who could not pay went without (#103: groups may have left again since).
+    assert!(unmet);
     // Admission is the only income since; nothing was earned at the stand.
-    assert!(number(&now["cash_cents"]) <= cash + 5 * 1_200);
+    let admitted =
+        number(&now["entrance"]["arrivals_total"]) - number(&before["entrance"]["arrivals_total"]);
+    assert!(number(&now["cash_cents"]) <= cash + admitted * 1_200);
 }
 
 #[test]
