@@ -12,6 +12,7 @@ import {runVisitorItinerariesAcceptance} from "./visitor-itineraries-proof.mjs"
 import {runKeeperCareAcceptance} from "./keeper-care-proof.mjs"
 import {runPricingAcceptance} from "./pricing-proof.mjs"
 import {runMixedSpeciesAcceptance} from "./mixed-species-proof.mjs"
+import {runAnimalHealthAcceptance} from "./animal-health-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -572,6 +573,10 @@ try {
   // #108: giraffes are previewed into a zebra yard, adopted together, the shared shelter is
   // diagnosed short and a large shelter fixes it.
   await runMixedSpeciesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, tile, mouse, key})
+
+  // #109: one capybara is followed from a health warning through illness, quarantine and a
+  // vet's treatment to recovery and its homecoming.
+  await runAnimalHealthAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, mouse})
   }
 } finally {
   cdp?.close()

@@ -10,6 +10,7 @@ import type {
   CarePhase,
   FinanceBreakdown,
   Janitor,
+  Keeper,
   OverlayKind,
   OverlayView,
   Point,
@@ -212,6 +213,9 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["vendor_wages_expense_cents", "Vendor wages"],
   ["stand_stock_expense_cents", "Stand stock"],
   ["marketing_expense_cents", "Marketing"],
+  ["vet_hiring_expense_cents", "Vet hiring"],
+  ["vet_wages_expense_cents", "Vet wages"],
+  ["medicine_expense_cents", "Medicine"],
 ]
 
 export function DailySummaryView({
@@ -512,7 +516,7 @@ export function DataTable<Row>({
 
 type StaffRow = {
   key: string
-  role: "Keeper" | "Janitor" | "Mechanic"
+  role: "Keeper" | "Vet" | "Janitor" | "Mechanic"
   id: number
   status: string
   assignment: string
@@ -564,10 +568,10 @@ export function ManagementWorkspace({
   const staff: StaffRow[] = [
     ...depot.keepers.map((keeper) => ({
       key: `keeper:${keeper.id}`,
-      role: "Keeper" as const,
+      role: keeper.role === "vet" ? ("Vet" as const) : ("Keeper" as const),
       id: keeper.id,
       status: keeper.status,
-      assignment: keeper.zone_id === null ? "Needs a zone" : `Zone #${keeper.zone_id}`,
+      assignment: keeperAssignment(keeper),
       work: keeper.deliveries_completed,
       at: keeper,
       target: { kind: "keeper" as const, id: keeper.id },
@@ -989,6 +993,20 @@ function CareBacklogSummary({
           ? ` · ${backlog.supply_shortages} jobs short of supplies`
           : ""}
       </dd>
+      <dt>Vet care</dt>
+      <dd data-treatments-open={backlog.treatments_open}>
+        {backlog.treatments_open} treatment{backlog.treatments_open === 1 ? "" : "s"} open ·{" "}
+        {backlog.medicine_on_shelf} medicine on shelf · {backlog.medicine_reserved} reserved ·{" "}
+        {backlog.medicine_carried} carried
+      </dd>
     </dl>
   )
+}
+
+/** Where a keeper works: its zone; vets work the whole park (#109). */
+function keeperAssignment(keeper: Keeper): string {
+  if (keeper.role === "vet") {
+    return "Whole park"
+  }
+  return keeper.zone_id === null ? "Needs a zone" : `Zone #${keeper.zone_id}`
 }

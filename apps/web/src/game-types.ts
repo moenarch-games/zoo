@@ -52,6 +52,9 @@ export type ServicePoint = Point & {
 
 export type CareCategory = "feeding" | "cleaning" | "inspection" | "enrichment"
 
+/** A care job's work: routine keeper care, or a vet's treatment of one animal (#109). */
+export type CareJobCategory = CareCategory | "treatment"
+
 export type CareTask = {
   category: CareCategory
   first_minute_of_day: number
@@ -65,7 +68,7 @@ export type CareTask = {
 export type CareJob = {
   id: number
   habitat_id: number
-  category: CareCategory
+  category: CareJobCategory
   due_day: number
   due_minute_of_day: number
   priority: number
@@ -80,13 +83,22 @@ export type CareJob = {
   /** Rust-owned lifecycle stage (#104); `queued` waits for busy keepers, `blocked` for a fix. */
   phase: CarePhase
   /** The job's hold on supplies: reserved at the depot, carried, or bought on completion. */
-  supply: "none" | "feed_reserved" | "feed_carried" | "cleaning" | "cleaning_prepaid"
+  supply:
+    | "none"
+    | "feed_reserved"
+    | "feed_carried"
+    | "cleaning"
+    | "cleaning_prepaid"
+    | "medicine_reserved"
+    | "medicine_carried"
   /** Minutes since the job fell due while it is open. */
   waited_minutes: number
   /** Tiles left on the crew's current walk (or depot to gate while due); null without a route. */
   route_tiles: number | null
   /** Where inside the habitat the care is performed. */
   care_spot: Point | null
+  /** The patient of a treatment (#109). */
+  animal_id: number | null
 }
 
 export type CarePhase =
@@ -112,6 +124,11 @@ export type CareBacklog = {
   feed_reserved: number
   feed_carried: number
   supply_shortages: number
+  /** Medicine kits on the shelf, earmarked and in vets' hands; open treatments (#109). */
+  medicine_on_shelf: number
+  medicine_reserved: number
+  medicine_carried: number
+  treatments_open: number
 }
 
 export type ServiceGate = FenceSegment & {
@@ -192,6 +209,8 @@ export type Habitat = Point & {
   feeding_status: string
   care_status: string
   appeal: number
+  /** Set aside for quarantine: it takes only unwell animals (#109). */
+  quarantine: boolean
 }
 
 /** One resident species of a habitat, summarized by zoo-core from its own animals (#108). */
@@ -282,6 +301,43 @@ export type Animal = Point & {
   /** Presentation-only variation: tile offset and animation phase. */
   cosmetic_seed: number
   animation_phase: number
+  /** Risk, illness, treatment and quarantine (#109). */
+  health: AnimalHealth
+}
+
+export type HealthCondition = "upset_tummy" | "sniffles"
+
+/** zoo-core's view of one animal's health (#109); illness is gentle and always recoverable. */
+export type AnimalHealth = {
+  status: "healthy" | "at_risk" | "unwell" | "recovering"
+  condition: HealthCondition | null
+  /** What is wrong, why, and what happens next. */
+  summary: string
+  /** The highest risk as a share of onset. */
+  risk_percent: number
+  recovery_percent: number | null
+  /** Why recovery is paused, if it is. */
+  recovery_paused: string | null
+  treatment: {
+    job_id: number
+    phase: CarePhase
+    vet_id: number | null
+    waiting_reason: string | null
+    /** The fix for a waiting treatment. */
+    action: AlertAction | null
+  } | null
+  in_quarantine: boolean
+  quarantine_home: number | null
+  /** Why a recovered patient cannot go home yet. */
+  release_blocked: string | null
+}
+
+/** zoo-core's preview of moving an ill animal into quarantine (#109). */
+export type QuarantinePreview = {
+  ok: boolean
+  message: string
+  blockers: string[]
+  habitat_id: number | null
 }
 
 export type Concession = Point & {
@@ -402,6 +458,8 @@ export type FacilityServiceTask = Point & {
 
 export type Keeper = Point & {
   id: number
+  /** Keepers work their zone's routine care; vets treat unwell animals anywhere (#109). */
+  role: "keeper" | "vet"
   zone_id: number | null
   /** Idle until assigned a work zone. */
   needs_zone: boolean
@@ -427,6 +485,8 @@ export type Keeper = Point & {
     | "to_depot"
   /** Whether the keeper carries a feed crate. */
   carrying_feed: boolean
+  /** Whether the vet carries a medicine kit (#109). */
+  carrying_medicine: boolean
   job_id: number | null
   /** The habitat of the current job. */
   habitat_id: number | null
@@ -476,6 +536,12 @@ export type AnimalCareDepot = Point & {
   mechanic_hire_cost_cents: number
   mechanic_hourly_wage_cents: number
   maintenance_repair_cost_cents: number
+  /** Medicine stock and vet costs (#109). */
+  medicine_kits: number
+  medicine_batch_kits: number
+  medicine_batch_cost_cents: number
+  vet_hire_cost_cents: number
+  vet_hourly_wage_cents: number
   care_backlog: CareBacklog
   keepers: Keeper[]
   janitors: Janitor[]
@@ -623,6 +689,10 @@ export type FinanceBreakdown = {
   stand_stock_expense_cents: number
   /** Marketing campaigns (#106). */
   marketing_expense_cents: number
+  /** Veterinary care (#109). */
+  vet_hiring_expense_cents: number
+  vet_wages_expense_cents: number
+  medicine_expense_cents: number
 }
 
 export type FinanceDay = {
@@ -878,6 +948,7 @@ export type AlertSubject =
   | { kind: "habitat"; id: number }
   | { kind: "concession"; id: number }
   | { kind: "keeper"; id: number }
+  | { kind: "animal"; id: number }
 
 export type AlertAction =
   | "buy_feed"
@@ -892,6 +963,9 @@ export type AlertAction =
   | "inspect_facility"
   | "build_toilet"
   | "build_bench"
+  | "hire_vet"
+  | "buy_medicine"
+  | "inspect_animal"
 
 /**
  * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and
