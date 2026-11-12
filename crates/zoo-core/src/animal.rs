@@ -70,6 +70,8 @@ pub(crate) struct Animal {
     pub energy: u32,
     /// How many targets this animal has chosen; with the seed it decides the next one.
     pub decisions: u32,
+    /// Risk, illness, treatment and quarantine (#109).
+    pub health: crate::health::Health,
 }
 
 /// A stateless 32-bit mix (lowbias32): the same inputs always give the same output.
@@ -157,6 +159,13 @@ pub(crate) fn arrival_tile(
 impl Animal {
     /// One movement/activity step at `now` inside the habitat's roam area.
     fn step(&mut self, area: &RoamArea, now: u64) {
+        if self.health.is_unwell() {
+            // An unwell animal rests where it is until a vet has treated it (#109), so the
+            // vet walks to a patient that stays put.
+            self.energy = self.energy.saturating_add(REST_ENERGY_GAIN).min(MAX_ENERGY);
+            self.activity = Activity::Resting { until_minute: now };
+            return;
+        }
         match self.activity {
             Activity::Resting { until_minute } => {
                 self.energy = self.energy.saturating_add(REST_ENERGY_GAIN).min(MAX_ENERGY);
@@ -255,6 +264,7 @@ impl GameState {
             activity: Activity::Resting { until_minute: now },
             energy: MAX_ENERGY,
             decisions: 0,
+            health: crate::health::Health::default(),
         });
         self.emit("animal_arrived", Some(id));
         id

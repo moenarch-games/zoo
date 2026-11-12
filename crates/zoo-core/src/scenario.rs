@@ -818,7 +818,7 @@ impl GameState {
                     .sum();
                 animals >= u64::from(*at_least)
             }
-            Goal::Keepers { at_least } => count(self.keepers.len(), *at_least),
+            Goal::Keepers { at_least } => count(self.keepers.len() - self.vet_count(), *at_least),
             Goal::Concessions { at_least } => count(
                 self.concessions
                     .iter()

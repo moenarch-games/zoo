@@ -52,7 +52,7 @@ impl Habitat {
         u32::try_from(count).unwrap_or(u32::MAX)
     }
 
-    fn resident_index(&self, key: &str) -> Option<usize> {
+    pub(crate) fn resident_index(&self, key: &str) -> Option<usize> {
         self.residents
             .iter()
             .position(|resident| resident.species.key == key)
@@ -280,6 +280,7 @@ fn with_arrivals(habitat: &Habitat, species: &Species, count: u32) -> Habitat {
             activity: animal::Activity::Resting { until_minute: 0 },
             energy: 0,
             decisions: 0,
+            health: crate::health::Health::default(),
         });
     }
     after
@@ -399,14 +400,14 @@ fn departure_warnings(after: &Habitat, species: &Species) -> Vec<String> {
 }
 
 impl GameState {
-    fn find_habitat(&self, habitat_id: u32) -> Option<usize> {
+    pub(crate) fn find_habitat(&self, habitat_id: u32) -> Option<usize> {
         self.habitats
             .iter()
             .position(|habitat| habitat.id == habitat_id)
     }
 
     /// The habitat index and position of animal `animal_id`.
-    fn locate_animal(&self, animal_id: u32) -> Option<(usize, usize)> {
+    pub(crate) fn locate_animal(&self, animal_id: u32) -> Option<(usize, usize)> {
         self.habitats
             .iter()
             .enumerate()
@@ -421,7 +422,7 @@ impl GameState {
 
     /// Why `count` animals of `species` cannot move into habitat `index`, if they cannot:
     /// room, compatibility with every resident species, fence height and staffing.
-    fn arrival_blockers(
+    pub(crate) fn arrival_blockers(
         &self,
         index: usize,
         species: &Species,
@@ -514,6 +515,14 @@ impl GameState {
             );
         }
         let (mut blockers, pairings) = self.arrival_blockers(index, &species, count);
+        if self.habitats[index].quarantine {
+            blockers.insert(
+                0,
+                format!(
+                    "Habitat #{habitat_id} is set aside for quarantine; adopt into another habitat"
+                ),
+            );
+        }
         let cost = species.purchase_cost().saturating_mul(i64::from(count));
         if blockers.is_empty() && cost > self.cash_cents {
             blockers.push("Not enough cash".to_owned());
@@ -562,7 +571,25 @@ impl GameState {
                 1,
             );
         }
-        let (blockers, pairings) = self.arrival_blockers(index, &species, 1);
+        let (mut blockers, pairings) = self.arrival_blockers(index, &species, 1);
+        // Quarantine has its own way in and out (#109).
+        if self.habitats[index].quarantine {
+            blockers.insert(
+                0,
+                format!(
+                    "Habitat #{habitat_id} is set aside for quarantine; use Move to quarantine for an unwell animal"
+                ),
+            );
+        }
+        if source.quarantine && source.animals[at].health.is_ill() {
+            blockers.insert(
+                0,
+                format!(
+                    "{} stays in quarantine until it has recovered",
+                    source.animals[at].name
+                ),
+            );
+        }
         let habitat = &self.habitats[index];
         let after = with_arrivals(habitat, &species, 1);
         let destination = effect(habitat, &after);
@@ -682,21 +709,38 @@ impl GameState {
         if !preview.ok {
             return ActionResult::error(preview.message);
         }
-        let (from, at) = self
+        let (from, _) = self
             .locate_animal(animal_id)
             .expect("the preview found the animal");
+        let source_id = self.habitats[from].id;
+        let name = self.relocate_animal(animal_id, habitat_id);
+        // A recovered patient moved elsewhere has left quarantine for good (#109).
+        if let Some((index, at)) = self.locate_animal(animal_id) {
+            self.habitats[index].animals[at].health.quarantine_home = None;
+        }
+        self.emit("animal_transferred", Some(animal_id));
+        ActionResult::ok(format!(
+            "{name} (#{animal_id}) moved from habitat #{source_id} to habitat #{habitat_id}"
+        ))
+    }
+
+    /// Moves one animal, with its identity, name, needs and health, into habitat
+    /// `habitat_id`; the caller has checked the move. Returns its name.
+    pub(crate) fn relocate_animal(&mut self, animal_id: u32, habitat_id: u32) -> String {
+        let (from, at) = self
+            .locate_animal(animal_id)
+            .expect("the caller found the animal");
         let index = self
             .find_habitat(habitat_id)
-            .expect("the preview found the habitat");
+            .expect("the caller found the habitat");
         let source = &self.habitats[from];
         let resident = source
             .resident_index(&source.animals[at].species)
-            .expect("the preview found the resident species");
+            .expect("the caller found the resident species");
         let (species, welfare) = (
             source.residents[resident].species.clone(),
             source.residents[resident].welfare,
         );
-        let source_id = source.id;
         let mut moving = self.habitats[from].animals.remove(at);
         self.habitats[from].prune_residents();
         self.welcome_species(index, &species, welfare);
@@ -712,10 +756,9 @@ impl GameState {
         moving.activity = animal::Activity::Resting { until_minute: now };
         let name = moving.name.clone();
         habitat.animals.push(moving);
-        self.emit("animal_transferred", Some(animal_id));
-        ActionResult::ok(format!(
-            "{name} (#{animal_id}) moved from habitat #{source_id} to habitat #{habitat_id}"
-        ))
+        // A treatment follows its patient at once (#109).
+        self.reconcile_treatment_jobs(now);
+        name
     }
 
     /// Sends one animal to a partner zoo (#108): it leaves the park for good, with no refund,
@@ -728,6 +771,8 @@ impl GameState {
         let leaving = habitat.animals.remove(at);
         habitat.prune_residents();
         let habitat_id = habitat.id;
+        // Its treatment, if any, is withdrawn at once (#109).
+        self.reconcile_treatment_jobs(self.absolute_minute());
         self.emit("animal_departed", Some(animal_id));
         ActionResult::ok(format!(
             "{} (#{animal_id}) left habitat #{habitat_id} for a partner zoo",

@@ -19,11 +19,13 @@
       "elevation_step_cents": 600
     },
     "feed_batch_cents": 6000,
+    "medicine_batch_cents": 4000,
     "maintenance_repair_cents": 2500,
     "staff": {
       "keeper": { "hire_cents": 25000, "hourly_wage_cents": 1200 },
       "janitor": { "hire_cents": 18000, "hourly_wage_cents": 900 },
       "mechanic": { "hire_cents": 22000, "hourly_wage_cents": 1000 },
+      "vet": { "hire_cents": 30000, "hourly_wage_cents": 1500 },
       "vendor": { "hourly_wage_cents": 600 }
     },
     "upkeep": {

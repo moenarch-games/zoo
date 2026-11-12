@@ -20,6 +20,7 @@
         "shallow_water_tile_cents": 1500
       },
       "maintenance_repair_cents": 2500,
+      "medicine_batch_cents": 4000,
       "staff": {
         "janitor": {
           "hire_cents": 18000,
@@ -35,6 +36,10 @@
         },
         "vendor": {
           "hourly_wage_cents": 600
+        },
+        "vet": {
+          "hire_cents": 30000,
+          "hourly_wage_cents": 1500
         }
       },
       "upkeep": {
@@ -588,6 +593,7 @@
     ],
     "care_jobs": [
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 540,
         "habitat_id": 1,
@@ -603,6 +609,7 @@
         "work_minutes": 15
       },
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 540,
         "habitat_id": 2,
@@ -618,6 +625,7 @@
         "work_minutes": 15
       },
       {
+        "animal_id": null,
         "category": "inspection",
         "due_minute": 600,
         "habitat_id": 1,
@@ -633,6 +641,7 @@
         "work_minutes": 10
       },
       {
+        "animal_id": null,
         "category": "inspection",
         "due_minute": 600,
         "habitat_id": 2,
@@ -648,6 +657,7 @@
         "work_minutes": 10
       },
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 660,
         "habitat_id": 1,
@@ -663,6 +673,7 @@
         "work_minutes": 15
       },
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 660,
         "habitat_id": 2,
@@ -876,9 +887,12 @@
       "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 22000,
       "mechanic_wages_expense_cents": 2000,
+      "medicine_expense_cents": 0,
       "park_upkeep_expense_cents": 2084,
       "stand_stock_expense_cents": 0,
-      "vendor_wages_expense_cents": 2400
+      "vendor_wages_expense_cents": 2400,
+      "vet_hiring_expense_cents": 0,
+      "vet_wages_expense_cents": 0
     },
     "groups": [
       {
@@ -1222,6 +1236,14 @@
             "cosmetic_seed": 3220922670,
             "decisions": 10,
             "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
             "id": 1,
             "life_stage": "adult",
             "name": "Juniper",
@@ -1280,6 +1302,7 @@
         },
         "food": 92,
         "id": 1,
+        "quarantine": false,
         "residents": [
           {
             "species": {
@@ -1387,6 +1410,14 @@
             "cosmetic_seed": 87230898,
             "decisions": 9,
             "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
             "id": 2,
             "life_stage": "adult",
             "name": "Pebble",
@@ -1445,6 +1476,7 @@
         },
         "food": 92,
         "id": 2,
+        "quarantine": false,
         "residents": [
           {
             "species": {
@@ -1560,9 +1592,11 @@
           }
         },
         "carrying_feed": false,
+        "carrying_medicine": false,
         "deliveries_completed": 0,
         "exit": null,
         "id": 1,
+        "role": "keeper",
         "schedule": {
           "categories": [
             "feeding",
@@ -1584,9 +1618,11 @@
           }
         },
         "carrying_feed": false,
+        "carrying_medicine": false,
         "deliveries_completed": 0,
         "exit": null,
         "id": 2,
+        "role": "keeper",
         "schedule": {
           "categories": [
             "feeding",
@@ -1614,6 +1650,7 @@
         "y": 7
       }
     ],
+    "medicine_kits": 0,
     "minute_of_day": 660,
     "movement_accumulator": 0,
     "next_animal_id": 3,
@@ -2272,5 +2309,5 @@
       }
     ]
   },
-  "schema_version": 17
+  "schema_version": 18
 }

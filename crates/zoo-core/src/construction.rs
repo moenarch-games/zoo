@@ -928,6 +928,7 @@ impl GameState {
             environment: super::environment::Environment::default(),
             care_schedule: None,
             service_gate,
+            quarantine: false,
         });
     }
 

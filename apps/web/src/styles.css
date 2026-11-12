@@ -730,6 +730,47 @@ dd {
   color: #8e3528;
 }
 
+/* Animal health (#109): a gentle status badge, the explanation and its fixes. */
+.animal-health h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.health-badge {
+  padding: 1px 6px;
+  border: 1px solid #979175;
+  background: #eee8c7;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.health-at_risk .health-badge {
+  border-color: #b58a35;
+  background: #f4e2b5;
+  color: #8a5a17;
+}
+
+.health-unwell .health-badge {
+  border-color: #ad493a;
+  background: #f1d4c9;
+  color: #8e3528;
+}
+
+.health-recovering .health-badge {
+  border-color: #6d9a5b;
+  background: #dcebcd;
+  color: #3f6b3a;
+}
+
+.animal-health .health-quarantine,
+.animal-health .arrival-blocked {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
 .message-stack {
   min-width: 0;
   align-self: center;

@@ -64,6 +64,25 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
             .and_then(Value::as_object_mut)
         {
             assert_eq!(breakdown.remove("land_expense_cents"), Some(json!(0)));
+            // #109 adds veterinary ledger lines, always zero here.
+            for key in [
+                "vet_hiring_expense_cents",
+                "vet_wages_expense_cents",
+                "medicine_expense_cents",
+            ] {
+                assert_eq!(breakdown.remove(key), Some(json!(0)));
+            }
+        }
+    }
+    // #109 marks quarantine habitats and treatment patients; there are none here.
+    for habitat in snapshot["habitats"].as_array_mut().unwrap() {
+        let habitat = habitat.as_object_mut().unwrap();
+        assert_eq!(habitat.remove("quarantine"), Some(json!(false)));
+        for job in habitat["care_jobs"].as_array_mut().unwrap() {
+            assert_eq!(
+                job.as_object_mut().unwrap().remove("animal_id"),
+                Some(Value::Null)
+            );
         }
     }
     json!({

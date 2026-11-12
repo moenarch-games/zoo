@@ -20,6 +20,7 @@ const FIXTURE_V14: &str = "tests/fixtures/save-v14.json";
 const FIXTURE_V15: &str = "tests/fixtures/save-v15.json";
 const FIXTURE_V16: &str = "tests/fixtures/save-v16.json";
 const FIXTURE_V17: &str = "tests/fixtures/save-v17.json";
+const FIXTURE_V18: &str = "tests/fixtures/save-v18.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -59,11 +60,70 @@ fn content_without_compatibility(content: &mut Value) {
         .unwrap();
 }
 
+/// The catalog without the vet and medicine prices (#109).
+fn content_without_health(content: &mut Value) {
+    let balance = content["balance"].as_object_mut().unwrap();
+    balance.remove("medicine_batch_cents").unwrap();
+    balance["staff"]
+        .as_object_mut()
+        .unwrap()
+        .remove("vet")
+        .unwrap();
+}
+
+/// Undoes the schema 17 → 18 migration (#109) on a document saved straight after loading:
+/// every animal was healthy with no risk, no habitat was a quarantine, every worker a keeper
+/// with no kit in hand, the depot held no medicine, no job had a patient, no ledger had
+/// veterinary costs, and the catalog no vet or medicine prices.
+fn health_removed(value: &mut Value) {
+    content_without_health(&mut value["content"]);
+    let park = value["park"].as_object_mut().unwrap();
+    assert_eq!(park.remove("medicine_kits").unwrap(), 0);
+    for habitat in park["habitats"].as_array_mut().unwrap() {
+        let habitat = habitat.as_object_mut().unwrap();
+        assert_eq!(habitat.remove("quarantine").unwrap(), false);
+        for animal in habitat["animals"].as_array_mut().unwrap() {
+            assert_eq!(
+                animal.as_object_mut().unwrap().remove("health").unwrap(),
+                serde_json::json!({
+                    "risk": { "upset_tummy": 0, "sniffles": 0 },
+                    "illness": null,
+                    "quarantine_home": null
+                })
+            );
+        }
+    }
+    for keeper in park["keepers"].as_array_mut().unwrap() {
+        let keeper = keeper.as_object_mut().unwrap();
+        assert_eq!(keeper.remove("role").unwrap(), "keeper");
+        assert_eq!(keeper.remove("carrying_medicine").unwrap(), false);
+    }
+    for job in park["care_jobs"].as_array_mut().unwrap() {
+        assert_eq!(
+            job.as_object_mut().unwrap().remove("animal_id").unwrap(),
+            Value::Null
+        );
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park[key].as_object_mut() {
+            for field in [
+                "vet_hiring_expense_cents",
+                "vet_wages_expense_cents",
+                "medicine_expense_cents",
+            ] {
+                assert_eq!(ledger.remove(field).unwrap(), 0);
+            }
+        }
+    }
+    value["schema_version"] = 17.into();
+}
+
 /// Undoes the schema 16 → 17 migration (#108) on a document saved straight after loading:
 /// every habitat had at most one species with its welfare (a habitat without animals kept no
 /// species and the welfare a new habitat starts at), and the catalog no mixed-exhibit
 /// profiles.
 fn residents_removed(value: &mut Value) {
+    health_removed(value);
     content_without_compatibility(&mut value["content"]);
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
         let habitat = habitat.as_object_mut().unwrap();
@@ -414,6 +474,7 @@ fn fences_from_content(value: &mut Value) {
     content_without_environment(&mut built_in);
     content_without_comfort(&mut built_in);
     content_without_compatibility(&mut built_in);
+    content_without_health(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -1155,18 +1216,65 @@ fn mixed() -> ZooGame {
     game
 }
 
+/// Schema 17 parks knew nothing of health (#109): every animal becomes healthy with no risk,
+/// every worker a keeper, the catalog gains the vet and medicine prices, and the park runs on.
+#[test]
+fn the_schema_v17_fixture_migrates_to_healthy_animals_and_keepers() {
+    let fixture = std::fs::read_to_string(FIXTURE_V17).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    assert_eq!(
+        saved["content"]["balance"]["staff"]["vet"]["hire_cents"],
+        30_000
+    );
+    health_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    assert!(
+        view["animals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|animal| animal["health"]["status"] == "healthy")
+    );
+    game.tick(120);
+    assert_eq!(game.session_status(), "running");
+}
+
+/// The mixed park with veterinary cover (#109): a vet hired and medicine on the shelf.
+fn vetted() -> ZooGame {
+    let mut game = mixed();
+    ok(game.hire_vet());
+    ok(game.buy_medicine());
+    game
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&mixed().save_json());
+        let value = json(&vetted().save_json());
         std::fs::write(
-            FIXTURE_V17,
+            FIXTURE_V18,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V17).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V18).unwrap();
     let saved = json(&fixture);
+    assert!(
+        saved["park"]["keepers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|worker| worker["role"] == "vet"),
+        "the fixture holds a vet"
+    );
+    assert_eq!(
+        saved["park"]["medicine_kits"], 5,
+        "the fixture holds medicine"
+    );
     let residents = saved["park"]["habitats"][0]["residents"]
         .as_array()
         .unwrap();

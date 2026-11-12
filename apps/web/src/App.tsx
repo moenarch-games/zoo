@@ -10,6 +10,7 @@ import {
   useState,
 } from "react"
 
+import { AnimalHealthPanel } from "./AnimalHealth"
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import {
   EFFECT_PIECES,
@@ -24,6 +25,7 @@ import type {
   AdmissionEvaluation,
   Alert,
   Animal,
+  AlertAction,
   ArrivalPreview,
   CareCategory,
   CareTask,
@@ -42,6 +44,7 @@ import type {
   PathAccess,
   PlacementEvaluation,
   Point,
+  QuarantinePreview,
   ScenarioState,
   ScenarioSummary,
   Snapshot,
@@ -682,6 +685,19 @@ export default function App() {
     const text = callGame((game) => game.evaluate_transfer(selectedAnimal.id, transferTarget))
     return text === undefined ? null : (JSON.parse(text) as ArrivalPreview)
   }, [callGame, selectedAnimal, snapshot, transferTarget])
+
+  // Rust's preview of moving the selected ill animal into quarantine (#109).
+  const quarantinePreview = useMemo(() => {
+    if (!snapshot || !selectedAnimal) {
+      return null
+    }
+    const { health } = selectedAnimal
+    if (health.in_quarantine || (health.status !== "unwell" && health.status !== "recovering")) {
+      return null
+    }
+    const text = callGame((game) => game.evaluate_quarantine(selectedAnimal.id))
+    return text === undefined ? null : (JSON.parse(text) as QuarantinePreview)
+  }, [callGame, selectedAnimal, snapshot])
 
   const selectedZone = useMemo(
     () => snapshot?.work_zones.find((zone) => zone.id === selectedZoneId) ?? null,
@@ -1479,6 +1495,9 @@ export default function App() {
         }
         break
       }
+      case "animal":
+        selectAnimal(target.id)
+        break
       case "paths":
         selectHabitat(null)
         inform(`Showing path tile ${focus.x},${focus.y}`)
@@ -1523,6 +1542,12 @@ export default function App() {
         const offer = snapshot.facility_catalog.find((entry) => entry.service === service)
         return offer ? `Build ${offer.label} · ${money(offer.build_cost_cents)}` : null
       }
+      case "hire_vet":
+        return `Hire vet · ${money(depot.vet_hire_cost_cents)}`
+      case "buy_medicine":
+        return `Buy ${depot.medicine_batch_kits} medicine · ${money(depot.medicine_batch_cost_cents)}`
+      case "inspect_animal":
+        return "Open animal"
     }
   }
 
@@ -1544,6 +1569,15 @@ export default function App() {
         return
       case "hire_mechanic":
         perform(() => game.hire_mechanic())
+        return
+      case "hire_vet":
+        perform(() => game.hire_vet())
+        return
+      case "buy_medicine":
+        perform(() => game.buy_medicine())
+        return
+      case "inspect_animal":
+        jumpTo(alert.subject, alert.focus)
         return
       case "build_path":
         jumpTo(alert.subject, alert.focus)
@@ -1651,7 +1685,7 @@ export default function App() {
         if (
           tutorial.next === "staff-zone" &&
           zoneId !== null &&
-          snapshot.animal_care_depot.keepers.length > 0
+          snapshot.animal_care_depot.keepers.some((worker) => worker.role === "keeper")
         ) {
           return {
             label: `Open zone #${zoneId}`,
@@ -1826,6 +1860,29 @@ export default function App() {
     }
   }
 
+  const quarantineAnimal = () => {
+    const game = gameRef.current
+    if (!game || selectedAnimalId === null) {
+      return
+    }
+    perform(() => game.quarantine_animal(selectedAnimalId))
+  }
+
+  /** A treatment's suggested fix, run like the matching alert action (#109). */
+  const healthFix = (action: AlertAction): Alert | null =>
+    selectedAnimal
+      ? {
+          code: "animal_unwell",
+          severity: "warning",
+          subject: { kind: "animal", id: selectedAnimal.id },
+          focus: { x: selectedAnimal.x, y: selectedAnimal.y },
+          message: "",
+          action,
+          first_minute: 0,
+          last_minute: 0,
+        }
+      : null
+
   const rehomeAnimal = () => {
     const game = gameRef.current
     if (!game || selectedAnimalId === null) {
@@ -1959,6 +2016,22 @@ export default function App() {
       return
     }
     perform(() => game.hire_keeper())
+  }
+
+  const hireVet = () => {
+    const game = gameRef.current
+    if (!game) {
+      return
+    }
+    perform(() => game.hire_vet())
+  }
+
+  const buyMedicine = () => {
+    const game = gameRef.current
+    if (!game) {
+      return
+    }
+    perform(() => game.buy_medicine())
   }
 
   const hireJanitor = () => {
@@ -2321,12 +2394,15 @@ export default function App() {
 
   const focus = tutorialFocus()
   const uncoveredHabitats = snapshot.habitats.filter((habitat) => habitat.work_zone_id === null)
+  // Keepers take zones and routine care; vets work the whole park (#109).
+  const keepers = snapshot.animal_care_depot.keepers.filter((worker) => worker.role === "keeper")
+  const vets = snapshot.animal_care_depot.keepers.filter((worker) => worker.role === "vet")
   const keeperChoice =
     selectedZone === null
       ? null
-      : (snapshot.animal_care_depot.keepers.find((keeper) => keeper.id === assignKeeperId) ??
-        snapshot.animal_care_depot.keepers.find((keeper) => keeper.needs_zone) ??
-        snapshot.animal_care_depot.keepers.find((keeper) => keeper.zone_id !== selectedZone.id) ??
+      : (keepers.find((keeper) => keeper.id === assignKeeperId) ??
+        keepers.find((keeper) => keeper.needs_zone) ??
+        keepers.find((keeper) => keeper.zone_id !== selectedZone.id) ??
         null)
 
   return (
@@ -2587,8 +2663,16 @@ export default function App() {
                     <dd>{snapshot.animal_care_depot.feed_crates} crates</dd>
                   </div>
                   <div>
+                    <dt>Medicine</dt>
+                    <dd>{snapshot.animal_care_depot.medicine_kits} kits</dd>
+                  </div>
+                  <div>
+                    <dt>Vets</dt>
+                    <dd>{vets.length}</dd>
+                  </div>
+                  <div>
                     <dt>Keepers</dt>
-                    <dd>{snapshot.animal_care_depot.keepers.length}</dd>
+                    <dd>{keepers.length}</dd>
                   </div>
                   <div>
                     <dt>Wage / keeper</dt>
@@ -2659,11 +2743,46 @@ export default function App() {
                   </span>
                   <strong>{money(snapshot.animal_care_depot.mechanic_hire_cost_cents)}</strong>
                 </button>
+                <button className="shop-row" onClick={buyMedicine}>
+                  <span>
+                    <b>Buy {snapshot.animal_care_depot.medicine_batch_kits} medicine kits</b>
+                    <small>
+                      Vets carry one kit to each unwell animal ·{" "}
+                      {snapshot.animal_care_depot.medicine_kits} on the shelf
+                    </small>
+                  </span>
+                  <strong>{money(snapshot.animal_care_depot.medicine_batch_cost_cents)}</strong>
+                </button>
+                <button className="shop-row" onClick={hireVet}>
+                  <span>
+                    <b>Hire vet</b>
+                    <small>
+                      Vets treat unwell animals anywhere in the park ·{" "}
+                      {money(snapshot.animal_care_depot.vet_hourly_wage_cents)}/hr
+                    </small>
+                  </span>
+                  <strong>{money(snapshot.animal_care_depot.vet_hire_cost_cents)}</strong>
+                </button>
+                <h3>Veterinary care</h3>
+                {vets.length === 0 ? (
+                  <div className="guest-thought">
+                    No vets hired. Unwell animals wait until a vet can treat them.
+                  </div>
+                ) : (
+                  vets.map((vet) => (
+                    <dl key={vet.id} data-vet-id={vet.id}>
+                      <div>
+                        <dt>Vet #{vet.id}</dt>
+                        <dd>{vet.status}</dd>
+                      </div>
+                    </dl>
+                  ))
+                )}
                 <h3>Keeper schedule</h3>
-                {snapshot.animal_care_depot.keepers.length === 0 ? (
+                {keepers.length === 0 ? (
                   <div className="guest-thought">No keepers hired yet.</div>
                 ) : (
-                  snapshot.animal_care_depot.keepers.map((keeper) => (
+                  keepers.map((keeper) => (
                     <dl key={keeper.id}>
                       <div>
                         <dt>Keeper #{keeper.id}</dt>
@@ -2855,7 +2974,7 @@ export default function App() {
                   </>
                 )}
                 <h3>Assign keeper</h3>
-                {snapshot.animal_care_depot.keepers.length === 0 ? (
+                {keepers.length === 0 ? (
                   <div className="guest-thought">Hire keepers at the central operations depot.</div>
                 ) : (
                   <>
@@ -2865,7 +2984,7 @@ export default function App() {
                         value={keeperChoice?.id ?? ""}
                         onChange={(event) => setAssignKeeperId(Number(event.target.value))}
                       >
-                        {snapshot.animal_care_depot.keepers.map((keeper) => (
+                        {keepers.map((keeper) => (
                           <option key={keeper.id} value={keeper.id}>
                             Keeper #{keeper.id} ·{" "}
                             {keeper.zone_id === null ? "needs a zone" : `zone #${keeper.zone_id}`}
@@ -2902,6 +3021,23 @@ export default function App() {
               }}
               onShowHabitat={() => selectHabitat(selectedAnimal.habitat_id)}
               onClose={() => setSelectedAnimalId(null)}
+              health={
+                <AnimalHealthPanel
+                  animal={selectedAnimal}
+                  quarantine={quarantinePreview}
+                  fixLabel={(action) => {
+                    const alert = healthFix(action)
+                    return alert ? alertActionLabel(alert) : null
+                  }}
+                  onFix={(action) => {
+                    const alert = healthFix(action)
+                    if (alert) {
+                      runAlertAction(alert)
+                    }
+                  }}
+                  onQuarantine={quarantineAnimal}
+                />
+              }
             >
               <AnimalMoves
                 animal={selectedAnimal}
@@ -3294,6 +3430,34 @@ export default function App() {
                     }
                   }}
                 />
+                <button
+                  className="shop-row"
+                  data-testid="quarantine-toggle"
+                  onClick={() => {
+                    const game = gameRef.current
+                    if (game) {
+                      perform(() =>
+                        game.set_habitat_quarantine(
+                          selectedHabitat.id,
+                          !selectedHabitat.quarantine,
+                        ),
+                      )
+                    }
+                  }}
+                >
+                  <span>
+                    <b>
+                      {selectedHabitat.quarantine
+                        ? "Return to ordinary use"
+                        : "Set aside for quarantine"}
+                    </b>
+                    <small>
+                      {selectedHabitat.quarantine
+                        ? "Quarantine: unwell animals rest apart here and go home once recovered"
+                        : "An empty habitat can hold unwell animals apart from their group"}
+                    </small>
+                  </span>
+                </button>
                 <button className="shop-row" onClick={() => careForHabitat("water")}>
                   <span>
                     <b>Refill water</b>
@@ -4037,6 +4201,7 @@ function AnimalInspector({
   onLocate,
   onShowHabitat,
   onClose,
+  health,
   children,
 }: {
   animal: Animal
@@ -4048,6 +4213,8 @@ function AnimalInspector({
   onLocate: () => void
   onShowHabitat: () => void
   onClose: () => void
+  /** Its health, treatment and quarantine (#109), shown first. */
+  health: ReactNode
   /** Moving or rehoming the animal (#108). */
   children: ReactNode
 }) {
@@ -4072,6 +4239,7 @@ function AnimalInspector({
         <div className="guest-thought" data-testid="animal-activity">
           {activity}
         </div>
+        {health}
         <form
           className="animal-rename"
           onSubmit={(event) => {

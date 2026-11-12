@@ -7,7 +7,8 @@
 //! condition holds, and it disappears as soon as the condition is resolved or its object is
 //! gone. Alerts are saved with the park so their first occurrence survives a reload.
 use super::{
-    FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, comfort::Need, shape,
+    FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, comfort::Need,
+    content::CareCategory, shape,
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,12 @@ pub(crate) enum AlertCode {
     CareLate,
     /// Scheduled care that expired unserved within the last day (#104).
     CareMissed,
+    /// Animals building risk of an illness from a care failure or a sick mate (#109).
+    AnimalAtRisk,
+    /// An unwell animal whose treatment waits for a vet, medicine or a route (#109).
+    AnimalUnwell,
+    /// A recovered quarantine patient that cannot return home (#109).
+    QuarantineReleaseBlocked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -71,6 +78,8 @@ pub(crate) enum Subject {
     Habitat(u32),
     Concession(u32),
     Keeper(u32),
+    /// One animal (#109).
+    Animal(u32),
 }
 
 /// The suggested fix; the browser maps it to a command, tool or inspector.
@@ -89,6 +98,10 @@ pub(crate) enum AlertAction {
     InspectFacility,
     BuildToilet,
     BuildBench,
+    /// Veterinary fixes (#109).
+    HireVet,
+    BuyMedicine,
+    InspectAnimal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,7 +423,7 @@ impl GameState {
             if let Some(problem) = self.staffing_problem(habitat) {
                 let action = if self.habitat_zone(habitat).is_none() {
                     AlertAction::DrawZone
-                } else if self.keepers.is_empty() {
+                } else if !self.has_keepers() {
                     AlertAction::HireKeeper
                 } else {
                     AlertAction::AssignKeeper
@@ -701,11 +714,11 @@ impl GameState {
             }
         }
 
-        for keeper in self
-            .keepers
-            .iter()
-            .filter(|keeper| keeper.zone_id.is_none())
-        {
+        self.detect_health_alerts(&mut raise);
+
+        for keeper in self.keepers.iter().filter(|keeper| {
+            keeper.zone_id.is_none() && keeper.role == super::care::CareRole::Keeper
+        }) {
             raise(
                 AlertCode::KeeperNeedsZone,
                 Severity::Notice,
@@ -726,6 +739,95 @@ impl GameState {
             );
         }
         alerts
+    }
+
+    /// Health warnings before illness, unwell animals whose treatment waits, and recovered
+    /// patients who cannot go home (#109). Each says why and what fixes it.
+    fn detect_health_alerts(
+        &self,
+        raise: &mut impl FnMut(AlertCode, Severity, Subject, Position, String, AlertAction),
+    ) {
+        for habitat in &self.habitats {
+            let at_risk: Vec<_> = habitat
+                .animals
+                .iter()
+                .filter_map(|animal| Some((animal, animal.health.warning()?)))
+                .collect();
+            let Some(&(first, condition)) = at_risk.first() else {
+                continue;
+            };
+            let why = condition.cause(habitat).unwrap_or_else(|| {
+                self.contagion_source(habitat, first.id).map_or_else(
+                    || "its risk is easing".to_owned(),
+                    |(name, id)| format!("{name} (#{id}) has the sniffles nearby"),
+                )
+            });
+            let who = if at_risk.len() == 1 {
+                format!("{} (#{})", first.name, first.id)
+            } else {
+                format!(
+                    "{} (#{}) and {} other animal{}",
+                    first.name,
+                    first.id,
+                    at_risk.len() - 1,
+                    if at_risk.len() == 2 { "" } else { "s" }
+                )
+            };
+            let fix = if condition.cause(habitat).is_some() {
+                condition.fix()
+            } else {
+                "Have a vet treat the patient or move it into quarantine"
+            };
+            raise(
+                AlertCode::AnimalAtRisk,
+                Severity::Notice,
+                Subject::Habitat(habitat.id),
+                first.position,
+                format!(
+                    "{who} in habitat #{} may come down with {}: {why}. {fix}.",
+                    habitat.id,
+                    condition.label()
+                ),
+                AlertAction::InspectHabitat,
+            );
+        }
+        for (animal_id, habitat, reason, action) in self.waiting_patients() {
+            let Some(animal) = habitat.animals.iter().find(|animal| animal.id == animal_id) else {
+                continue;
+            };
+            let label = animal
+                .health
+                .illness
+                .map_or("an illness", |illness| illness.condition.label());
+            raise(
+                AlertCode::AnimalUnwell,
+                Severity::Warning,
+                Subject::Animal(animal_id),
+                animal.position,
+                format!(
+                    "{} (#{animal_id}) in habitat #{} is unwell with {label} and waits for a vet: {reason}.",
+                    animal.name, habitat.id
+                ),
+                action,
+            );
+        }
+        for habitat in self.habitats.iter().filter(|habitat| habitat.quarantine) {
+            for animal in habitat.animals.iter().filter(|a| !a.health.is_ill()) {
+                if let Some(reason) = self.release_blocker(animal.id) {
+                    raise(
+                        AlertCode::QuarantineReleaseBlocked,
+                        Severity::Notice,
+                        Subject::Animal(animal.id),
+                        animal.position,
+                        format!(
+                            "{} (#{}) has recovered in quarantine but cannot go home: {reason}.",
+                            animal.name, animal.id
+                        ),
+                        AlertAction::InspectAnimal,
+                    );
+                }
+            }
+        }
     }
 
     /// Re-reads every alert condition, keeping each still-present alert's first occurrence.
@@ -760,6 +862,7 @@ impl GameState {
             .iter()
             .filter(|job| {
                 job.habitat_id == habitat.id
+                    && job.category != CareCategory::Treatment
                     && job.state == CareJobState::Due
                     && now >= job.due_minute + CARE_LATE_MINUTES
             })
@@ -783,6 +886,7 @@ impl GameState {
             .iter()
             .filter(|job| {
                 job.habitat_id == habitat_id
+                    && job.category != CareCategory::Treatment
                     && matches!(job.state, CareJobState::Due | CareJobState::InProgress)
             })
             .count()

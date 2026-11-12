@@ -194,11 +194,9 @@ impl GameState {
                         format!("Habitat #{}: {label}", habitat.id),
                     );
                 }
-                for keeper in self
-                    .keepers
-                    .iter()
-                    .filter(|keeper| keeper.zone_id.is_none())
-                {
+                for keeper in self.keepers.iter().filter(|keeper| {
+                    keeper.zone_id.is_none() && keeper.role == crate::care::CareRole::Keeper
+                }) {
                     let position = Position {
                         x: keeper.x,
                         y: keeper.y,

@@ -61,6 +61,7 @@ const MIGRATIONS: &[Migration] = &[
     v14_physical_keeper_care,
     v15_add_pricing,
     v16_add_residents,
+    v17_add_animal_health,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -171,6 +172,100 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 18 (#109) adds animal health, vets and quarantine. Every animal is healthy with no
+/// risk built up, every habitat is an ordinary one, every animal-care worker is a keeper with
+/// nothing extra in hand, the depot has no medicine, routine jobs have no patient, and the
+/// ledgers have spent nothing on veterinary care. The embedded catalog gains the built-in vet
+/// wages and medicine price.
+fn v17_add_animal_health(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let balance = value
+        .pointer_mut("/content/balance")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content/balance: missing or not an object"))?;
+    balance.insert(
+        "medicine_batch_cents".to_owned(),
+        json!(built_in.balance.medicine_batch_cents),
+    );
+    balance
+        .get_mut("staff")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content/balance/staff: missing or not an object"))?
+        .insert(
+            "vet".to_owned(),
+            serde_json::to_value(built_in.balance.staff.vet).expect("staff serialization"),
+        );
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    park.insert("medicine_kits".to_owned(), json!(0));
+    for habitat in park
+        .get_mut("habitats")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?
+    {
+        let habitat = habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?;
+        habitat.insert("quarantine".to_owned(), json!(false));
+        for animal in habitat
+            .get_mut("animals")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| invalid("park/habitats/animals: missing or not an array"))?
+        {
+            animal
+                .as_object_mut()
+                .ok_or_else(|| invalid("park/habitats/animals: entry is not an object"))?
+                .insert(
+                    "health".to_owned(),
+                    serde_json::to_value(crate::health::Health::default())
+                        .expect("health serialization"),
+                );
+        }
+    }
+    for keeper in park
+        .get_mut("keepers")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/keepers: missing or not an array"))?
+    {
+        let keeper = keeper
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/keepers: entry is not an object"))?;
+        keeper.insert("role".to_owned(), json!("keeper"));
+        keeper.insert("carrying_medicine".to_owned(), json!(false));
+    }
+    for job in park
+        .get_mut("care_jobs")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/care_jobs: missing or not an array"))?
+    {
+        job.as_object_mut()
+            .ok_or_else(|| invalid("park/care_jobs: entry is not an object"))?
+            .insert("animal_id".to_owned(), Value::Null);
+    }
+    for key in ["finance_today", "finance_previous"] {
+        let Some(ledger) = park.get_mut(key) else {
+            return Err(invalid(&format!("park/{key}: missing")));
+        };
+        if ledger.is_null() && key == "finance_previous" {
+            continue;
+        }
+        let ledger = ledger
+            .as_object_mut()
+            .ok_or_else(|| invalid(&format!("park/{key}: not an object")))?;
+        for field in [
+            "vet_hiring_expense_cents",
+            "vet_wages_expense_cents",
+            "medicine_expense_cents",
+        ] {
+            ledger.insert(field.to_owned(), json!(0));
+        }
+    }
     Ok(value)
 }
 
@@ -950,14 +1045,20 @@ fn v6_to_v7(mut value: Value) -> Result<Value, SaveError> {
                     activity: animal::Activity::Resting { until_minute: now },
                     energy: 100,
                     decisions: 0,
+                    health: crate::health::Health::default(),
                 });
                 next_id = next_id.saturating_add(1);
             }
         }
-        habitat.insert(
-            "animals".to_owned(),
-            serde_json::to_value(animals).expect("animal serialization is infallible"),
-        );
+        let mut animals =
+            serde_json::to_value(animals).expect("animal serialization is infallible");
+        // Schema 7 animals had no health record; schema 18 adds it (#109).
+        for animal in animals.as_array_mut().into_iter().flatten() {
+            if let Some(animal) = animal.as_object_mut() {
+                animal.remove("health");
+            }
+        }
+        habitat.insert("animals".to_owned(), animals);
     }
     park.insert("next_animal_id".to_owned(), json!(next_id));
     Ok(value)
@@ -1279,7 +1380,7 @@ impl GameState {
                 .and_then(|id| self.keepers.iter().find(|k| k.id == *id));
             let in_progress = job.state == CareJobState::InProgress;
             match job.supply {
-                JobSupply::FeedReserved if !in_progress => {
+                JobSupply::FeedReserved | JobSupply::MedicineReserved if !in_progress => {
                     return Err(format!(
                         "care job {} holds supplies while not dispatched",
                         job.id
@@ -1298,11 +1399,19 @@ impl GameState {
                 {
                     return Err(format!("care job {} lost its carried feed crate", job.id));
                 }
+                JobSupply::MedicineCarried
+                    if in_progress && !worker.is_some_and(|keeper| keeper.carrying_medicine) =>
+                {
+                    return Err(format!("care job {} lost its carried medicine kit", job.id));
+                }
                 _ => {}
             }
         }
         if self.reserved_feed_crates() > self.feed_crates {
             return Err("more feed crates are reserved than the depot holds".to_owned());
+        }
+        if self.reserved_medicine_kits() > self.medicine_kits {
+            return Err("more medicine kits are reserved than the depot holds".to_owned());
         }
         for keeper in &self.keepers {
             let job = keeper
@@ -1318,6 +1427,7 @@ impl GameState {
                 keeper.activity,
                 care::KeeperActivity::CollectingStock { .. }
             ) && !works(JobSupply::FeedReserved)
+                && !works(JobSupply::MedicineReserved)
             {
                 return Err(format!(
                     "keeper {} collects stock for no reservation",
@@ -1330,6 +1440,15 @@ impl GameState {
             {
                 return Err(format!(
                     "keeper {} carries a feed crate for no job",
+                    keeper.id
+                ));
+            }
+            if keeper.carrying_medicine
+                && keeper.activity != care::KeeperActivity::ToDepot
+                && !works(JobSupply::MedicineCarried)
+            {
+                return Err(format!(
+                    "vet {} carries a medicine kit for no treatment",
                     keeper.id
                 ));
             }
