@@ -6,7 +6,9 @@
 //! lasts: it keeps its first occurrence and refreshes its last occurrence and message while the
 //! condition holds, and it disappears as soon as the condition is resolved or its object is
 //! gone. Alerts are saved with the park so their first occurrence survives a reload.
-use super::{FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, shape};
+use super::{
+    FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, comfort::Need, shape,
+};
 use serde::{Deserialize, Serialize};
 
 /// Welfare below this raises an alert; below the critical line it is critical.
@@ -29,6 +31,11 @@ pub(crate) enum AlertCode {
     DestinationIsolated,
     FacilityFailed,
     FacilityUnserviced,
+    /// A dirty toilet or full bin no janitor is answering (#101).
+    FacilityNeedsService,
+    /// Guests who need a toilet or a seat and found none they could use (#101).
+    ToiletDemandUnmet,
+    RestDemandUnmet,
     ViewpointCrowded,
     LitterBacklog,
     KeeperNeedsZone,
@@ -68,6 +75,8 @@ pub(crate) enum AlertAction {
     AdoptAnimals,
     InspectHabitat,
     InspectFacility,
+    BuildToilet,
+    BuildBench,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +223,106 @@ impl GameState {
             .into_iter()
             .any(|tile| staff.contains(self, tile));
         (!reachable).then_some(AlertAction::BuildPath)
+    }
+
+    /// Toilet and bench demand nobody meets, and dirty toilets or full bins no janitor answers
+    /// (#101).
+    fn detect_comfort_alerts(
+        &self,
+        staff: &Reach,
+        raise: &mut impl FnMut(AlertCode, Severity, Subject, Position, String, AlertAction),
+    ) {
+        for (need, code, action, wanted, fix) in [
+            (
+                Need::Toilet,
+                AlertCode::ToiletDemandUnmet,
+                AlertAction::BuildToilet,
+                "a toilet",
+                "Build toilets beside a public path they can reach",
+            ),
+            (
+                Need::Rest,
+                AlertCode::RestDemandUnmet,
+                AlertAction::BuildBench,
+                "a seat",
+                "Place benches beside the paths they walk",
+            ),
+        ] {
+            let waiting: Vec<_> = self.unmet_guests(need).collect();
+            let Some(first) = waiting.first() else {
+                continue;
+            };
+            let count = waiting.len();
+            raise(
+                code,
+                Severity::Warning,
+                Subject::Paths,
+                Position {
+                    x: first.x,
+                    y: first.y,
+                },
+                format!(
+                    "{count} guest{} need{} {wanted} and found none open with room. {fix}.",
+                    if count == 1 { "" } else { "s" },
+                    if count == 1 { "s" } else { "" },
+                ),
+                action,
+            );
+        }
+        for (index, stand) in self.concessions.iter().enumerate() {
+            let Some(task) = self
+                .facility_service
+                .iter()
+                .find(|task| task.concession_id == stand.id)
+            else {
+                continue;
+            };
+            if task.assigned_janitor_id.is_some() {
+                continue;
+            }
+            let action = if self.janitors.is_empty() {
+                AlertAction::HireJanitor
+            } else if !self
+                .concession_service_tiles(stand.id)
+                .into_iter()
+                .any(|tile| staff.contains(self, tile))
+            {
+                AlertAction::BuildPath
+            } else {
+                continue;
+            };
+            let closed =
+                stand.kind == super::ConcessionKind::Toilet && !self.facility_accepting(index);
+            let problem = match stand.kind {
+                super::ConcessionKind::Bin => "is full, so new litter lands on the path",
+                _ if closed => "is too dirty to use and closed",
+                _ => "is getting dirty",
+            };
+            raise(
+                AlertCode::FacilityNeedsService,
+                if closed {
+                    Severity::Critical
+                } else {
+                    Severity::Warning
+                },
+                Subject::Concession(stand.id),
+                Position {
+                    x: stand.x,
+                    y: stand.y,
+                },
+                format!(
+                    "{} #{} {problem}, and {}.",
+                    stand.definition.label,
+                    stand.id,
+                    if action == AlertAction::HireJanitor {
+                        "no janitor is hired to service it"
+                    } else {
+                        "no janitor can reach it from the depot"
+                    }
+                ),
+                action,
+            );
+        }
     }
 
     fn detect_alerts(&self, now: u64) -> Vec<Alert> {
@@ -379,6 +488,11 @@ impl GameState {
             };
             let label = &stand.definition.label;
             let unserviced = self.facility_unserviced(stand.id, &staff);
+            let broken = if stand.kind.sells() {
+                "has broken down and makes no sales"
+            } else {
+                "has broken down and is closed"
+            };
             if self.concession_service_state(stand) == "failed" {
                 raise(
                     AlertCode::FacilityFailed,
@@ -386,7 +500,7 @@ impl GameState {
                     subject,
                     focus,
                     format!(
-                        "{label} #{} has broken down and makes no sales ({}% condition).{}",
+                        "{label} #{} {broken} ({}% condition).{}",
                         stand.id,
                         stand.condition,
                         match unserviced {
@@ -434,6 +548,8 @@ impl GameState {
                 );
             }
         }
+
+        self.detect_comfort_alerts(&staff, &mut raise);
 
         if let Some(oldest) = self.litter.iter().min_by_key(|task| task.created_minute) {
             let unreachable = self.litter.iter().find(|task| {

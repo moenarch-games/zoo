@@ -8,7 +8,7 @@
   "entrance": { "x": 0, "y": 6 },
   "depot": { "x": 2, "y": 5 },
   "starting_cash_cents": 400000,
-  "unlocks": { "species": ["capybara", "flamingo"], "facilities": ["food", "drink"] },
+  "unlocks": { "species": ["capybara", "flamingo"], "facilities": ["food", "drink", "toilet", "bench", "bin"] },
   "setup": [
     { "kind": "path", "from": { "x": 1, "y": 6 }, "to": { "x": 12, "y": 6 } },
     { "kind": "habitat", "from": { "x": 4, "y": 1 }, "to": { "x": 8, "y": 5 } },

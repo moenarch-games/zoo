@@ -281,10 +281,10 @@
     height: 40px;
   }
 
-  /* All six build tools stay visible as a 3 × 2 grid instead of a clipped sideways strip. */
+  /* Every build tool stays visible in a compact grid instead of a clipped sideways strip. */
   .toolbar {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
     overflow: visible;
     touch-action: manipulation;
   }

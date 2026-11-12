@@ -8,6 +8,7 @@ import type {
   Alert,
   AlertSubject,
   FinanceBreakdown,
+  Janitor,
   OverlayKind,
   OverlayView,
   Point,
@@ -153,7 +154,17 @@ const COMPLAINT_LABELS = {
   thirsty: "Thirsty",
   tired: "Tired",
   poor_value: "Poor value",
+  needs_toilet: "No toilet",
+  needs_rest: "No seat",
 } as const
+
+/** A janitor's current job: path litter or a toilet/bin service task (#101). */
+function janitorAssignment(target: Janitor["target"]) {
+  if (target === null) {
+    return "Idle"
+  }
+  return "litter" in target ? `Litter #${target.litter}` : `Facility service #${target.facility}`
+}
 
 const INCOME_LINES: [keyof FinanceBreakdown, string][] = [
   ["admissions_income_cents", "Admissions"],
@@ -291,6 +302,12 @@ export function DailySummaryView({
             <li>
               <span>Stand maintenance</span>
               <span>{summary.maintenance}</span>
+            </li>
+          )}
+          {summary.facility_service > 0 && (
+            <li>
+              <span>Toilet and bin service</span>
+              <span>{summary.facility_service}</span>
             </li>
           )}
         </ul>
@@ -501,8 +518,7 @@ export function ManagementWorkspace({
       role: "Janitor" as const,
       id: janitor.id,
       status: janitor.status,
-      assignment:
-        janitor.target_litter_id === null ? "Idle" : `Litter #${janitor.target_litter_id}`,
+      assignment: janitorAssignment(janitor.target),
       work: janitor.tasks_completed,
       at: janitor,
       target: { kind: "depot" as const },
@@ -552,6 +568,16 @@ export function ManagementWorkspace({
       where: `Stand #${task.concession_id}`,
       state:
         task.assigned_mechanic_id === null ? "Waiting" : `Mechanic #${task.assigned_mechanic_id}`,
+      waiting: task.status,
+      age: task.age_minutes,
+      at: task,
+      target: { kind: "concession" as const, id: task.concession_id },
+    })),
+    ...snapshot.facility_service.map((task) => ({
+      key: `facility-service:${task.id}`,
+      task: task.work === "empty_bin" ? `Empty bin #${task.id}` : `Clean toilets #${task.id}`,
+      where: `Facility #${task.concession_id}`,
+      state: task.assigned_janitor_id === null ? "Waiting" : `Janitor #${task.assigned_janitor_id}`,
       waiting: task.status,
       age: task.age_minutes,
       at: task,
@@ -704,11 +730,11 @@ export function ManagementWorkspace({
             rows={snapshot.concessions}
             rowKey={(stand) => stand.id}
             onRow={(stand) => onJump({ kind: "concession", id: stand.id }, stand)}
-            empty="No stands yet: place food and drink stands beside busy paths."
+            empty="No facilities yet: place stands, toilets, benches and bins beside busy paths."
             columns={[
               {
                 key: "stand",
-                label: "Stand",
+                label: "Facility",
                 value: (stand) => `${facilityLabel(stand.kind)} #${stand.id}`,
               },
               {
@@ -717,6 +743,11 @@ export function ManagementWorkspace({
                 value: (stand) => stand.condition,
                 render: (stand) => `${stand.condition}% · ${stand.service_state}`,
                 numeric: true,
+              },
+              {
+                key: "use",
+                label: "Use",
+                value: (stand) => stand.comfort?.status ?? "",
               },
               {
                 key: "sales",

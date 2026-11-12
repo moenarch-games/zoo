@@ -30,7 +30,8 @@
 //! `GameState` only ever reads the current schema. Documents newer than this build are
 //! rejected as `unsupported_version`.
 use super::{
-    GameState, GuestState, MAX_GUEST_HABITATS_PER_VISIT, PathAccess, Position, TileKind, animal,
+    GameState, GuestState, JanitorTarget, MAX_GUEST_HABITATS_PER_VISIT, PathAccess, Position,
+    TileKind, animal,
     care::CareJobState,
     content::{self, Catalog},
     environment, scenario, shape,
@@ -54,6 +55,7 @@ const MIGRATIONS: &[Migration] = &[
     v8_add_habitat_environments,
     v9_classify_paths,
     v10_add_land,
+    v11_add_guest_comfort,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -164,6 +166,98 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 12 (#101) adds guest-comfort facilities. Facility definitions gain a capacity (0 for
+/// stands and landmarks) and the embedded catalog gains the built-in toilets, bench and litter
+/// bin so older parks can meet the new need; a scenario's facility allow-list gains them too.
+/// Stands start clean, empty and unreserved; guests arrive at the starting bladder level with
+/// no errand; janitors' litter targets become tagged targets; no facility service is open.
+fn v11_add_guest_comfort(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let facilities = value
+        .get_mut("content")
+        .and_then(|content| content.get_mut("facilities"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/facilities: missing or not an array"))?;
+    for facility in facilities.iter_mut() {
+        facility
+            .as_object_mut()
+            .ok_or_else(|| invalid("content/facilities: entry is not an object"))?
+            .insert("capacity".to_owned(), json!(0));
+    }
+    let mut added = Vec::new();
+    for facility in built_in
+        .facilities
+        .iter()
+        .filter(|facility| matches!(facility.service.as_str(), "toilet" | "bench" | "bin"))
+    {
+        if !facilities
+            .iter()
+            .any(|existing| existing["key"] == facility.key.as_str())
+        {
+            facilities.push(serde_json::to_value(facility).expect("facility serialization"));
+            added.push(facility.key.clone());
+        }
+    }
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    if let Some(allowed) = park
+        .get_mut("unlocks")
+        .and_then(|unlocks| unlocks.get_mut("facilities"))
+        .and_then(Value::as_array_mut)
+    {
+        allowed.extend(added.into_iter().map(Value::from));
+    }
+    for stand in park
+        .get_mut("concessions")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/concessions: missing or not an array"))?
+    {
+        let stand = stand
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/concessions: entry is not an object"))?;
+        if let Some(definition) = stand.get_mut("definition").and_then(Value::as_object_mut) {
+            definition.insert("capacity".to_owned(), json!(0));
+        }
+        stand.insert("slots".to_owned(), json!([]));
+        stand.insert("cleanliness".to_owned(), json!(100));
+        stand.insert("fill".to_owned(), json!(0));
+        stand.insert("total_uses".to_owned(), json!(0));
+    }
+    for guest in park
+        .get_mut("guests")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/guests: missing or not an array"))?
+    {
+        let guest = guest
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/guests: entry is not an object"))?;
+        guest.insert("bladder".to_owned(), json!(super::comfort::ARRIVAL_BLADDER));
+        guest.insert("visit".to_owned(), Value::Null);
+        guest.insert("unmet_need".to_owned(), Value::Null);
+        guest.insert("next_need_check".to_owned(), json!(0));
+    }
+    for janitor in park
+        .get_mut("janitors")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/janitors: missing or not an array"))?
+    {
+        let janitor = janitor
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/janitors: entry is not an object"))?;
+        let target = match janitor.remove("target_litter_id") {
+            Some(Value::Null) | None => Value::Null,
+            Some(id) => json!({ "litter": id }),
+        };
+        janitor.insert("target".to_owned(), target);
+    }
+    park.insert("facility_service".to_owned(), json!([]));
+    park.insert("next_facility_service_id".to_owned(), json!(1));
     Ok(value)
 }
 
@@ -818,11 +912,19 @@ impl GameState {
         let janitor_ids: HashSet<u32> = self.janitors.iter().map(|j| j.id).collect();
         for janitor in &self.janitors {
             in_bounds("janitor", janitor.id, janitor.x, janitor.y)?;
-            if janitor
-                .target_litter_id
-                .is_some_and(|id| !litter_ids.contains(&id))
-            {
-                return Err(format!("janitor {} targets missing litter", janitor.id));
+            match janitor.target {
+                Some(JanitorTarget::Litter(id)) if !litter_ids.contains(&id) => {
+                    return Err(format!("janitor {} targets missing litter", janitor.id));
+                }
+                Some(JanitorTarget::Facility(id))
+                    if !self.facility_service.iter().any(|task| task.id == id) =>
+                {
+                    return Err(format!(
+                        "janitor {} targets a missing facility service task",
+                        janitor.id
+                    ));
+                }
+                _ => {}
             }
         }
         for task in &self.litter {
@@ -911,6 +1013,7 @@ impl GameState {
                     guest.hunger,
                     guest.thirst,
                     guest.value_perception,
+                    guest.bladder,
                 ],
             )?;
         }

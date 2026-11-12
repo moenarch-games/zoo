@@ -392,6 +392,7 @@
       "build_cost_cents": 18000,
       "price_cents": 500,
       "hourly_upkeep_cents": 50,
+      "capacity": 0,
       "footprint": {
         "width": 1,
         "height": 1
@@ -406,6 +407,52 @@
       "build_cost_cents": 14000,
       "price_cents": 350,
       "hourly_upkeep_cents": 50,
+      "capacity": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "toilet",
+      "label": "Toilets",
+      "service": "toilet",
+      "asset_ref": "toilet_block",
+      "unlock_ref": "available",
+      "build_cost_cents": 12000,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 60,
+      "capacity": 2,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "bench",
+      "label": "Bench",
+      "service": "bench",
+      "asset_ref": "bench",
+      "unlock_ref": "available",
+      "build_cost_cents": 1500,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 5,
+      "capacity": 2,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
+      "key": "bin",
+      "label": "Litter bin",
+      "service": "bin",
+      "asset_ref": "litter_bin",
+      "unlock_ref": "available",
+      "build_cost_cents": 800,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 5,
+      "capacity": 6,
       "footprint": {
         "width": 1,
         "height": 1
@@ -420,6 +467,7 @@
       "build_cost_cents": 0,
       "price_cents": 0,
       "hourly_upkeep_cents": 0,
+      "capacity": 0,
       "footprint": {
         "width": 1,
         "height": 1
@@ -434,6 +482,7 @@
       "build_cost_cents": 0,
       "price_cents": 0,
       "hourly_upkeep_cents": 0,
+      "capacity": 0,
       "footprint": {
         "width": 1,
         "height": 1

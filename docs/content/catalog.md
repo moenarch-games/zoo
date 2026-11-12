@@ -22,6 +22,14 @@ schema 8 drops the catalog's old version number, schema 9 adds habitat
 environment prices, furnishings and species requirements), and saves keep the
 catalog they were made with. Food/drink service behavior retains the existing core implementation.
 
+Guest-comfort facilities (#101) use the services `toilet`, `bench` and `bin` (looks
+`toilet_block`, `bench` and `litter_bin`, which the park view composes itself like the
+stands). Every facility declares a `capacity`: toilet cubicles or bench seats a guest can
+hold at once, or the litter a bin takes before a janitor must empty it, `1..=32`; stands
+and the fixed landmarks declare 0. Comfort facilities are free to use (`price_cents` 0)
+and pay their `hourly_upkeep_cents` like stands. Save schema 12 adds `capacity: 0` to older
+embedded catalogs and gives them the built-in toilets, bench and bin.
+
 `fences` (#95) lists the fence types a habitat can be enclosed with: key, label,
 `material` (`wood` or `steel`, the supported looks), `height_cm` (1..=1000), and
 per-segment build price and hourly upkeep. The first entry is the default for

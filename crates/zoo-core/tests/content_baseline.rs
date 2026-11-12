@@ -26,7 +26,19 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
         for key in ["customer_tiles", "service_points", "active_service_point"] {
             stand.remove(key);
         }
+        // #101 adds guest-comfort presentation; stands have none.
+        assert_eq!(stand.remove("comfort"), Some(Value::Null));
     }
+    // #101 adds each guest's toilet need and errand, and comfort operations; with no toilets
+    // or benches built, they change nothing protected here.
+    for guest in snapshot["guests"].as_array_mut().unwrap() {
+        guest.as_object_mut().unwrap().remove("comfort").unwrap();
+    }
+    snapshot["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("comfort")
+        .unwrap();
     // #99 adds a land-purchase ledger line, always zero here.
     for day in ["current_day", "previous_day"] {
         if let Some(breakdown) = snapshot["finance"]

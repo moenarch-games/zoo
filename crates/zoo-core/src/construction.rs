@@ -22,8 +22,8 @@
 //!   are recorded commands, so session replay reproduces them exactly.
 use super::{
     ActionResult, Concession, ConcessionKind, ExpenseCategory, FenceSegment, GameState, Habitat,
-    HabitatOrientation, Mover, PathAccess, PlacementEvaluation, Position, TileKind, content,
-    content::FenceType, gate::gate_access_message, normalized_rect, shape,
+    HabitatOrientation, JanitorTarget, Mover, PathAccess, PlacementEvaluation, Position, TileKind,
+    content, content::FenceType, gate::gate_access_message, normalized_rect, shape,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -807,6 +807,10 @@ impl GameState {
             total_sales: 0,
             total_revenue_cents: 0,
             condition: 100,
+            slots: Vec::new(),
+            cleanliness: 100,
+            fill: 0,
+            total_uses: 0,
         });
         label
     }
@@ -1181,6 +1185,26 @@ impl GameState {
                     });
                     plan.undoable = false;
                 }
+                if self
+                    .facility_service
+                    .iter()
+                    .any(|task| task.concession_id == id)
+                {
+                    plan.affected.push(Affected {
+                        kind: "facility_service",
+                        id: None,
+                        effect: "open janitor service cancelled".to_owned(),
+                    });
+                    plan.undoable = false;
+                }
+                if self.facility_in_use(id) {
+                    plan.affected.push(Affected {
+                        kind: "guest",
+                        id: None,
+                        effect: "guests using or heading to it choose again".to_owned(),
+                    });
+                    plan.undoable = false;
+                }
                 (plan, Some(Target::Concession(id)))
             }
             Some(TileKind::Habitat(id)) => {
@@ -1282,11 +1306,10 @@ impl GameState {
         self.litter
             .retain(|task| task.x != position.x || task.y != position.y);
         for janitor in &mut self.janitors {
-            if janitor
-                .target_litter_id
-                .is_some_and(|id| removed_litter_ids.contains(&id))
-            {
-                janitor.target_litter_id = None;
+            if janitor.target.is_some_and(|target| {
+                matches!(target, JanitorTarget::Litter(id) if removed_litter_ids.contains(&id))
+            }) {
+                janitor.target = None;
             }
         }
         self.set_tile(position.x, position.y, TileKind::Grass);
@@ -1299,6 +1322,8 @@ impl GameState {
             .iter()
             .position(|stand| stand.id == id)
             .expect("planned concession exists");
+        // Guests bound for it choose again and its janitor work is cancelled (#101).
+        self.release_facility(id);
         let stand = self.concessions.remove(index);
         self.set_tile(stand.x, stand.y, TileKind::Grass);
         let removed_task_ids: Vec<u32> = self
@@ -1338,6 +1363,8 @@ impl GameState {
             .map(|guest| guest.id)
             .collect();
         for guest_id in departing {
+            // A departing guest gives back any toilet or bench slot it held (#101).
+            self.release_facility_slot(guest_id);
             self.emit("guest_left", Some(guest_id));
         }
         self.guests.retain(|guest| guest.target_habitat != id);
@@ -1402,7 +1429,7 @@ impl GameState {
                 let Some(stand) = self.concessions.iter().find(|stand| stand.id == *id) else {
                     return Err(format!("stand #{id} no longer exists"));
                 };
-                if stand.total_sales > 0 {
+                if stand.total_sales > 0 || stand.total_uses > 0 || self.facility_in_use(*id) {
                     return used(format!("stand #{id} has served guests"));
                 }
                 if self

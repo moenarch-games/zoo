@@ -194,6 +194,39 @@ export type Concession = Point & {
   service_points: ServicePoint[]
   /** The service point a mechanic from the depot actually uses. */
   active_service_point: Point | null
+  /** Toilets, benches and bins (#101); `null` for stands. */
+  comfort: ComfortFacility | null
+}
+
+/** Rust-owned state of a toilet, bench or litter bin (#101). */
+export type ComfortFacility = {
+  service: "toilet" | "bench" | "bin"
+  capacity: number
+  in_use: number
+  waiting: number
+  heading: number
+  open: boolean
+  cleanliness: number | null
+  fill: number | null
+  total_uses: number
+  status: string
+  janitor_status: string | null
+}
+
+export type ComfortOperations = {
+  facility_service_backlog: number
+  oldest_facility_service_age_minutes: number
+  toilet_demand_unmet: number
+  rest_demand_unmet: number
+}
+
+export type FacilityServiceTask = Point & {
+  id: number
+  concession_id: number
+  work: "clean_toilet" | "empty_bin"
+  age_minutes: number
+  assigned_janitor_id: number | null
+  status: string
 }
 
 export type Keeper = Point & {
@@ -220,7 +253,8 @@ export type Keeper = Point & {
 
 export type Janitor = Point & {
   id: number
-  target_litter_id: number | null
+  /** The cleanup job being walked to: litter on a path or a toilet/bin service task. */
+  target: { litter: number } | { facility: number } | null
   tasks_completed: number
   status: string
 }
@@ -272,18 +306,29 @@ export type Guest = Point & {
   value_perception: number
   target_habitat: number
   habitats_viewed: number
-  state: "arriving" | "walking_to_habitat" | "viewing" | "walking_to_exit"
+  state:
+    | "arriving"
+    | "walking_to_habitat"
+    | "viewing"
+    | "walking_to_exit"
+    | "walking_to_facility"
+    | "waiting_for_facility"
+    | "using_facility"
   thought: string
+  /** Toilet need, current facility and the need the park last failed to meet (#101). */
+  comfort: { bladder: number; facility_id: number | null; unmet_need: "toilet" | "rest" | null }
 }
 
 export type FacilityOffer = {
   key: string
   label: string
-  service: "food" | "drink" | "entrance" | "animal_care_depot"
+  service: "food" | "drink" | "toilet" | "bench" | "bin" | "entrance" | "animal_care_depot"
   asset_ref: string
   unlock_ref: string
   build_cost_cents: number
   price_cents: number
+  /** Toilet cubicles, bench seats or the litter a bin holds (#101); 0 for stands. */
+  capacity: number
   footprint: { width: number; height: number }
 }
 
@@ -409,6 +454,8 @@ export type Snapshot = {
   guests: Guest[]
   litter: LitterTask[]
   maintenance: MaintenanceTask[]
+  /** Open janitor work at toilets and bins (#101). */
+  facility_service: FacilityServiceTask[]
   work_zones: WorkZone[]
   operations: {
     cleanliness: number
@@ -418,6 +465,8 @@ export type Snapshot = {
     oldest_maintenance_age_minutes: number
     degraded_concessions: number
     failed_concessions: number
+    /** Janitor backlog at toilets and bins and unmet guest demand (#101). */
+    comfort: ComfortOperations
   }
   species_catalog: SpeciesOffer[]
   /** Fence types a habitat can be rebuilt with; the first is what new habitats get. */
@@ -429,6 +478,9 @@ export type Snapshot = {
     thirsty: number
     tired: number
     poor_value: number
+    /** Guests who found no usable toilet or bench on their last try (#101). */
+    needs_toilet: number
+    needs_rest: number
   }
   finance: {
     admission_price_cents: number
@@ -574,6 +626,8 @@ export type AlertAction =
   | "adopt_animals"
   | "inspect_habitat"
   | "inspect_facility"
+  | "build_toilet"
+  | "build_bench"
 
 /**
  * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and
@@ -623,7 +677,7 @@ export type DailySummary = {
   }[]
   complaints: number
   complaint_groups: {
-    category: "hungry" | "thirsty" | "tired" | "poor_value"
+    category: "hungry" | "thirsty" | "tired" | "poor_value" | "needs_toilet" | "needs_rest"
     guest_ids: number[]
   }[]
   unfinished: number
@@ -635,6 +689,8 @@ export type DailySummary = {
   }[]
   litter: number
   maintenance: number
+  /** Open janitor work at toilets and bins (#101). */
+  facility_service: number
   headline: string
 }
 

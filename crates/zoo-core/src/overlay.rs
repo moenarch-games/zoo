@@ -7,7 +7,7 @@
 //! the entities and ledger lines each number is made of, so a drill-down always reconciles.
 use super::{
     GameState, Habitat, PathAccess, Position, TileKind, alerts::Subject, care::CareJobState,
-    construction::dollars,
+    comfort::Need, construction::dollars,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -435,11 +435,44 @@ impl GameState {
     }
 
     fn facilities_overlay(&self, out: &mut Builder) {
-        for stand in &self.concessions {
+        for (index, stand) in self.concessions.iter().enumerate() {
             let position = Position {
                 x: stand.x,
                 y: stand.y,
             };
+            // Toilets, benches and bins (#101): closed or full is bad, queues, dirt and
+            // waiting janitor work warn.
+            if let Some(status) = self.comfort_status(index) {
+                let (_, waiting, _) = self.facility_occupancy(stand.id);
+                let serviced = self
+                    .facility_service
+                    .iter()
+                    .any(|task| task.concession_id == stand.id);
+                let blocked = match stand.kind {
+                    super::ConcessionKind::Bin => stand.fill >= stand.definition.capacity,
+                    _ => !self.facility_accepting(index),
+                };
+                let level = if blocked {
+                    Level::Bad
+                } else if waiting > 0 || serviced {
+                    Level::Warn
+                } else {
+                    Level::Good
+                };
+                let value = match stand.kind {
+                    super::ConcessionKind::Toilet => stand.cleanliness,
+                    super::ConcessionKind::Bin => stand.fill,
+                    _ => stand.slots.len() as u32,
+                };
+                out.cell(position, level, Some(value));
+                out.item(
+                    level,
+                    Subject::Concession(stand.id),
+                    position,
+                    format!("{} #{} · {status}", stand.definition.label, stand.id),
+                );
+                continue;
+            }
             let state = self.concession_service_state(stand);
             let level = match state {
                 "failed" => Level::Bad,
@@ -456,6 +489,23 @@ impl GameState {
                     stand.definition.label, stand.id, stand.condition
                 ),
             );
+        }
+        for (need, wanted) in [(Need::Toilet, "a toilet"), (Need::Rest, "a seat")] {
+            let waiting: Vec<_> = self.unmet_guests(need).collect();
+            if let Some(first) = waiting.first() {
+                out.item(
+                    Level::Bad,
+                    Subject::Paths,
+                    Position {
+                        x: first.x,
+                        y: first.y,
+                    },
+                    format!(
+                        "{} guest(s) found no {wanted} they could use",
+                        waiting.len()
+                    ),
+                );
+            }
         }
         let stocked = self.habitats.iter().any(|habitat| habitat.stocked());
         let level = match self.feed_crates {
@@ -545,6 +595,8 @@ pub(crate) struct DailySummary {
     open_jobs: Vec<OpenJob>,
     litter: u32,
     maintenance: u32,
+    /// Open janitor work at toilets and bins (#101).
+    facility_service: u32,
     headline: String,
 }
 
@@ -573,11 +625,17 @@ impl GameState {
                 .sum::<u64>()
                 / animals) as u32
         });
-        let groups: [(&'static str, GuestTest); 4] = [
+        let groups: [(&'static str, GuestTest); 6] = [
             ("hungry", |guest| guest.hunger >= 60),
             ("thirsty", |guest| guest.thirst >= 60),
             ("tired", |guest| guest.energy <= 35),
             ("poor_value", |guest| guest.value_perception <= 40),
+            ("needs_toilet", |guest| {
+                guest.unmet_need == Some(Need::Toilet) && guest.visit.is_none()
+            }),
+            ("needs_rest", |guest| {
+                guest.unmet_need == Some(Need::Rest) && guest.visit.is_none()
+            }),
         ];
         let complaint_groups: Vec<ComplaintGroup> = groups
             .into_iter()
@@ -614,7 +672,8 @@ impl GameState {
             .collect();
         let litter = self.litter.len() as u32;
         let maintenance = self.maintenance.len() as u32;
-        let unfinished = open_jobs.len() as u32 + litter + maintenance;
+        let facility_service = self.facility_service.len() as u32;
+        let unfinished = open_jobs.len() as u32 + litter + maintenance + facility_service;
         let profit = ledger.profit_cents();
         let critical = self
             .alerts
@@ -665,6 +724,7 @@ impl GameState {
             open_jobs,
             litter,
             maintenance,
+            facility_service,
             headline,
         }
     }
