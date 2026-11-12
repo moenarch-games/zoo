@@ -2144,3 +2144,79 @@ button[data-plan-toggle].active {
   align-items: center;
   gap: 8px;
 }
+
+/* #115: cash status and recovery, operations versus borrowing, the loan and the budget. */
+.finance-status {
+  padding: 6px 8px;
+  border: 1px solid #989474;
+  background: #eee8c7;
+}
+
+.finance-status.low {
+  border-color: #a8741a;
+  background: #f6e7c1;
+}
+
+.finance-status.deficit {
+  border-color: #9b2c1f;
+  background: #f4d9d2;
+}
+
+.finance-status small,
+.finance-assumptions small {
+  color: #55665d;
+}
+
+.finance-recovery li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.finance-recovery button,
+.finance-loan .price-field ~ button,
+.finance-loan .pricing-gate > button {
+  min-height: 32px;
+  padding: 3px 10px;
+  border: 1px solid #776f52;
+  border-radius: 4px;
+  background: #f7f2df;
+  color: #26372f;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.finance-loan .pricing-gate > button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.finance-report {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.finance-report th,
+.finance-report td {
+  padding: 2px 4px;
+  border-bottom: 1px solid #d8d1b0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.finance-report th[scope="row"],
+.finance-report thead th:first-child {
+  text-align: left;
+}
+
+.finance-report td.zone-warning {
+  color: #9b2c1f;
+}
+
+.finance-assumptions {
+  margin: 0;
+  padding-left: 16px;
+}

@@ -12,6 +12,7 @@
   "entrance": { "x": 0, "y": 8 },
   "depot": { "x": 2, "y": 7 },
   "starting_cash_cents": 3000000,
+  "loan": { "limit_cents": 2000000, "daily_interest_basis_points": 10 },
   "setup": [
     { "kind": "path", "from": { "x": 1, "y": 8 }, "to": { "x": 11, "y": 8 } },
     { "kind": "path", "from": { "x": 14, "y": 8 }, "to": { "x": 17, "y": 8 } },

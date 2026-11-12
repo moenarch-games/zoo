@@ -18,11 +18,13 @@ import {
   type EffectPiece,
   type EffectsManifest,
 } from "./effects-kit"
+import { FinancePanel, type FinanceCommands } from "./FinancePanel"
 import type {
   ActionResult,
   ComfortFacility,
   ComfortOperations,
   AdmissionEvaluation,
+  BudgetEvaluation,
   Alert,
   Animal,
   AlertAction,
@@ -1509,6 +1511,9 @@ export default function App() {
       case "animal":
         selectAnimal(target.id)
         break
+      case "finances":
+        setWorkspaceTab("finances")
+        return
       case "paths":
         selectHabitat(null)
         inform(`Showing path tile ${focus.x},${focus.y}`)
@@ -1561,6 +1566,8 @@ export default function App() {
         return `Buy ${depot.medicine_batch_kits} medicine · ${money(depot.medicine_batch_cost_cents)}`
       case "inspect_animal":
         return "Open animal"
+      case "open_finances":
+        return "Open finances"
     }
   }
 
@@ -1588,6 +1595,9 @@ export default function App() {
         return
       case "buy_medicine":
         perform(() => game.buy_medicine())
+        return
+      case "open_finances":
+        setWorkspaceTab("finances")
         return
       case "inspect_animal":
         jumpTo(alert.subject, alert.focus)
@@ -2103,6 +2113,17 @@ export default function App() {
       return text === undefined ? null : (JSON.parse(text) as AdmissionEvaluation)
     },
   }
+  const financeCommands: FinanceCommands = {
+    borrow: (cents) => sendPricing((game) => game.borrow_loan(cents)),
+    repay: (cents) => sendPricing((game) => game.repay_loan(cents)),
+    setAdmission: pricingCommands.setAdmission,
+    setStandVendors: (standId, vendors) =>
+      sendPricing((game) => game.set_stand_vendors(standId, vendors)),
+    evaluateBudget: (spend, borrow) => {
+      const text = callGame((game) => game.evaluate_budget(spend, borrow))
+      return text === undefined ? null : (JSON.parse(text) as BudgetEvaluation)
+    },
+  }
 
   const storageFailure = (action: string, error: unknown, text: string) => {
     diagnostics.record("storage", `${action} diagnostics failed: ${String(error)}`, "manual_export")
@@ -2578,6 +2599,14 @@ export default function App() {
             onAction={runAlertAction}
             actionLabel={alertActionLabel}
             prices={<PricingPanel pricing={snapshot.pricing} commands={pricingCommands} />}
+            finances={(ledger) => (
+              <FinancePanel
+                finance={snapshot.finance}
+                cash={snapshot.cash_cents}
+                commands={financeCommands}
+                ledger={ledger}
+              />
+            )}
           />
         )}
 

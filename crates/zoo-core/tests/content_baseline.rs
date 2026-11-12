@@ -72,7 +72,42 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
             ] {
                 assert_eq!(breakdown.remove(key), Some(json!(0)));
             }
+            // #115 adds loan lines; nothing is borrowed here.
+            for key in [
+                "loan_interest_expense_cents",
+                "loan_proceeds_cents",
+                "loan_repayment_cents",
+            ] {
+                assert_eq!(breakdown.remove(key), Some(json!(0)));
+            }
         }
+        // #115 adds each day's cash, debt and flows by kind beside the protected totals.
+        if let Some(day) = snapshot["finance"]
+            .get_mut(day)
+            .and_then(Value::as_object_mut)
+        {
+            for key in [
+                "opening_cash_cents",
+                "closing_cash_cents",
+                "loan_balance_cents",
+                "operating_expenses_cents",
+                "operating_result_cents",
+                "investment_cents",
+                "interest_cents",
+                "loan_proceeds_cents",
+                "loan_repayments_cents",
+                "net_borrowing_cents",
+                "net_cash_flow_cents",
+                "verdict",
+            ] {
+                day.remove(key).unwrap();
+            }
+        }
+    }
+    // #115 adds solvency, the loan, the budget, period summaries and the history.
+    let finance = snapshot["finance"].as_object_mut().unwrap();
+    for key in ["solvency", "loan", "budget", "periods", "history"] {
+        finance.remove(key).unwrap();
     }
     // #109 marks quarantine habitats and treatment patients; there are none here.
     for habitat in snapshot["habitats"].as_array_mut().unwrap() {

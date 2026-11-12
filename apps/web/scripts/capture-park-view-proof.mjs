@@ -14,6 +14,7 @@ import {runPricingAcceptance} from "./pricing-proof.mjs"
 import {runMixedSpeciesAcceptance} from "./mixed-species-proof.mjs"
 import {runAnimalHealthAcceptance} from "./animal-health-proof.mjs"
 import {runUtilitiesAcceptance} from "./utilities-proof.mjs"
+import {runFinancesAcceptance} from "./finances-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -582,6 +583,10 @@ try {
   // #113: a penguin habitat's climate plant fails; the shortage alert leads to the habitat,
   // which explains the outage, and replacing the plant restores service.
   await runUtilitiesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
+
+  // #115: an indebted park in deficit is diagnosed from its alert, recovered with fair prices,
+  // fewer vendors and a planned bridge loan, and keeps its debt, interest and deficit days.
+  await runFinancesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

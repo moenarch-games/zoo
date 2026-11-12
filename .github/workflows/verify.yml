@@ -108,6 +108,7 @@ jobs:
             apps/web/test-results/visits-*.png
             apps/web/test-results/keepers-*.png
             apps/web/test-results/pricing-*.png
+            apps/web/test-results/finances-*.png
             apps/web/test-results/mixed-species-*.png
             apps/web/test-results/animal-health-*.png
           if-no-files-found: error

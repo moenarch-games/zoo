@@ -63,6 +63,10 @@ pub(crate) enum AlertCode {
     ClimateShortage,
     /// A working utility plant whose capacity ran out before every habitat it reaches (#113).
     UtilityOverloaded,
+    /// Cash covers less than a day of recurring commitments (#115).
+    LowCash,
+    /// Cash is below zero: purchases wait while costs keep accruing (#115).
+    CashDeficit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -85,6 +89,8 @@ pub(crate) enum Subject {
     Keeper(u32),
     /// One animal (#109).
     Animal(u32),
+    /// The park's finances as a whole (#115).
+    Finances,
 }
 
 /// The suggested fix; the browser maps it to a command, tool or inspector.
@@ -110,6 +116,8 @@ pub(crate) enum AlertAction {
     /// Utility fixes (#113).
     BuildWaterPump,
     BuildClimatePlant,
+    /// Open the finances report (#115).
+    OpenFinances,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -727,6 +735,7 @@ impl GameState {
 
         self.detect_health_alerts(&mut raise);
         self.detect_utility_alerts(&mut raise);
+        self.detect_finance_alerts(&mut raise);
 
         for keeper in self.keepers.iter().filter(|keeper| {
             keeper.zone_id.is_none() && keeper.role == super::care::CareRole::Keeper

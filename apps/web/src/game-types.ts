@@ -757,15 +757,136 @@ export type FinanceBreakdown = {
   /** Utility plants (#113). */
   utility_operation_expense_cents: number
   utility_replacement_expense_cents: number
+  /** Loan interest (an expense), proceeds and principal repayments (financing) (#115). */
+  loan_interest_expense_cents: number
+  loan_proceeds_cents: number
+  loan_repayment_cents: number
 }
 
 export type FinanceDay = {
   day: number
+  /** Cash when the day began and when it closed (or now, for today) (#115). */
+  opening_cash_cents: number
+  closing_cash_cents: number
+  /** What the park owed at the close (or now). */
+  loan_balance_cents: number
+} & FinanceFlows
+
+/** One ledger's flows by kind (#115): operating, investment and financing. */
+export type FinanceFlows = {
+  /** Operating income: admissions and concessions. */
   income_cents: number
+  /** Operating, investment and interest expenses; never loan principal. */
   expenses_cents: number
   profit_cents: number
+  operating_expenses_cents: number
+  operating_result_cents: number
+  investment_cents: number
+  interest_cents: number
+  loan_proceeds_cents: number
+  loan_repayments_cents: number
+  /** Cash borrowing provided: proceeds less repayments. */
+  net_borrowing_cents: number
+  net_cash_flow_cents: number
+  verdict: FinanceVerdict
   breakdown: FinanceBreakdown
 }
+
+export type FinanceVerdict =
+  | "operations_profitable"
+  | "borrowing_covers_losses"
+  | "operations_losing"
+  | "no_activity"
+
+export type FinancePeriod = {
+  period_days: number
+  /** Completed days the period actually covers. */
+  days: number
+  first_day: number | null
+  last_day: number | null
+  opening_cash_cents: number | null
+  closing_cash_cents: number | null
+  flows: FinanceFlows
+}
+
+export type FinanceLine = { line: keyof FinanceBreakdown; cents: number }
+
+export type RecoveryStep =
+  | { kind: "raise_admission"; admission_cents: number; fair_cents: number }
+  | {
+      kind: "cut_vendors"
+      stand_id: number
+      vendors: number
+      wages_per_day_cents: number
+      margin_today_cents: number
+    }
+  | { kind: "postpone_expansion"; invested_cents: number }
+  | { kind: "rehome_animals"; animal_upkeep_per_day_cents: number }
+  | { kind: "borrow"; headroom_cents: number }
+
+/** Rust-owned finances report (#39, #115). */
+export type FinanceState = {
+  admission_price_cents: number
+  current_day: FinanceDay
+  previous_day: FinanceDay | null
+  profit_change_cents: number | null
+  profit_trend: "up" | "down" | "flat" | "no_previous_day"
+  solvency: {
+    status: "healthy" | "low" | "deficit"
+    low_cash_line_cents: number
+    deficit_cents: number
+    deficit_days: number
+    deficit_streak_days: number
+    spending_blocked: boolean
+    recovery: RecoveryStep[]
+  }
+  loan: {
+    available: boolean
+    limit_cents: number
+    daily_interest_basis_points: number
+    balance_cents: number
+    headroom_cents: number
+    interest_tonight_cents: number
+    interest_per_day_cents: number
+    borrowed_total_cents: number
+    repaid_total_cents: number
+    interest_total_cents: number
+  }
+  budget: {
+    commitments: FinanceLine[]
+    committed_per_day_cents: number
+    basis_days: number
+    expected_income_per_day_cents: number
+    expected_supplies_per_day_cents: number
+    projected_net_per_day_cents: number
+    /** Whole days cash lasts at the projected rate; null while it is not running down. */
+    runway_days: number | null
+    drivers: FinanceLine[]
+    assumptions: string[]
+  }
+  /** The last 7 and 30 completed days. */
+  periods: FinancePeriod[]
+  /** Kept completed days, newest first (at most 30). */
+  history: FinanceDay[]
+}
+
+/** zoo-core's budget plan for candidate spending and borrowing, or why it cannot be made. */
+export type BudgetEvaluation =
+  | {
+      ok: true
+      plan: {
+        spend_cents: number
+        borrow_cents: number
+        cash_after_cents: number
+        affordable: boolean
+        within_limit: boolean
+        loan_balance_after_cents: number
+        interest_per_day_after_cents: number
+        projected_net_per_day_cents: number
+        runway_days: number | null
+      }
+    }
+  | { ok: false; message: string }
 
 /** What a guided objective's hint points at; the HUD maps it to a tool or inspector. */
 export type GuideTool =
@@ -876,13 +997,7 @@ export type Snapshot = {
     needs_toilet: number
     needs_rest: number
   }
-  finance: {
-    admission_price_cents: number
-    current_day: FinanceDay
-    previous_day: FinanceDay | null
-    profit_change_cents: number | null
-    profit_trend: "up" | "down" | "flat" | "no_previous_day"
-  }
+  finance: FinanceState
   tutorial: Tutorial
   scenario: ScenarioState
   /** Rust-owned bounded construction undo/redo (#92). */
@@ -1013,6 +1128,7 @@ export type AlertSubject =
   | { kind: "concession"; id: number }
   | { kind: "keeper"; id: number }
   | { kind: "animal"; id: number }
+  | { kind: "finances" }
 
 export type AlertAction =
   | "buy_feed"
@@ -1032,6 +1148,7 @@ export type AlertAction =
   | "inspect_animal"
   | "build_water_pump"
   | "build_climate_plant"
+  | "open_finances"
 
 /**
  * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and

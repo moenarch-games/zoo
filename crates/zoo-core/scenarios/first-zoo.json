@@ -8,6 +8,7 @@
   "entrance": { "x": 0, "y": 7 },
   "depot": { "x": 2, "y": 6 },
   "starting_cash_cents": 5000000,
+  "loan": { "limit_cents": 2500000, "daily_interest_basis_points": 10 },
   "setup": [{ "kind": "path", "from": { "x": 1, "y": 7 }, "to": { "x": 4, "y": 7 } }],
   "tutorial": "guided",
   "opening_focus": { "x": 4, "y": 7 },

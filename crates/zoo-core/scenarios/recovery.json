@@ -8,6 +8,7 @@
   "entrance": { "x": 0, "y": 6 },
   "depot": { "x": 2, "y": 5 },
   "starting_cash_cents": 400000,
+  "loan": { "limit_cents": 1500000, "daily_interest_basis_points": 20, "starting_balance_cents": 1000000 },
   "unlocks": { "species": ["capybara", "flamingo"], "facilities": ["food", "drink", "toilet", "bench", "bin"] },
   "setup": [
     { "kind": "path", "from": { "x": 1, "y": 6 }, "to": { "x": 12, "y": 6 } },

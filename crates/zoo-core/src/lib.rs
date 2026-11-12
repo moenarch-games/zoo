@@ -6,6 +6,7 @@ mod construction;
 mod content;
 mod enclosure;
 mod environment;
+mod finance;
 mod gate;
 mod health;
 mod land;
@@ -365,6 +366,8 @@ enum ExpenseCategory {
     /// Running working utility plants, hourly, and buying replacements (#113).
     UtilityOperation,
     UtilityReplacement,
+    /// Daily interest on the park's loan (#115).
+    LoanInterest,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,6 +401,11 @@ struct FinanceLedger {
     /// Utility plants (#113; save schema 19).
     utility_operation_expense_cents: i64,
     utility_replacement_expense_cents: i64,
+    /// Loan interest, an expense; loan proceeds and principal repayments, financing flows that
+    /// are neither income nor expense (#115; save schema 20).
+    loan_interest_expense_cents: i64,
+    loan_proceeds_cents: i64,
+    loan_repayment_cents: i64,
 }
 
 impl FinanceLedger {
@@ -450,6 +458,7 @@ impl FinanceLedger {
             ExpenseCategory::UtilityReplacement => {
                 self.utility_replacement_expense_cents += cents;
             }
+            ExpenseCategory::LoanInterest => self.loan_interest_expense_cents += cents,
         }
         true
     }
@@ -480,6 +489,7 @@ impl FinanceLedger {
             + self.medicine_expense_cents
             + self.utility_operation_expense_cents
             + self.utility_replacement_expense_cents
+            + self.loan_interest_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -937,7 +947,8 @@ struct GameState {
     upkeep_accumulator: u32,
     movement_accumulator: u32,
     finance_today: FinanceLedger,
-    finance_previous: Option<FinanceLedger>,
+    /// Opening cash, completed days, the loan and deficit days (#115).
+    finance: finance::Finances,
     /// Simulated minutes since this park session started (the diagnostics clock).
     elapsed_minutes: u64,
     /// Domain events produced by the latest command or advance, drained by the recorder.
@@ -1050,7 +1061,10 @@ impl GameState {
             upkeep_accumulator: 0,
             movement_accumulator: 0,
             finance_today: FinanceLedger::default(),
-            finance_previous: None,
+            finance: finance::Finances {
+                opening_cash_cents: 5_000_000,
+                ..finance::Finances::default()
+            },
             elapsed_minutes: 0,
             pending_events: Vec::new(),
             care_jobs: Vec::new(),
@@ -1314,9 +1328,9 @@ impl GameState {
             self.minute_of_day += 1;
             if self.minute_of_day >= 24 * 60 {
                 self.minute_of_day = 0;
+                // Charges the day's interest and files it before the new day begins (#115).
+                self.close_finance_day();
                 self.day += 1;
-                self.finance_previous = Some(self.finance_today);
-                self.finance_today = FinanceLedger::default();
                 // Construction undo spans one in-game day; refunds never cross the ledger.
                 self.construction.clear();
                 self.visits.today = visit::ExitCounts::default();
@@ -1416,6 +1430,9 @@ impl GameState {
             return Some(violation);
         }
         if let Some(violation) = self.utility_violation() {
+            return Some(violation);
+        }
+        if let Some(violation) = self.finance_violation() {
             return Some(violation);
         }
         if let Some(violation) = self.health_violation() {
@@ -2295,9 +2312,10 @@ impl GameState {
         self.assign_mechanic_tasks();
     }
 
-    fn charge_upkeep(&mut self) {
-        // Catalog values are bounded per field, not per park, so sums saturate and an
-        // unaffordable total is rejected by the cash/ledger range checks below.
+    /// The hourly upkeep, wages and plant running costs of what the park has now, by ledger
+    /// line, and each concession's vendor wages. Catalog values are bounded per field, not per
+    /// park, so sums saturate; [`Self::charge_upkeep`] rejects an unrepresentable total.
+    fn recurring_hourly_charges(&self) -> ([(ExpenseCategory, i64); 7], Vec<i64>) {
         let balance = &self.catalog.balance;
         let times = |count: usize, cents: i64| (count as i64).saturating_mul(cents);
         let habitat_upkeep = self.habitats.iter().fold(0_i64, |total, habitat| {
@@ -2351,6 +2369,11 @@ impl GameState {
             (ExpenseCategory::VetWages, vet_wages),
             (ExpenseCategory::UtilityOperation, utility_operation),
         ];
+        (charges, stand_wages)
+    }
+
+    fn charge_upkeep(&mut self) {
+        let (charges, stand_wages) = self.recurring_hourly_charges();
         let mut ledger = self.finance_today;
         let mut cash = self.cash_cents;
         for (category, cents) in charges {
@@ -3533,12 +3556,7 @@ impl GameState {
             habitat_environment: environment::EnvironmentCatalogView::new(&self.catalog),
             complaints: self.complaint_summary(),
             construction: self.construction_view(),
-            finance: FinanceView::new(
-                self.pricing.admission_cents,
-                self.day,
-                self.finance_today,
-                self.finance_previous,
-            ),
+            finance: self.finance_view(),
             tutorial: self.tutorial_view(),
             scenario: self.scenario_view(),
             alerts: self.alerts.clone(),
@@ -3868,64 +3886,6 @@ struct ComplaintSummary {
     needs_rest: u32,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
-struct FinanceDayView {
-    day: u32,
-    income_cents: i64,
-    expenses_cents: i64,
-    profit_cents: i64,
-    breakdown: FinanceLedger,
-}
-
-impl FinanceDayView {
-    fn new(day: u32, ledger: FinanceLedger) -> Self {
-        Self {
-            day,
-            income_cents: ledger.income_total_cents(),
-            expenses_cents: ledger.expense_total_cents(),
-            profit_cents: ledger.profit_cents(),
-            breakdown: ledger,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct FinanceView {
-    admission_price_cents: i64,
-    current_day: FinanceDayView,
-    previous_day: Option<FinanceDayView>,
-    profit_change_cents: Option<i64>,
-    profit_trend: &'static str,
-}
-
-impl FinanceView {
-    fn new(
-        admission_price_cents: i64,
-        day: u32,
-        current: FinanceLedger,
-        previous: Option<FinanceLedger>,
-    ) -> Self {
-        let current_day = FinanceDayView::new(day, current);
-        let previous_day =
-            previous.map(|ledger| FinanceDayView::new(day.saturating_sub(1), ledger));
-        let profit_change_cents =
-            previous_day.map(|previous| current_day.profit_cents - previous.profit_cents);
-        let profit_trend = match profit_change_cents {
-            None => "no_previous_day",
-            Some(change) if change > 0 => "up",
-            Some(change) if change < 0 => "down",
-            Some(_) => "flat",
-        };
-        Self {
-            admission_price_cents,
-            current_day,
-            previous_day,
-            profit_change_cents,
-            profit_trend,
-        }
-    }
-}
-
 #[derive(Serialize)]
 struct Snapshot {
     ruleset_id: String,
@@ -3957,7 +3917,7 @@ struct Snapshot {
     habitat_environment: environment::EnvironmentCatalogView,
     complaints: ComplaintSummary,
     construction: construction::HistoryView,
-    finance: FinanceView,
+    finance: finance::FinanceView,
     tutorial: tutorial::TutorialView,
     scenario: scenario::ScenarioView,
     alerts: Vec<alerts::Alert>,
@@ -4167,6 +4127,9 @@ impl ZooGame {
             }
             "set_park_open" => self.set_park_open(flag("open")?),
             "start_marketing_campaign" => self.start_marketing_campaign(),
+            // A refused non-finite amount was recorded as null; it replays as the same refusal.
+            "borrow_loan" => self.borrow_loan(args["cents"].as_f64().unwrap_or(f64::NAN)),
+            "repay_loan" => self.repay_loan(args["cents"].as_f64().unwrap_or(f64::NAN)),
             "place_habitat_rect" => {
                 self.place_habitat_rect(number("ax")?, number("ay")?, number("bx")?, number("by")?)
             }
@@ -4593,6 +4556,28 @@ impl ZooGame {
     pub fn evaluate_admission_price(&self, cents: f64) -> String {
         match self.state.evaluate_admission_price(cents) {
             Ok(forecast) => serde_json::json!({ "ok": true, "forecast": forecast }),
+            Err(message) => serde_json::json!({ "ok": false, "message": message }),
+        }
+        .to_string()
+    }
+
+    /// Borrows whole cents from the scenario's credit line, up to its limit (#115).
+    pub fn borrow_loan(&mut self, cents: f64) -> String {
+        let args = serde_json::json!({ "cents": cents });
+        self.command("borrow_loan", args, |state| state.borrow_loan(cents))
+    }
+
+    /// Repays whole cents of the loan from cash on hand (#115).
+    pub fn repay_loan(&mut self, cents: f64) -> String {
+        let args = serde_json::json!({ "cents": cents });
+        self.command("repay_loan", args, |state| state.repay_loan(cents))
+    }
+
+    /// A budget plan: candidate spending and borrowing against the projection, or why the
+    /// amounts are invalid (#115). Changes nothing.
+    pub fn evaluate_budget(&self, spend_cents: f64, borrow_cents: f64) -> String {
+        match self.state.evaluate_budget(spend_cents, borrow_cents) {
+            Ok(plan) => serde_json::json!({ "ok": true, "plan": plan }),
             Err(message) => serde_json::json!({ "ok": false, "message": message }),
         }
         .to_string()
@@ -7089,18 +7074,18 @@ mod tests {
 
         assert_eq!(state.day, 2);
         assert_eq!(state.finance_today, FinanceLedger::default());
-        let previous = state.finance_previous.expect("day one ledger retained");
-        assert_eq!(previous.admissions_income_cents, 1_200);
-        assert_eq!(previous.construction_expense_cents, 1_000);
-        assert_eq!(previous.profit_cents(), 200);
+        let previous = state
+            .finance
+            .history
+            .back()
+            .expect("day one ledger retained");
+        assert_eq!(previous.day, 1);
+        assert_eq!(previous.ledger.admissions_income_cents, 1_200);
+        assert_eq!(previous.ledger.construction_expense_cents, 1_000);
+        assert_eq!(previous.ledger.profit_cents(), 200);
 
-        let view = FinanceView::new(
-            ADMISSION_PRICE,
-            state.day,
-            state.finance_today,
-            state.finance_previous,
-        );
-        assert_eq!(view.current_day.profit_cents, 0);
+        let view = state.finance_view();
+        assert_eq!(view.current_day.flows.profit_cents, 0);
         assert_eq!(view.previous_day.expect("previous day view").day, 1);
         assert_eq!(view.profit_change_cents, Some(-200));
         assert_eq!(view.profit_trend, "down");

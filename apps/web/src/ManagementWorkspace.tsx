@@ -219,7 +219,19 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["medicine_expense_cents", "Medicine"],
   ["utility_operation_expense_cents", "Utility operation"],
   ["utility_replacement_expense_cents", "Utility replacements"],
+  ["loan_interest_expense_cents", "Loan interest"],
 ]
+
+/** Loan proceeds and principal repayments: cash flows that are neither income nor expense. */
+const FINANCING_LINES: [keyof FinanceBreakdown, string, number][] = [
+  ["loan_proceeds_cents", "Loan proceeds", 1],
+  ["loan_repayment_cents", "Loan repayments", -1],
+]
+
+/** Every ledger line's label, by its field. */
+export const LEDGER_LABELS: Partial<Record<keyof FinanceBreakdown, string>> = Object.fromEntries(
+  [...INCOME_LINES, ...EXPENSE_LINES, ...FINANCING_LINES].map(([key, label]) => [key, label]),
+)
 
 export function DailySummaryView({
   snapshot,
@@ -548,6 +560,7 @@ export function ManagementWorkspace({
   onAction,
   actionLabel,
   prices,
+  finances,
 }: {
   snapshot: Snapshot
   tab: WorkspaceTab
@@ -558,6 +571,8 @@ export function ManagementWorkspace({
   actionLabel: (alert: Alert) => string | null
   /** The pricing panel (#106), composed by the app with its commands. */
   prices: ReactNode
+  /** The finances panel (#115), composed by the app around the ledger table. */
+  finances: (ledger: ReactNode) => ReactNode
 }) {
   const label = (key: string | null) =>
     key === null
@@ -660,6 +675,7 @@ export function ManagementWorkspace({
   const financeRows = [
     ...INCOME_LINES.map(([key, name]) => ({ key, name, kind: "Income", sign: 1 })),
     ...EXPENSE_LINES.map(([key, name]) => ({ key, name, kind: "Expense", sign: -1 })),
+    ...FINANCING_LINES.map(([key, name, sign]) => ({ key, name, kind: "Financing", sign })),
   ].map((line) => ({
     ...line,
     today: line.sign * ledger(snapshot.finance.current_day, line.key),
@@ -877,32 +893,33 @@ export function ManagementWorkspace({
           />
         )}
         {tab === "prices" && prices}
-        {tab === "finances" && (
-          <DataTable
-            label="Ledger"
-            rows={financeRows}
-            rowKey={(row) => row.key}
-            empty="No ledger lines."
-            columns={[
-              { key: "name", label: "Line", value: (row) => row.name },
-              { key: "kind", label: "Kind", value: (row) => row.kind },
-              {
-                key: "today",
-                label: `Day ${snapshot.day}`,
-                value: (row) => row.today,
-                render: (row) => money(row.today),
-                numeric: true,
-              },
-              {
-                key: "previous",
-                label: "Previous day",
-                value: (row) => row.previous ?? 0,
-                render: (row) => (row.previous === null ? "–" : money(row.previous)),
-                numeric: true,
-              },
-            ]}
-          />
-        )}
+        {tab === "finances" &&
+          finances(
+            <DataTable
+              label="Ledger"
+              rows={financeRows}
+              rowKey={(row) => row.key}
+              empty="No ledger lines."
+              columns={[
+                { key: "name", label: "Line", value: (row) => row.name },
+                { key: "kind", label: "Kind", value: (row) => row.kind },
+                {
+                  key: "today",
+                  label: `Day ${snapshot.day}`,
+                  value: (row) => row.today,
+                  render: (row) => money(row.today),
+                  numeric: true,
+                },
+                {
+                  key: "previous",
+                  label: "Previous day",
+                  value: (row) => row.previous ?? 0,
+                  render: (row) => (row.previous === null ? "–" : money(row.previous)),
+                  numeric: true,
+                },
+              ]}
+            />,
+          )}
       </div>
     </section>
   )
