@@ -7,6 +7,7 @@ import {runHabitatDesignAcceptance} from "./habitat-design-proof.mjs"
 import {runCirculationAcceptance} from "./circulation-proof.mjs"
 import {runLandExpansionAcceptance} from "./land-expansion-proof.mjs"
 import {runGuestComfortAcceptance} from "./guest-comfort-proof.mjs"
+import {runStaffedStandsAcceptance} from "./staffed-stands-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -548,6 +549,9 @@ try {
 
   // #101: an unmet toilet need is alerted, toilets are built and used, the complaint resolves.
   await runGuestComfortAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
+
+  // #102: a busy one-vendor stand turns guests away; more vendors raise its throughput.
+  await runStaffedStandsAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

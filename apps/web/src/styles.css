@@ -1516,6 +1516,34 @@ dd {
   margin: 0;
 }
 
+/* #102: staffed stands — vendor stepper and stand actions in the inspector. */
+.stand-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stand-stepper button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-weight: 800;
+}
+
+.stand-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+.stand-actions label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 @media (max-width: 1200px) {
   .overlay-legend {
     right: 276px;

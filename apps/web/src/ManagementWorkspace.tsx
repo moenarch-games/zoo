@@ -185,6 +185,8 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["janitor_wages_expense_cents", "Janitor wages"],
   ["mechanic_wages_expense_cents", "Mechanic wages"],
   ["land_expense_cents", "Land purchases"],
+  ["vendor_wages_expense_cents", "Vendor wages"],
+  ["stand_stock_expense_cents", "Stand stock"],
 ]
 
 export function DailySummaryView({
@@ -747,7 +749,7 @@ export function ManagementWorkspace({
               {
                 key: "use",
                 label: "Use",
-                value: (stand) => stand.comfort?.status ?? "",
+                value: (stand) => stand.comfort?.status ?? stand.stand?.status_label ?? "",
               },
               {
                 key: "sales",
@@ -756,10 +758,25 @@ export function ManagementWorkspace({
                 numeric: true,
               },
               {
+                key: "lost",
+                label: "Lost today",
+                value: (stand) => stand.stand?.today.lost_sales ?? 0,
+                render: (stand) => (stand.stand ? String(stand.stand.today.lost_sales) : "—"),
+                numeric: true,
+              },
+              {
                 key: "revenue",
                 label: "Revenue",
                 value: (stand) => stand.total_revenue_cents,
                 render: (stand) => money(stand.total_revenue_cents),
+                numeric: true,
+              },
+              {
+                key: "margin",
+                label: "Margin today",
+                value: (stand) => stand.stand?.today.contribution_cents ?? 0,
+                render: (stand) =>
+                  stand.stand ? money(stand.stand.today.contribution_cents) : "—",
                 numeric: true,
               },
               {

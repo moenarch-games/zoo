@@ -196,6 +196,65 @@ export type Concession = Point & {
   active_service_point: Point | null
   /** Toilets, benches and bins (#101); `null` for stands. */
   comfort: ComfortFacility | null
+  /** Food and drink stands (#102); `null` for comfort facilities. */
+  stand: StandOperations | null
+}
+
+/** Why a sale was lost, counted by zoo-core per stand (#102). */
+export type LostDemand = {
+  queue_full: number
+  gave_up: number
+  unaffordable: number
+  closed: number
+  unstaffed: number
+  out_of_stock: number
+  broken_down: number
+}
+
+export type StandLedger = {
+  served: number
+  revenue_cents: number
+  average_wait_minutes: number | null
+  lost_sales: number
+  lost: LostDemand
+  stock_cost_cents: number
+  wage_cents: number
+  upkeep_cents: number
+  repair_cents: number
+  operating_cents: number
+  contribution_cents: number
+}
+
+/** Rust-owned vendors, queue, stock and operating figures of a food or drink stand (#102). */
+export type StandOperations = {
+  status:
+    | "open"
+    | "restocking"
+    | "closed"
+    | "broken_down"
+    | "unstaffed"
+    | "out_of_stock"
+    | "unreachable"
+  status_label: string
+  open: boolean
+  vendors: number
+  max_vendors: number
+  vendor_hourly_wage_cents: number
+  serving: number
+  queue: number
+  queue_capacity: number
+  heading: number
+  service_minutes: number
+  capacity_per_hour: number
+  stock: number
+  stock_capacity: number
+  restock_at: number
+  auto_restock: boolean
+  delivery_in_minutes: number | null
+  refill_cost_cents: number
+  stock_unit_cost_cents: number
+  today: StandLedger
+  total: StandLedger
 }
 
 /** Rust-owned state of a toilet, bench or litter bin (#101). */
@@ -316,7 +375,13 @@ export type Guest = Point & {
     | "using_facility"
   thought: string
   /** Toilet need, current facility and the need the park last failed to meet (#101). */
-  comfort: { bladder: number; facility_id: number | null; unmet_need: "toilet" | "rest" | null }
+  comfort: {
+    bladder: number
+    facility_id: number | null
+    unmet_need: "toilet" | "rest" | "food" | "drink" | null
+  }
+  /** Spending money left for stands (#102). */
+  cash_cents: number
 }
 
 export type FacilityOffer = {
@@ -330,6 +395,14 @@ export type FacilityOffer = {
   /** Toilet cubicles, bench seats or the litter a bin holds (#101); 0 for stands. */
   capacity: number
   footprint: { width: number; height: number }
+  /** A food or drink stand's service model (#102); absent for every other facility. */
+  stand?: {
+    service_minutes: number
+    queue_capacity: number
+    max_vendors: number
+    stock_capacity: number
+    stock_unit_cost_cents: number
+  }
 }
 
 export type SpeciesOffer = {
@@ -363,6 +436,9 @@ export type FinanceBreakdown = {
   mechanic_wages_expense_cents: number
   /** Parcels bought (#99). */
   land_expense_cents: number
+  /** Stand vendors' wages and stock deliveries (#102). */
+  vendor_wages_expense_cents: number
+  stand_stock_expense_cents: number
 }
 
 export type FinanceDay = {
