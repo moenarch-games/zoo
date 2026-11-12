@@ -1,0 +1,2536 @@
+{
+  "content": {
+    "balance": {
+      "admission_price_cents": 1200,
+      "construction": {
+        "habitat_base_cents": 10000,
+        "habitat_tile_cents": 3000,
+        "path_tile_cents": 1000
+      },
+      "feed_batch_cents": 6000,
+      "habitat_care": {
+        "cleaning_cents": 2000,
+        "water_refill_cents": 800
+      },
+      "habitat_environment": {
+        "deep_water_tile_cents": 2500,
+        "elevation_step_cents": 600,
+        "grass_tile_cents": 200,
+        "sand_tile_cents": 400,
+        "shallow_water_tile_cents": 1500
+      },
+      "maintenance_repair_cents": 2500,
+      "medicine_batch_cents": 4000,
+      "staff": {
+        "janitor": {
+          "hire_cents": 18000,
+          "hourly_wage_cents": 900
+        },
+        "keeper": {
+          "hire_cents": 25000,
+          "hourly_wage_cents": 1200
+        },
+        "mechanic": {
+          "hire_cents": 22000,
+          "hourly_wage_cents": 1000
+        },
+        "vendor": {
+          "hourly_wage_cents": 600
+        },
+        "vet": {
+          "hire_cents": 30000,
+          "hourly_wage_cents": 1500
+        }
+      },
+      "upkeep": {
+        "habitat_hourly_cents": 250
+      }
+    },
+    "facilities": [
+      {
+        "asset_ref": "food_stand",
+        "build_cost_cents": 18000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 50,
+        "key": "food",
+        "label": "Food stand",
+        "price_cents": 500,
+        "service": "food",
+        "stand": {
+          "max_vendors": 3,
+          "queue_capacity": 6,
+          "service_minutes": 4,
+          "stock_capacity": 40,
+          "stock_unit_cost_cents": 150
+        },
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "drink_stand",
+        "build_cost_cents": 14000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 50,
+        "key": "drink",
+        "label": "Drink stand",
+        "price_cents": 350,
+        "service": "drink",
+        "stand": {
+          "max_vendors": 3,
+          "queue_capacity": 6,
+          "service_minutes": 3,
+          "stock_capacity": 50,
+          "stock_unit_cost_cents": 100
+        },
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "toilet_block",
+        "build_cost_cents": 12000,
+        "capacity": 2,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 60,
+        "key": "toilet",
+        "label": "Toilets",
+        "price_cents": 0,
+        "service": "toilet",
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "bench",
+        "build_cost_cents": 1500,
+        "capacity": 2,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 5,
+        "key": "bench",
+        "label": "Bench",
+        "price_cents": 0,
+        "service": "bench",
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "litter_bin",
+        "build_cost_cents": 800,
+        "capacity": 6,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 5,
+        "key": "bin",
+        "label": "Litter bin",
+        "price_cents": 0,
+        "service": "bin",
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "water_pump",
+        "build_cost_cents": 9000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 40,
+        "key": "water_pump",
+        "label": "Water pump",
+        "price_cents": 0,
+        "service": "water_pump",
+        "unlock_ref": "available",
+        "utility": {
+          "capacity": 12,
+          "coverage_tiles": 24,
+          "kind": "water"
+        }
+      },
+      {
+        "asset_ref": "climate_plant",
+        "build_cost_cents": 16000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 90,
+        "key": "climate_plant",
+        "label": "Climate plant",
+        "price_cents": 0,
+        "service": "climate_plant",
+        "unlock_ref": "available",
+        "utility": {
+          "capacity": 8,
+          "coverage_tiles": 24,
+          "kind": "climate"
+        }
+      },
+      {
+        "asset_ref": "education_sign",
+        "build_cost_cents": 2500,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 5,
+        "key": "sign",
+        "label": "Education sign",
+        "price_cents": 0,
+        "service": "sign",
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "entrance",
+        "build_cost_cents": 0,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 0,
+        "key": "entrance",
+        "label": "Entrance",
+        "price_cents": 0,
+        "service": "entrance",
+        "unlock_ref": "available"
+      },
+      {
+        "asset_ref": "animal_care_depot",
+        "build_cost_cents": 0,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 0,
+        "key": "animal_care_depot",
+        "label": "Animal-care depot",
+        "price_cents": 0,
+        "service": "animal_care_depot",
+        "unlock_ref": "available"
+      }
+    ],
+    "facts": [
+      {
+        "fact": "The capybara is the largest living rodent. It is a superb swimmer and can stay underwater for several minutes.",
+        "source_title": "Wikipedia: Capybara",
+        "source_url": "https://en.wikipedia.org/wiki/Capybara",
+        "species": "capybara"
+      },
+      {
+        "fact": "A flamingo's pink colour comes from carotenoid pigments in the plankton it eats.",
+        "source_title": "Wikipedia: Flamingo",
+        "source_url": "https://en.wikipedia.org/wiki/Flamingo",
+        "species": "flamingo"
+      },
+      {
+        "fact": "Every zebra's stripe pattern is unique to that individual.",
+        "source_title": "Wikipedia: Zebra",
+        "source_url": "https://en.wikipedia.org/wiki/Zebra",
+        "species": "zebra"
+      },
+      {
+        "fact": "Giraffes are the tallest living land animals and the largest ruminants.",
+        "source_title": "Wikipedia: Giraffe",
+        "source_url": "https://en.wikipedia.org/wiki/Giraffe",
+        "species": "giraffe"
+      },
+      {
+        "fact": "Elephants are the largest living land animals.",
+        "source_title": "Wikipedia: Elephant",
+        "source_url": "https://en.wikipedia.org/wiki/Elephant",
+        "species": "elephant"
+      },
+      {
+        "fact": "Penguins cannot fly: their wings evolved into flippers for swimming.",
+        "source_title": "Wikipedia: Penguin",
+        "source_url": "https://en.wikipedia.org/wiki/Penguin",
+        "species": "penguin"
+      }
+    ],
+    "fences": [
+      {
+        "height_cm": 120,
+        "key": "wooden_rail",
+        "label": "Wooden rail",
+        "material": "wood",
+        "segment_cents": 1500,
+        "segment_hourly_cents": 8
+      },
+      {
+        "height_cm": 250,
+        "key": "steel_mesh",
+        "label": "Steel mesh",
+        "material": "steel",
+        "segment_cents": 3000,
+        "segment_hourly_cents": 12
+      }
+    ],
+    "habitat_objects": [
+      {
+        "build_cents": 12000,
+        "capacity": 4,
+        "key": "basic_shelter",
+        "label": "Basic shelter",
+        "role": "shelter"
+      },
+      {
+        "build_cents": 22000,
+        "capacity": 8,
+        "key": "large_shelter",
+        "label": "Large shelter",
+        "role": "shelter"
+      },
+      {
+        "build_cents": 3000,
+        "capacity": 3,
+        "key": "log_pile",
+        "label": "Log pile",
+        "role": "enrichment"
+      },
+      {
+        "build_cents": 5000,
+        "capacity": 6,
+        "key": "play_boulder",
+        "label": "Play boulder",
+        "role": "enrichment"
+      }
+    ],
+    "ruleset_id": "zoo-classic-v1",
+    "species": [
+      {
+        "appeal": 95,
+        "asset_ref": "capybara",
+        "care": {
+          "required_keepers": 1,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 1,
+          "enrichment": true,
+          "ground_cover": "grass",
+          "ground_cover_percent": 50,
+          "shallow_water_tiles": 2,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "capybara",
+        "label": "Capybara",
+        "minimum_fence_height_cm": 90,
+        "minimum_social_group": 2,
+        "purchase_cost_cents": 25000,
+        "space_per_animal": 4,
+        "unlock_ref": "available"
+      },
+      {
+        "appeal": 80,
+        "asset_ref": "flamingo",
+        "care": {
+          "required_keepers": 1,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 0,
+          "enrichment": false,
+          "ground_cover": "sand",
+          "ground_cover_percent": 30,
+          "shallow_water_tiles": 4,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "flamingo",
+        "label": "Flamingo",
+        "minimum_fence_height_cm": 90,
+        "minimum_social_group": 3,
+        "purchase_cost_cents": 18000,
+        "space_per_animal": 2,
+        "unlock_ref": "available"
+      },
+      {
+        "appeal": 125,
+        "asset_ref": "zebra",
+        "care": {
+          "required_keepers": 1,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 0,
+          "enrichment": true,
+          "ground_cover": "grass",
+          "ground_cover_percent": 70,
+          "shallow_water_tiles": 0,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "zebra",
+        "label": "Zebra",
+        "minimum_fence_height_cm": 120,
+        "minimum_social_group": 3,
+        "purchase_cost_cents": 40000,
+        "space_per_animal": 5,
+        "unlock_ref": "available"
+      },
+      {
+        "appeal": 160,
+        "asset_ref": "giraffe",
+        "care": {
+          "required_keepers": 1,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            },
+            {
+              "category": "enrichment",
+              "first_minute_of_day": 840,
+              "interval_minutes": 1440,
+              "priority": 1,
+              "work_minutes": 20
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 0,
+          "enrichment": true,
+          "ground_cover": "grass",
+          "ground_cover_percent": 60,
+          "shallow_water_tiles": 0,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "giraffe",
+        "label": "Giraffe",
+        "minimum_fence_height_cm": 200,
+        "minimum_social_group": 2,
+        "purchase_cost_cents": 65000,
+        "space_per_animal": 8,
+        "unlock_ref": "available"
+      },
+      {
+        "appeal": 190,
+        "asset_ref": "elephant",
+        "care": {
+          "required_keepers": 2,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 5,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            },
+            {
+              "category": "enrichment",
+              "first_minute_of_day": 840,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 20
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 2,
+          "enrichment": true,
+          "ground_cover": "sand",
+          "ground_cover_percent": 30,
+          "shallow_water_tiles": 2,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "elephant",
+        "label": "Elephant",
+        "minimum_fence_height_cm": 200,
+        "minimum_social_group": 2,
+        "purchase_cost_cents": 90000,
+        "space_per_animal": 12,
+        "unlock_ref": "available"
+      },
+      {
+        "appeal": 110,
+        "asset_ref": "penguin",
+        "care": {
+          "required_keepers": 1,
+          "schedule": [
+            {
+              "category": "feeding",
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "priority": 2,
+              "work_minutes": 10
+            },
+            {
+              "category": "enrichment",
+              "first_minute_of_day": 900,
+              "interval_minutes": 1440,
+              "priority": 1,
+              "work_minutes": 20
+            }
+          ]
+        },
+        "habitat": {
+          "deep_water_tiles": 4,
+          "enrichment": true,
+          "ground_cover": "sand",
+          "ground_cover_percent": 40,
+          "shallow_water_tiles": 1,
+          "shelter": true
+        },
+        "hourly_upkeep_cents": 125,
+        "key": "penguin",
+        "label": "Penguin",
+        "minimum_fence_height_cm": 90,
+        "minimum_social_group": 4,
+        "purchase_cost_cents": 30000,
+        "space_per_animal": 3,
+        "unlock_ref": "available",
+        "utilities": {
+          "climate": 1,
+          "water": 1
+        }
+      }
+    ],
+    "species_compatibility": [
+      {
+        "compatible": true,
+        "reason": "Giraffes browse treetops and zebras graze below, so a savanna yard with a tall fence suits both",
+        "species": [
+          "giraffe",
+          "zebra"
+        ]
+      },
+      {
+        "compatible": false,
+        "reason": "Elephants can trample zebras when they share a yard",
+        "species": [
+          "elephant",
+          "zebra"
+        ]
+      }
+    ],
+    "unlocks": [
+      {
+        "available": true,
+        "key": "available"
+      }
+    ]
+  },
+  "format": "zoo-save",
+  "park": {
+    "alerts": [],
+    "care_jobs": [
+      {
+        "animal_id": null,
+        "category": "feeding",
+        "due_minute": 540,
+        "habitat_id": 1,
+        "id": 1,
+        "keeper_ids": [
+          1
+        ],
+        "priority": 4,
+        "required_keepers": 1,
+        "resolved_minute": null,
+        "state": "in_progress",
+        "supply": "none",
+        "work_minutes": 15
+      },
+      {
+        "animal_id": null,
+        "category": "feeding",
+        "due_minute": 540,
+        "habitat_id": 2,
+        "id": 2,
+        "keeper_ids": [
+          2
+        ],
+        "priority": 4,
+        "required_keepers": 1,
+        "resolved_minute": null,
+        "state": "in_progress",
+        "supply": "none",
+        "work_minutes": 15
+      }
+    ],
+    "cash_cents": 2475000,
+    "concessions": [
+      {
+        "cleanliness": 100,
+        "condition": 92,
+        "definition": {
+          "asset_ref": "food_stand",
+          "build_cost_cents": 18000,
+          "capacity": 0,
+          "footprint": {
+            "height": 1,
+            "width": 1
+          },
+          "hourly_upkeep_cents": 50,
+          "key": "food",
+          "label": "Food stand",
+          "price_cents": 500,
+          "service": "food",
+          "stand": {
+            "max_vendors": 3,
+            "queue_capacity": 6,
+            "service_minutes": 4,
+            "stock_capacity": 40,
+            "stock_unit_cost_cents": 150
+          },
+          "unlock_ref": "available"
+        },
+        "fill": 0,
+        "id": 1,
+        "kind": "food",
+        "sales_today": 0,
+        "slots": [],
+        "stand": {
+          "auto_restock": true,
+          "delivery_due": null,
+          "open": true,
+          "price_cents": 500,
+          "queue": [],
+          "stock": 40,
+          "today": {
+            "lost": {
+              "broken_down": 0,
+              "closed": 0,
+              "gave_up": 0,
+              "out_of_stock": 0,
+              "queue_full": 0,
+              "too_expensive": 0,
+              "unaffordable": 0,
+              "unstaffed": 0
+            },
+            "repair_cents": 0,
+            "revenue_cents": 0,
+            "served": 0,
+            "stock_cost_cents": 0,
+            "upkeep_cents": 0,
+            "wage_cents": 0,
+            "wait_minutes": 0
+          },
+          "total": {
+            "lost": {
+              "broken_down": 0,
+              "closed": 0,
+              "gave_up": 0,
+              "out_of_stock": 0,
+              "queue_full": 0,
+              "too_expensive": 0,
+              "unaffordable": 0,
+              "unstaffed": 0
+            },
+            "repair_cents": 0,
+            "revenue_cents": 0,
+            "served": 0,
+            "stock_cost_cents": 0,
+            "upkeep_cents": 0,
+            "wage_cents": 0,
+            "wait_minutes": 0
+          },
+          "vendors": 1
+        },
+        "total_revenue_cents": 0,
+        "total_sales": 0,
+        "total_uses": 0,
+        "x": 16,
+        "y": 9
+      },
+      {
+        "cleanliness": 100,
+        "condition": 92,
+        "definition": {
+          "asset_ref": "drink_stand",
+          "build_cost_cents": 14000,
+          "capacity": 0,
+          "footprint": {
+            "height": 1,
+            "width": 1
+          },
+          "hourly_upkeep_cents": 50,
+          "key": "drink",
+          "label": "Drink stand",
+          "price_cents": 350,
+          "service": "drink",
+          "stand": {
+            "max_vendors": 3,
+            "queue_capacity": 6,
+            "service_minutes": 3,
+            "stock_capacity": 50,
+            "stock_unit_cost_cents": 100
+          },
+          "unlock_ref": "available"
+        },
+        "fill": 0,
+        "id": 2,
+        "kind": "drink",
+        "sales_today": 0,
+        "slots": [],
+        "stand": {
+          "auto_restock": true,
+          "delivery_due": null,
+          "open": true,
+          "price_cents": 350,
+          "queue": [],
+          "stock": 50,
+          "today": {
+            "lost": {
+              "broken_down": 0,
+              "closed": 0,
+              "gave_up": 0,
+              "out_of_stock": 0,
+              "queue_full": 0,
+              "too_expensive": 0,
+              "unaffordable": 0,
+              "unstaffed": 0
+            },
+            "repair_cents": 0,
+            "revenue_cents": 0,
+            "served": 0,
+            "stock_cost_cents": 0,
+            "upkeep_cents": 0,
+            "wage_cents": 0,
+            "wait_minutes": 0
+          },
+          "total": {
+            "lost": {
+              "broken_down": 0,
+              "closed": 0,
+              "gave_up": 0,
+              "out_of_stock": 0,
+              "queue_full": 0,
+              "too_expensive": 0,
+              "unaffordable": 0,
+              "unstaffed": 0
+            },
+            "repair_cents": 0,
+            "revenue_cents": 0,
+            "served": 0,
+            "stock_cost_cents": 0,
+            "upkeep_cents": 0,
+            "wage_cents": 0,
+            "wait_minutes": 0
+          },
+          "vendors": 1
+        },
+        "total_revenue_cents": 0,
+        "total_sales": 0,
+        "total_uses": 0,
+        "x": 16,
+        "y": 11
+      }
+    ],
+    "day": 1,
+    "depot": {
+      "x": 2,
+      "y": 9
+    },
+    "education": {
+      "achievements": [],
+      "attendance": [],
+      "donations": [],
+      "grants": [
+        {
+          "amount_cents": 150000,
+          "awarded_minute": null,
+          "goal": {
+            "at_least": 2,
+            "kind": "talks_given"
+          },
+          "id": "community-learning-grant",
+          "title": "Community learning grant"
+        }
+      ],
+      "recent_rehomings": [],
+      "recent_talks": [],
+      "recovered_animals": [],
+      "streaks": [],
+      "supported_rehomings": 0,
+      "talks": [],
+      "today": {
+        "attendees": 0,
+        "donations_cents": 0,
+        "donors": 0,
+        "grants_cents": 0,
+        "guests_educated": 0,
+        "sign_lessons": 0,
+        "talk_lessons": 0,
+        "talks_canceled": 0,
+        "talks_given": 0
+      },
+      "total": {
+        "attendees": 0,
+        "donations_cents": 0,
+        "donors": 0,
+        "grants_cents": 0,
+        "guests_educated": 0,
+        "sign_lessons": 0,
+        "talk_lessons": 0,
+        "talks_canceled": 0,
+        "talks_given": 0
+      }
+    },
+    "elapsed_minutes": 30,
+    "entrance": {
+      "x": 0,
+      "y": 10
+    },
+    "facility_service": [],
+    "feed_crates": 20,
+    "finance": {
+      "deficit_days": 0,
+      "deficit_streak_days": 0,
+      "history": [],
+      "loan": {
+        "balance_cents": 0,
+        "borrowed_total_cents": 0,
+        "interest_total_cents": 0,
+        "peak_cents": 0,
+        "repaid_total_cents": 0,
+        "terms": {
+          "daily_interest_basis_points": 10,
+          "limit_cents": 2000000
+        }
+      },
+      "opening_cash_cents": 2500000
+    },
+    "finance_today": {
+      "admissions_income_cents": 0,
+      "animal_feed_expense_cents": 0,
+      "animal_purchase_expense_cents": 0,
+      "concession_income_cents": 0,
+      "construction_expense_cents": 0,
+      "donation_income_cents": 0,
+      "grant_income_cents": 0,
+      "habitat_care_expense_cents": 0,
+      "janitor_hiring_expense_cents": 0,
+      "janitor_wages_expense_cents": 0,
+      "keeper_hiring_expense_cents": 25000,
+      "keeper_wages_expense_cents": 0,
+      "land_expense_cents": 0,
+      "loan_interest_expense_cents": 0,
+      "loan_proceeds_cents": 0,
+      "loan_repayment_cents": 0,
+      "maintenance_repair_expense_cents": 0,
+      "marketing_expense_cents": 0,
+      "mechanic_hiring_expense_cents": 0,
+      "mechanic_wages_expense_cents": 0,
+      "medicine_expense_cents": 0,
+      "park_upkeep_expense_cents": 0,
+      "stand_stock_expense_cents": 0,
+      "utility_operation_expense_cents": 0,
+      "utility_replacement_expense_cents": 0,
+      "vendor_wages_expense_cents": 0,
+      "vet_hiring_expense_cents": 0,
+      "vet_wages_expense_cents": 0
+    },
+    "groups": [],
+    "guests": [],
+    "habitats": [
+      {
+        "animals": [
+          {
+            "activity": {
+              "kind": "walking",
+              "target": {
+                "x": 6,
+                "y": 7
+              }
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 3220922670,
+            "decisions": 3,
+            "energy": 99,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 1,
+            "life_stage": "adult",
+            "name": "Juniper",
+            "position": {
+              "x": 6,
+              "y": 6
+            },
+            "sex": "male",
+            "species": "capybara"
+          },
+          {
+            "activity": {
+              "kind": "walking",
+              "target": {
+                "x": 7,
+                "y": 8
+              }
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 87230898,
+            "decisions": 2,
+            "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 2,
+            "life_stage": "adult",
+            "name": "Pebble",
+            "position": {
+              "x": 5,
+              "y": 6
+            },
+            "sex": "male",
+            "species": "capybara"
+          },
+          {
+            "activity": {
+              "kind": "resting",
+              "until_minute": 576
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 2243798901,
+            "decisions": 2,
+            "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 3,
+            "life_stage": "adult",
+            "name": "Clover",
+            "position": {
+              "x": 7,
+              "y": 6
+            },
+            "sex": "male",
+            "species": "capybara"
+          },
+          {
+            "activity": {
+              "kind": "resting",
+              "until_minute": 576
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 1219936624,
+            "decisions": 2,
+            "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 4,
+            "life_stage": "adult",
+            "name": "Indigo",
+            "position": {
+              "x": 7,
+              "y": 7
+            },
+            "sex": "male",
+            "species": "capybara"
+          }
+        ],
+        "care_schedule": {
+          "required_keepers": 1,
+          "tasks": [
+            {
+              "category": "feeding",
+              "customized": false,
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "next_due_minute": 660,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "customized": false,
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "next_due_minute": 720,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "customized": false,
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "next_due_minute": 600,
+              "priority": 2,
+              "work_minutes": 10
+            }
+          ]
+        },
+        "cleanliness": 96,
+        "environment": {
+          "objects": [],
+          "terrain": []
+        },
+        "fence": {
+          "height_cm": 120,
+          "key": "wooden_rail",
+          "label": "Wooden rail",
+          "material": "wood",
+          "segment_cents": 1500,
+          "segment_hourly_cents": 8
+        },
+        "food": 92,
+        "id": 1,
+        "quarantine": false,
+        "residents": [
+          {
+            "species": {
+              "appeal": 95,
+              "asset_ref": "capybara",
+              "care": {
+                "required_keepers": 1,
+                "schedule": [
+                  {
+                    "category": "feeding",
+                    "first_minute_of_day": 420,
+                    "interval_minutes": 120,
+                    "priority": 4,
+                    "work_minutes": 15
+                  },
+                  {
+                    "category": "cleaning",
+                    "first_minute_of_day": 360,
+                    "interval_minutes": 360,
+                    "priority": 3,
+                    "work_minutes": 30
+                  },
+                  {
+                    "category": "inspection",
+                    "first_minute_of_day": 600,
+                    "interval_minutes": 1440,
+                    "priority": 2,
+                    "work_minutes": 10
+                  }
+                ]
+              },
+              "habitat": {
+                "deep_water_tiles": 1,
+                "enrichment": true,
+                "ground_cover": "grass",
+                "ground_cover_percent": 50,
+                "shallow_water_tiles": 2,
+                "shelter": true
+              },
+              "hourly_upkeep_cents": 125,
+              "key": "capybara",
+              "label": "Capybara",
+              "minimum_fence_height_cm": 90,
+              "minimum_social_group": 2,
+              "purchase_cost_cents": 25000,
+              "space_per_animal": 4,
+              "unlock_ref": "available"
+            },
+            "welfare": 72
+          }
+        ],
+        "service_gate": {
+          "side": "south",
+          "x": 6,
+          "y": 9
+        },
+        "tiles": [
+          {
+            "x": 4,
+            "y": 5
+          },
+          {
+            "x": 5,
+            "y": 5
+          },
+          {
+            "x": 6,
+            "y": 5
+          },
+          {
+            "x": 7,
+            "y": 5
+          },
+          {
+            "x": 8,
+            "y": 5
+          },
+          {
+            "x": 4,
+            "y": 6
+          },
+          {
+            "x": 5,
+            "y": 6
+          },
+          {
+            "x": 6,
+            "y": 6
+          },
+          {
+            "x": 7,
+            "y": 6
+          },
+          {
+            "x": 8,
+            "y": 6
+          },
+          {
+            "x": 4,
+            "y": 7
+          },
+          {
+            "x": 5,
+            "y": 7
+          },
+          {
+            "x": 6,
+            "y": 7
+          },
+          {
+            "x": 7,
+            "y": 7
+          },
+          {
+            "x": 8,
+            "y": 7
+          },
+          {
+            "x": 4,
+            "y": 8
+          },
+          {
+            "x": 5,
+            "y": 8
+          },
+          {
+            "x": 6,
+            "y": 8
+          },
+          {
+            "x": 7,
+            "y": 8
+          },
+          {
+            "x": 8,
+            "y": 8
+          },
+          {
+            "x": 4,
+            "y": 9
+          },
+          {
+            "x": 5,
+            "y": 9
+          },
+          {
+            "x": 6,
+            "y": 9
+          },
+          {
+            "x": 7,
+            "y": 9
+          },
+          {
+            "x": 8,
+            "y": 9
+          }
+        ],
+        "utilities": {
+          "climate": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          },
+          "priority": "normal",
+          "water": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          }
+        },
+        "water": 92
+      },
+      {
+        "animals": [
+          {
+            "activity": {
+              "kind": "walking",
+              "target": {
+                "x": 12,
+                "y": 12
+              }
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 3763853496,
+            "decisions": 3,
+            "energy": 97,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 5,
+            "life_stage": "adult",
+            "name": "Quill",
+            "position": {
+              "x": 12,
+              "y": 12
+            },
+            "sex": "female",
+            "species": "zebra"
+          },
+          {
+            "activity": {
+              "kind": "resting",
+              "until_minute": 582
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 4036935761,
+            "decisions": 2,
+            "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 6,
+            "life_stage": "adult",
+            "name": "Olive",
+            "position": {
+              "x": 11,
+              "y": 13
+            },
+            "sex": "male",
+            "species": "zebra"
+          },
+          {
+            "activity": {
+              "kind": "resting",
+              "until_minute": 578
+            },
+            "arrived_day": 1,
+            "cosmetic_seed": 411722668,
+            "decisions": 3,
+            "energy": 98,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
+            "id": 7,
+            "life_stage": "adult",
+            "name": "Ember",
+            "position": {
+              "x": 12,
+              "y": 13
+            },
+            "sex": "female",
+            "species": "zebra"
+          }
+        ],
+        "care_schedule": {
+          "required_keepers": 1,
+          "tasks": [
+            {
+              "category": "feeding",
+              "customized": false,
+              "first_minute_of_day": 420,
+              "interval_minutes": 120,
+              "next_due_minute": 660,
+              "priority": 4,
+              "work_minutes": 15
+            },
+            {
+              "category": "cleaning",
+              "customized": false,
+              "first_minute_of_day": 360,
+              "interval_minutes": 360,
+              "next_due_minute": 720,
+              "priority": 3,
+              "work_minutes": 30
+            },
+            {
+              "category": "inspection",
+              "customized": false,
+              "first_minute_of_day": 600,
+              "interval_minutes": 1440,
+              "next_due_minute": 600,
+              "priority": 2,
+              "work_minutes": 10
+            }
+          ]
+        },
+        "cleanliness": 96,
+        "environment": {
+          "objects": [],
+          "terrain": []
+        },
+        "fence": {
+          "height_cm": 120,
+          "key": "wooden_rail",
+          "label": "Wooden rail",
+          "material": "wood",
+          "segment_cents": 1500,
+          "segment_hourly_cents": 8
+        },
+        "food": 94,
+        "id": 2,
+        "quarantine": false,
+        "residents": [
+          {
+            "species": {
+              "appeal": 125,
+              "asset_ref": "zebra",
+              "care": {
+                "required_keepers": 1,
+                "schedule": [
+                  {
+                    "category": "feeding",
+                    "first_minute_of_day": 420,
+                    "interval_minutes": 120,
+                    "priority": 4,
+                    "work_minutes": 15
+                  },
+                  {
+                    "category": "cleaning",
+                    "first_minute_of_day": 360,
+                    "interval_minutes": 360,
+                    "priority": 3,
+                    "work_minutes": 30
+                  },
+                  {
+                    "category": "inspection",
+                    "first_minute_of_day": 600,
+                    "interval_minutes": 1440,
+                    "priority": 2,
+                    "work_minutes": 10
+                  }
+                ]
+              },
+              "habitat": {
+                "deep_water_tiles": 0,
+                "enrichment": true,
+                "ground_cover": "grass",
+                "ground_cover_percent": 70,
+                "shallow_water_tiles": 0,
+                "shelter": true
+              },
+              "hourly_upkeep_cents": 125,
+              "key": "zebra",
+              "label": "Zebra",
+              "minimum_fence_height_cm": 120,
+              "minimum_social_group": 3,
+              "purchase_cost_cents": 40000,
+              "space_per_animal": 5,
+              "unlock_ref": "available"
+            },
+            "welfare": 89
+          }
+        ],
+        "service_gate": {
+          "side": "north",
+          "x": 12,
+          "y": 11
+        },
+        "tiles": [
+          {
+            "x": 10,
+            "y": 11
+          },
+          {
+            "x": 11,
+            "y": 11
+          },
+          {
+            "x": 12,
+            "y": 11
+          },
+          {
+            "x": 13,
+            "y": 11
+          },
+          {
+            "x": 14,
+            "y": 11
+          },
+          {
+            "x": 10,
+            "y": 12
+          },
+          {
+            "x": 11,
+            "y": 12
+          },
+          {
+            "x": 12,
+            "y": 12
+          },
+          {
+            "x": 13,
+            "y": 12
+          },
+          {
+            "x": 14,
+            "y": 12
+          },
+          {
+            "x": 10,
+            "y": 13
+          },
+          {
+            "x": 11,
+            "y": 13
+          },
+          {
+            "x": 12,
+            "y": 13
+          },
+          {
+            "x": 13,
+            "y": 13
+          },
+          {
+            "x": 14,
+            "y": 13
+          },
+          {
+            "x": 10,
+            "y": 14
+          },
+          {
+            "x": 11,
+            "y": 14
+          },
+          {
+            "x": 12,
+            "y": 14
+          },
+          {
+            "x": 13,
+            "y": 14
+          },
+          {
+            "x": 14,
+            "y": 14
+          },
+          {
+            "x": 10,
+            "y": 15
+          },
+          {
+            "x": 11,
+            "y": 15
+          },
+          {
+            "x": 12,
+            "y": 15
+          },
+          {
+            "x": 13,
+            "y": 15
+          },
+          {
+            "x": 14,
+            "y": 15
+          }
+        ],
+        "utilities": {
+          "climate": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          },
+          "priority": "normal",
+          "water": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          }
+        },
+        "water": 94
+      }
+    ],
+    "height": 20,
+    "janitors": [
+      {
+        "id": 1,
+        "target": null,
+        "tasks_completed": 0,
+        "x": 2,
+        "y": 10
+      }
+    ],
+    "keepers": [
+      {
+        "activity": {
+          "working": {
+            "job_id": 1,
+            "remaining_minutes": 9
+          }
+        },
+        "carrying_feed": false,
+        "carrying_medicine": false,
+        "deliveries_completed": 0,
+        "exit": {
+          "x": 6,
+          "y": 10
+        },
+        "id": 1,
+        "role": "keeper",
+        "schedule": {
+          "categories": [
+            "feeding",
+            "cleaning",
+            "inspection",
+            "enrichment"
+          ],
+          "shift_end_minute": 1440,
+          "shift_start_minute": 0
+        },
+        "x": 6,
+        "y": 7,
+        "zone_id": 1
+      },
+      {
+        "activity": {
+          "to_gate": {
+            "job_id": 2
+          }
+        },
+        "carrying_feed": false,
+        "carrying_medicine": false,
+        "deliveries_completed": 0,
+        "exit": null,
+        "id": 2,
+        "role": "keeper",
+        "schedule": {
+          "categories": [
+            "feeding",
+            "cleaning",
+            "inspection",
+            "enrichment"
+          ],
+          "shift_end_minute": 1440,
+          "shift_start_minute": 0
+        },
+        "x": 11,
+        "y": 10,
+        "zone_id": 1
+      }
+    ],
+    "land": [],
+    "litter": [],
+    "maintenance": [],
+    "mechanics": [
+      {
+        "id": 1,
+        "repairs_completed": 0,
+        "target_maintenance_id": null,
+        "x": 2,
+        "y": 10
+      }
+    ],
+    "medicine_kits": 0,
+    "minute_of_day": 570,
+    "movement_accumulator": 0,
+    "next_animal_id": 8,
+    "next_care_job_id": 3,
+    "next_concession_id": 3,
+    "next_facility_service_id": 1,
+    "next_group_id": 1,
+    "next_guest_id": 1,
+    "next_habitat_id": 3,
+    "next_habitat_object_id": 1,
+    "next_janitor_id": 2,
+    "next_keeper_id": 3,
+    "next_litter_id": 1,
+    "next_maintenance_id": 1,
+    "next_mechanic_id": 2,
+    "next_work_zone_id": 2,
+    "objectives": [
+      {
+        "done": false,
+        "focus": {
+          "x": 12,
+          "y": 10
+        },
+        "goal": {
+          "at_least": 15,
+          "kind": "guests"
+        },
+        "hint": null,
+        "id": "busy-day",
+        "title": "Have 15 guests in the park at once",
+        "tool": null
+      },
+      {
+        "done": false,
+        "focus": {
+          "x": 20,
+          "y": 6
+        },
+        "goal": {
+          "at_least": 3,
+          "kind": "stocked_habitats"
+        },
+        "hint": null,
+        "id": "third-habitat",
+        "title": "Open a third stocked habitat",
+        "tool": null
+      },
+      {
+        "done": false,
+        "focus": {
+          "x": 6,
+          "y": 10
+        },
+        "goal": {
+          "at_least": 12,
+          "kind": "guests_educated"
+        },
+        "hint": "Build an education sign beside the path next to a habitat, or schedule a keeper talk from Manage › Education.",
+        "id": "teach-guests",
+        "title": "Teach 12 guests about the animals",
+        "tool": null
+      }
+    ],
+    "pricing": {
+      "admission_cents": 1200,
+      "campaign": null,
+      "campaigns_run": 0,
+      "open": true,
+      "recent": [],
+      "today": {
+        "admission_cents": 0,
+        "groups_admitted": 0,
+        "groups_at_gate": 0,
+        "people_admitted": 0,
+        "people_at_gate": 0,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      },
+      "total": {
+        "admission_cents": 0,
+        "groups_admitted": 0,
+        "groups_at_gate": 0,
+        "people_admitted": 0,
+        "people_at_gate": 0,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      }
+    },
+    "scenario": {
+      "digest": "fnv1a64:a7d2c224f00cee74",
+      "id": "living-starter",
+      "opening_focus": {
+        "x": 12,
+        "y": 10
+      },
+      "seed": 3,
+      "title": "Riverside zoo"
+    },
+    "spawn_accumulator": 30,
+    "tiles": [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "animal_care_depot",
+      "grass",
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      {
+        "habitat": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "concession": 1
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "entrance",
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      {
+        "path": "public"
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      "grass",
+      {
+        "concession": 2
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      {
+        "habitat": 2
+      },
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "water",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    "tutorial": {
+      "status": "off"
+    },
+    "unlocks": {
+      "facilities": null,
+      "species": null
+    },
+    "upkeep_accumulator": 30,
+    "visits": {
+      "groups_arrived": 0,
+      "recent": [],
+      "today": {
+        "needs_unmet": 0,
+        "no_reachable_attraction": 0,
+        "poor_value": 0,
+        "satisfied": 0,
+        "too_crowded": 0
+      },
+      "total": {
+        "needs_unmet": 0,
+        "no_reachable_attraction": 0,
+        "poor_value": 0,
+        "satisfied": 0,
+        "too_crowded": 0
+      }
+    },
+    "width": 28,
+    "work_zones": [
+      {
+        "height": 3,
+        "id": 1,
+        "width": 13,
+        "x": 3,
+        "y": 9
+      }
+    ]
+  },
+  "schema_version": 21
+}

@@ -220,12 +220,26 @@ impl KeeperSchedule {
         }
     }
 
+    /// Every keeper gives keeper talks (#116); vets, who take only treatments, do not.
     pub fn accepts(&self, category: CareCategory) -> bool {
+        if category == CareCategory::Talk {
+            return !self.categories.contains(&CareCategory::Treatment);
+        }
         self.categories.contains(&category)
     }
 }
 
 pub(crate) const CARE_GRACE_MINUTES: u64 = 60;
+
+/// How long after its due minute a job may still be dispatched: a keeper talk (#116) waits
+/// only [`crate::education::TALK_GRACE_MINUTES`].
+pub(crate) fn grace_minutes(category: CareCategory) -> u64 {
+    if category == CareCategory::Talk {
+        crate::education::TALK_GRACE_MINUTES
+    } else {
+        CARE_GRACE_MINUTES
+    }
+}
 /// Resolved jobs stay visible for one in-game day, which bounds the job list.
 const RESOLVED_JOB_RETENTION_MINUTES: u64 = 24 * 60;
 const MINUTES_PER_DAY: u64 = 24 * 60;
@@ -397,6 +411,7 @@ impl GameState {
     pub(crate) fn advance_care_jobs(&mut self) {
         let now = self.absolute_minute();
         self.generate_care_jobs(now);
+        self.generate_talk_jobs(now);
         self.generate_treatment_jobs(now);
         self.reconcile_care_jobs(now);
         self.reconcile_treatment_jobs(now);
@@ -405,7 +420,7 @@ impl GameState {
             // A treatment waits for a vet as long as its patient is unwell (#109).
             if job.state == CareJobState::Due
                 && job.category != CareCategory::Treatment
-                && now >= job.due_minute + CARE_GRACE_MINUTES
+                && now >= job.due_minute + grace_minutes(job.category)
             {
                 job.state = CareJobState::Missed;
                 job.resolved_minute = Some(now);
@@ -539,8 +554,8 @@ impl GameState {
         };
         let crew = std::mem::take(&mut job.keeper_ids);
         job.supply = JobSupply::None;
-        let missed =
-            job.category != CareCategory::Treatment && now >= job.due_minute + CARE_GRACE_MINUTES;
+        let missed = job.category != CareCategory::Treatment
+            && now >= job.due_minute + grace_minutes(job.category);
         if missed {
             job.state = CareJobState::Missed;
             job.resolved_minute = Some(now);
@@ -899,6 +914,7 @@ impl GameState {
                     self.begin_recovery(animal_id);
                 }
             }
+            (CareCategory::Talk, _) => self.finish_talk(job_id, habitat_id),
             (CareCategory::Cleaning, JobSupply::Cleaning | JobSupply::CleaningPrepaid) => {
                 if supply == JobSupply::Cleaning {
                     self.book_service_cost(cleaning_cents, ExpenseCategory::HabitatCare);
@@ -1039,7 +1055,7 @@ impl GameState {
                         // lapses, and another vet may still reach the patient (#109).
                         job.id == job_id
                             && (job.category == CareCategory::Treatment
-                                || now >= job.due_minute + CARE_GRACE_MINUTES)
+                                || now >= job.due_minute + grace_minutes(job.category))
                     })
                 });
                 if let Some(job_id) = lapsed {
@@ -1593,7 +1609,7 @@ impl GameState {
                     keeper_ids: job.keeper_ids.clone(),
                     waiting_reason,
                     expires_in_minutes: if job.state == CareJobState::Due {
-                        (job.due_minute + CARE_GRACE_MINUTES).saturating_sub(now)
+                        (job.due_minute + grace_minutes(job.category)).saturating_sub(now)
                     } else {
                         0
                     },
@@ -1657,6 +1673,10 @@ impl GameState {
             treatments_open: 0,
         };
         for job in &self.care_jobs {
+            // Keeper talks are reported with education (#116), not as care backlog.
+            if job.category == CareCategory::Talk {
+                continue;
+            }
             if job.category == CareCategory::Treatment
                 && matches!(job.state, CareJobState::Due | CareJobState::InProgress)
             {

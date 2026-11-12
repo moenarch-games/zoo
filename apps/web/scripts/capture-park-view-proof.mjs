@@ -15,6 +15,7 @@ import {runMixedSpeciesAcceptance} from "./mixed-species-proof.mjs"
 import {runAnimalHealthAcceptance} from "./animal-health-proof.mjs"
 import {runUtilitiesAcceptance} from "./utilities-proof.mjs"
 import {runFinancesAcceptance} from "./finances-proof.mjs"
+import {runEducationAcceptance} from "./education-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -587,6 +588,10 @@ try {
   // #115: an indebted park in deficit is diagnosed from its alert, recovered with fair prices,
   // fewer vendors and a planned bridge loan, and keeps its debt, interest and deficit days.
   await runFinancesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
+
+  // #116: a sign and keeper talks teach guests, completing the education objective; the grant
+  // and donations show in the ledger, and a talk is canceled by touch on a phone.
+  await runEducationAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, tile, mouse, key})
   }
 } finally {
   cdp?.close()

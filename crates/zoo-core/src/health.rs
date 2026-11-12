@@ -333,6 +333,9 @@ impl GameState {
         }
         for (kind, id) in events {
             self.emit(kind, Some(id));
+            if kind == "animal_recovered" {
+                self.note_recovery(id);
+            }
         }
         self.release_recovered();
     }

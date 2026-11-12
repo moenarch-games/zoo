@@ -7,8 +7,7 @@
 //! condition holds, and it disappears as soon as the condition is resolved or its object is
 //! gone. Alerts are saved with the park so their first occurrence survives a reload.
 use super::{
-    FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, comfort::Need,
-    content::CareCategory, shape,
+    FenceSide, GameState, Habitat, Mover, Position, care::CareJobState, comfort::Need, shape,
 };
 use serde::{Deserialize, Serialize};
 
@@ -469,7 +468,11 @@ impl GameState {
             let missed = self
                 .care_jobs
                 .iter()
-                .filter(|job| job.habitat_id == habitat.id && job.state == CareJobState::Missed)
+                .filter(|job| {
+                    job.habitat_id == habitat.id
+                        && job.category.is_routine()
+                        && job.state == CareJobState::Missed
+                })
                 .count();
             if missed > 0 {
                 raise(
@@ -886,7 +889,7 @@ impl GameState {
             .iter()
             .filter(|job| {
                 job.habitat_id == habitat.id
-                    && job.category != CareCategory::Treatment
+                    && job.category.is_routine()
                     && job.state == CareJobState::Due
                     && now >= job.due_minute + CARE_LATE_MINUTES
             })
@@ -910,7 +913,7 @@ impl GameState {
             .iter()
             .filter(|job| {
                 job.habitat_id == habitat_id
-                    && job.category != CareCategory::Treatment
+                    && job.category.is_routine()
                     && matches!(job.state, CareJobState::Due | CareJobState::InProgress)
             })
             .count()

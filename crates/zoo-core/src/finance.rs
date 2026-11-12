@@ -348,6 +348,8 @@ impl FinanceLedger {
                 self.concession_income_cents,
                 other.concession_income_cents,
             ),
+            donation_income_cents: add(self.donation_income_cents, other.donation_income_cents),
+            grant_income_cents: add(self.grant_income_cents, other.grant_income_cents),
             construction_expense_cents: add(
                 self.construction_expense_cents,
                 other.construction_expense_cents,
@@ -470,7 +472,7 @@ pub(crate) enum Verdict {
 /// One ledger's flows by kind.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub(crate) struct Flows {
-    /// Operating income (admissions and concessions).
+    /// Operating income: admissions, concessions, donations and grants (#116).
     pub income_cents: i64,
     /// Operating, investment and interest expenses; never principal.
     pub expenses_cents: i64,

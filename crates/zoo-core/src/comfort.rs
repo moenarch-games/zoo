@@ -694,7 +694,8 @@ impl GameState {
             ConcessionKind::Food
             | ConcessionKind::Drink
             | ConcessionKind::WaterPump
-            | ConcessionKind::ClimatePlant => return None,
+            | ConcessionKind::ClimatePlant
+            | ConcessionKind::Sign => return None,
         })
     }
 

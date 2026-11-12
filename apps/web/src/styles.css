@@ -2220,3 +2220,134 @@ button[data-plan-toggle].active {
   margin: 0;
   padding-left: 16px;
 }
+
+/* Education and conservation report (#116) */
+.education-panel {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.education-panel section {
+  display: grid;
+  gap: 6px;
+}
+
+.education-panel h3 {
+  margin: 0;
+}
+
+.education-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.education-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.education-figures dt {
+  color: #55665d;
+}
+
+.education-figures dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.education-reasons li,
+.talk-row,
+.sign-list li,
+.milestone-list li,
+.grant-list li {
+  display: grid;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid #989474;
+  background: #eee8c7;
+}
+
+.education-reasons li {
+  border-style: dashed;
+  background: transparent;
+}
+
+.talk-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.talk-status {
+  font-weight: 700;
+  color: #1e5548;
+}
+
+.talk-status.blocked,
+.talk-status.waiting_for_keeper {
+  color: #8a5a12;
+}
+
+.talk-detail,
+.talk-last,
+.sign-list p,
+.milestone-list p,
+.grant-list p {
+  margin: 0;
+}
+
+.talk-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.talk-form input {
+  width: 4.5em;
+  min-height: 28px;
+}
+
+.talk-form button {
+  min-height: 32px;
+  padding: 3px 10px;
+  border: 1px solid #776f52;
+  border-radius: 4px;
+  background: #f7f2df;
+  color: #26372f;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.talk-form button.primary {
+  background: #1e5548;
+  border-color: #123c34;
+  color: #f7f2df;
+}
+
+.talk-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sign-fact {
+  font-style: italic;
+}
+
+.milestone-list li[data-earned="true"] {
+  border-color: #1e5548;
+  background: #dcebd9;
+}
+
+.milestone-list small,
+.grant-list small,
+.education-note {
+  color: #55665d;
+}

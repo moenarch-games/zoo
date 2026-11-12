@@ -12,6 +12,7 @@ import {
 
 import { AnimalHealthPanel } from "./AnimalHealth"
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
+import { EducationPanel, type EducationCommands } from "./EducationPanel"
 import {
   EFFECT_PIECES,
   loadEffectsManifest,
@@ -202,6 +203,7 @@ const FACILITY_ICONS: Partial<Record<FacilityOffer["service"], string>> = {
   bin: "♻",
   water_pump: "≋",
   climate_plant: "❄",
+  sign: "ℹ",
 }
 
 /** The facility an alert's build fix places. */
@@ -2113,6 +2115,11 @@ export default function App() {
       return text === undefined ? null : (JSON.parse(text) as AdmissionEvaluation)
     },
   }
+  const educationCommands: EducationCommands = {
+    scheduleTalk: (habitatId, start, duration, places) =>
+      sendPricing((game) => game.schedule_talk(habitatId, start, duration, places)),
+    cancelTalk: (habitatId) => sendPricing((game) => game.cancel_talk(habitatId)),
+  }
   const financeCommands: FinanceCommands = {
     borrow: (cents) => sendPricing((game) => game.borrow_loan(cents)),
     repay: (cents) => sendPricing((game) => game.repay_loan(cents)),
@@ -2607,6 +2614,26 @@ export default function App() {
                 ledger={ledger}
               />
             )}
+            education={
+              <EducationPanel
+                education={snapshot.education}
+                habitats={snapshot.habitats
+                  .filter((habitat) => !habitat.quarantine)
+                  .map((habitat) => ({
+                    id: habitat.id,
+                    label:
+                      habitat.species
+                        .map(
+                          (key) =>
+                            snapshot.species_catalog.find((offer) => offer.key === key)?.label ??
+                            key,
+                        )
+                        .join(" & ") || "No animals",
+                    stocked: habitat.species.length > 0,
+                  }))}
+                commands={educationCommands}
+              />
+            }
           />
         )}
 

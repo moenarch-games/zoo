@@ -111,6 +111,7 @@ jobs:
             apps/web/test-results/finances-*.png
             apps/web/test-results/mixed-species-*.png
             apps/web/test-results/animal-health-*.png
+            apps/web/test-results/education-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Upload playable web preview

@@ -23,6 +23,7 @@ const FIXTURE_V17: &str = "tests/fixtures/save-v17.json";
 const FIXTURE_V18: &str = "tests/fixtures/save-v18.json";
 const FIXTURE_V19: &str = "tests/fixtures/save-v19.json";
 const FIXTURE_V20: &str = "tests/fixtures/save-v20.json";
+const FIXTURE_V21: &str = "tests/fixtures/save-v21.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -84,11 +85,51 @@ fn content_without_utilities(content: &mut Value) {
     }
 }
 
+/// The catalog without the education sign or sourced facts (#116).
+fn content_without_education(content: &mut Value) {
+    content["facilities"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|facility| facility["service"] != "sign");
+    content.as_object_mut().unwrap().remove("facts");
+}
+
+/// Undoes the schema 20 → 21 migration (#116) on a document saved straight after loading: the
+/// catalog loses the appended education sign and the sourced facts, no guest has learned
+/// anything, the ledgers lose their zero donation and grant lines, and the park its untouched
+/// education record.
+fn education_removed(value: &mut Value) {
+    content_without_education(&mut value["content"]);
+    let park = value["park"].as_object_mut().unwrap();
+    let education = park.remove("education").unwrap();
+    assert_eq!(education["talks"], serde_json::json!([]));
+    assert_eq!(education["achievements"], serde_json::json!([]));
+    assert_eq!(education["total"]["guests_educated"], 0);
+    for guest in park["guests"].as_array_mut().unwrap() {
+        assert_eq!(
+            guest.as_object_mut().unwrap().remove("lessons").unwrap(),
+            serde_json::json!([])
+        );
+    }
+    let strip = |ledger: &mut Value| {
+        let ledger = ledger.as_object_mut().unwrap();
+        for field in ["donation_income_cents", "grant_income_cents"] {
+            assert_eq!(ledger.remove(field).unwrap(), 0);
+        }
+    };
+    strip(&mut park["finance_today"]);
+    for day in park["finance"]["history"].as_array_mut().unwrap() {
+        strip(&mut day["ledger"]);
+    }
+    value["schema_version"] = 20.into();
+}
+
 /// Undoes the schema 19 → 20 migration (#115) on a document saved straight after loading: the
 /// ledgers lose their zero loan lines, the history's one day (if any) becomes the previous
 /// day's ledger again with exactly the cash the ledgers explain, and nothing is owed or was in
 /// deficit.
 fn finances_removed(value: &mut Value) {
+    education_removed(value);
     let park = value["park"].as_object_mut().unwrap();
     let profit = |ledger: &Value| -> i64 {
         ledger
@@ -600,6 +641,7 @@ fn fences_from_content(value: &mut Value) {
     content_without_compatibility(&mut built_in);
     content_without_health(&mut built_in);
     content_without_utilities(&mut built_in);
+    content_without_education(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -1493,18 +1535,68 @@ fn the_schema_v19_fixture_migrates_to_parks_with_a_credit_line_and_history() {
     assert_eq!(saved, second, "migration changes nothing else");
 }
 
+/// Schema 20 parks taught nobody (#116): they gain an empty education record, guests without
+/// lessons, zero donation and grant lines, and the built-in education sign and facts.
+#[test]
+fn the_schema_v20_fixture_migrates_to_parks_that_can_teach() {
+    let fixture = std::fs::read_to_string(FIXTURE_V20).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    assert!(
+        saved["content"]["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|fact| fact["source_url"].as_str().unwrap().starts_with("https://"))
+    );
+    education_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    assert!(view["education"]["talks"].as_array().unwrap().is_empty());
+    assert!(
+        view["facility_catalog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|facility| facility["service"] == "sign")
+    );
+    game.tick(60);
+}
+
+/// The indebted park teaching (#116): a sign beside the path, a daily talk, guests who learned
+/// and places reserved at an open talk.
+fn educated() -> ZooGame {
+    let mut game = indebted();
+    let (x, y) = beside_path(&game);
+    ok(game.place_concession(x, y, "sign".to_owned()));
+    let minute = json(&game.snapshot_json())["minute_of_day"]
+        .as_u64()
+        .unwrap() as u32;
+    ok(game.schedule_talk(1, (minute + 15).div_ceil(15) * 15 % 1440, 30, 6));
+    game
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&indebted().save_json());
+        let value = json(&educated().save_json());
         std::fs::write(
-            FIXTURE_V20,
+            FIXTURE_V21,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V20).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V21).unwrap();
     let saved = json(&fixture);
+    assert!(
+        !saved["park"]["education"]["talks"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the fixture schedules a talk"
+    );
     assert_eq!(
         saved["park"]["finance"]["loan"]["balance_cents"], 400_000,
         "the fixture owes a loan"

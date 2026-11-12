@@ -1062,6 +1062,7 @@ impl Guest {
             group_id,
             crowd_minutes: 0,
             exit: None,
+            lessons: Vec::new(),
         }
     }
 

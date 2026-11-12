@@ -767,6 +767,8 @@ impl GameState {
         let Some((from, at)) = self.locate_animal(animal_id) else {
             return ActionResult::error(format!("Animal #{animal_id} does not exist"));
         };
+        // Whether it counts as a supported rehoming is decided as it leaves (#116).
+        self.note_rehoming(animal_id);
         let habitat = &mut self.habitats[from];
         let leaving = habitat.animals.remove(at);
         habitat.prune_residents();

@@ -24,8 +24,8 @@
 use super::{
     ActionResult, GameState, Position, TileKind,
     care::CareJobState,
-    content::{self, Catalog},
-    finance, land,
+    content::{self, CareCategory, Catalog},
+    education, finance, land,
     session::{DomainEvent, fnv1a64},
     tutorial::Tutorial,
 };
@@ -83,6 +83,9 @@ pub(crate) struct Scenario {
     /// The park's credit line and any debt it starts with (#115); none means no borrowing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     loan: Option<finance::LoanDefinition>,
+    /// Grants promised for education and conservation goals (#116): scenario hooks paid once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    grants: Vec<education::GrantDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -353,6 +356,18 @@ pub(crate) enum Goal {
     CustomizedCareTasks {
         at_least: u32,
     },
+    /// Guests who have learned about the animals at a sign or talk, ever (#116).
+    GuestsEducated {
+        at_least: u32,
+    },
+    /// Keeper talks given to the end, ever (#116).
+    TalksGiven {
+        at_least: u32,
+    },
+    /// Conservation milestones earned (#116).
+    Achievements {
+        at_least: u32,
+    },
 }
 
 impl Goal {
@@ -600,6 +615,28 @@ impl Scenario {
         if self.tutorial == TutorialMode::Guided && self.objectives.is_empty() {
             return Err("tutorial: a guided scenario needs objectives".to_owned());
         }
+        if self.grants.len() > education::MAX_GRANTS {
+            return Err(format!("grants: at most {}", education::MAX_GRANTS));
+        }
+        let mut grant_ids = HashSet::new();
+        for (i, grant) in self.grants.iter().enumerate() {
+            slug(&grant.id, &format!("grants/{i}/id"))?;
+            if !grant_ids.insert(&grant.id) {
+                return Err(format!("grants/{i}/id: duplicate grant id"));
+            }
+            text(&grant.title, &format!("grants/{i}/title"), MAX_TEXT_BYTES)?;
+            if !grant.goal.education_goal() {
+                return Err(format!(
+                    "grants/{i}/goal: grants reward guests educated, talks given or milestones earned"
+                ));
+            }
+            if !(1..=content::MAX_CENTS / 2).contains(&grant.amount_cents) {
+                return Err(format!(
+                    "grants/{i}/amount_cents: expected 1..={}",
+                    content::MAX_CENTS / 2
+                ));
+            }
+        }
         land::validate_parcels(self.land.iter(), width, height, [self.entrance, self.depot])?;
         Ok(())
     }
@@ -731,6 +768,11 @@ impl Scenario {
             );
         }
         state.objectives = self.objective_progress();
+        state.education.grants = self
+            .grants
+            .iter()
+            .map(education::GrantDefinition::progress)
+            .collect();
         state.tutorial = match self.tutorial {
             TutorialMode::Guided => Tutorial::active(),
             TutorialMode::None => Tutorial::off(),
@@ -925,11 +967,20 @@ impl GameState {
                     .count(),
                 *at_least,
             ),
-            Goal::CareJobs { at_least } => count(self.care_jobs.len(), *at_least),
+            // Keeper talks (#116) are not care.
+            Goal::CareJobs { at_least } => count(
+                self.care_jobs
+                    .iter()
+                    .filter(|job| job.category != CareCategory::Talk)
+                    .count(),
+                *at_least,
+            ),
             Goal::CareJobsCompleted { at_least } => count(
                 self.care_jobs
                     .iter()
-                    .filter(|job| job.state == CareJobState::Completed)
+                    .filter(|job| {
+                        job.category != CareCategory::Talk && job.state == CareJobState::Completed
+                    })
                     .count(),
                 *at_least,
             ),
@@ -942,6 +993,9 @@ impl GameState {
                     .count(),
                 *at_least,
             ),
+            Goal::GuestsEducated { at_least } => self.education.total.guests_educated >= *at_least,
+            Goal::TalksGiven { at_least } => self.education.total.talks_given >= *at_least,
+            Goal::Achievements { at_least } => count(self.education.achievements.len(), *at_least),
         }
     }
 

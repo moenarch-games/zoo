@@ -33,6 +33,15 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
     // or benches built, they change nothing protected here.
     for guest in snapshot["guests"].as_array_mut().unwrap() {
         guest.as_object_mut().unwrap().remove("comfort").unwrap();
+        // #116 adds what each guest learned; with no signs or talks, nothing.
+        assert_eq!(
+            guest.as_object_mut().unwrap().remove("learning"),
+            Some(json!(0))
+        );
+        assert_eq!(
+            guest.as_object_mut().unwrap().remove("lessons"),
+            Some(json!([]))
+        );
     }
     snapshot["operations"]
         .as_object_mut()
@@ -70,6 +79,10 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
                 "vet_wages_expense_cents",
                 "medicine_expense_cents",
             ] {
+                assert_eq!(breakdown.remove(key), Some(json!(0)));
+            }
+            // #116 adds donation and grant lines; nobody learns or donates here.
+            for key in ["donation_income_cents", "grant_income_cents"] {
                 assert_eq!(breakdown.remove(key), Some(json!(0)));
             }
             // #115 adds loan lines; nothing is borrowed here.
