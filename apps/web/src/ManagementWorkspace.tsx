@@ -58,6 +58,14 @@ export function money(cents: number) {
   })}`
 }
 
+/** A price with its cents, e.g. "$12" or "$3.50". */
+export function price(cents: number) {
+  const whole = Math.trunc(cents / 100)
+  const rest = Math.abs(cents % 100)
+  const sign = cents < 0 && whole === 0 ? "-" : ""
+  return rest === 0 ? `${sign}$${whole}` : `${sign}$${whole}.${String(rest).padStart(2, "0")}`
+}
+
 /** A park minute (since day 1, 00:00) as "Day 2 08:15". */
 export function parkTime(minute: number) {
   const day = Math.floor(minute / 1440) + 1
@@ -242,9 +250,10 @@ export function DailySummaryView({
       </Drill>
       <Drill label="Admissions" value={String(summary.admissions)}>
         <p>
-          {summary.admissions} guests × {money(summary.admission_price_cents)} ={" "}
-          {money(summary.admissions_income_cents)} today; {snapshot.guest_count} in the park now in{" "}
-          {snapshot.visits.groups_in_park} groups.
+          {summary.admissions} people admitted for {money(summary.admissions_income_cents)} today
+          (admission now {price(summary.admission_price_cents)});{" "}
+          {snapshot.pricing.turned_away_today} turned away; {snapshot.guest_count} in the park now
+          in {snapshot.visits.groups_in_park} groups.
         </p>
       </Drill>
       <Drill label="Visits ended" value={String(summary.exits)}>

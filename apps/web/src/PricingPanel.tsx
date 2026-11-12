@@ -4,7 +4,7 @@
 import { useId, useState, type KeyboardEvent } from "react"
 
 import type { AdmissionEvaluation, GateNote, PricingState, VisitorProfile } from "./game-types"
-import { money } from "./ManagementWorkspace"
+import { money, price } from "./ManagementWorkspace"
 
 export type PricingCommands = {
   setAdmission: (cents: number) => void
@@ -13,14 +13,6 @@ export type PricingCommands = {
   startCampaign: () => void
   /** zoo-core's forecast for a candidate price; changes nothing. */
   evaluateAdmission: (cents: number) => AdmissionEvaluation | null
-}
-
-/** A price with its cents, e.g. "$12" or "$3.50". */
-export function price(cents: number) {
-  const whole = Math.trunc(cents / 100)
-  const rest = Math.abs(cents % 100)
-  const sign = cents < 0 && whole === 0 ? "-" : ""
-  return rest === 0 ? `${sign}$${whole}` : `${sign}$${whole}.${String(rest).padStart(2, "0")}`
 }
 
 /** Exact dollars-and-cents text ("12", "12.5", "$12.50") as whole cents; `null` otherwise. */

@@ -1,6 +1,6 @@
 import type { LostDemand, StandOperations } from "./game-types"
-import { money } from "./ManagementWorkspace"
-import { PriceInput, price } from "./PricingPanel"
+import { money, price } from "./ManagementWorkspace"
+import { PriceInput } from "./PricingPanel"
 
 const LOST_REASONS: [keyof LostDemand, string][] = [
   ["queue_full", "queue full"],
