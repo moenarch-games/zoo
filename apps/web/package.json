@@ -16,7 +16,7 @@
     "build:web": "bun run assets && tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#231a70c9e8a4cc6575117d734507eaf81371f423",
+    "@moritzbrantner/three-d-renderer": "github:moritzbrantner/3d-lab#237de181a194874a8136059956d472123a91e888",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

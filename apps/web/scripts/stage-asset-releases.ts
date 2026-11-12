@@ -1,10 +1,12 @@
-// Stages the pinned asset-tooling releases for the web build (#59 S2, #86): `zoo-scenery` meshes
-// and `zoo-effects` particle flipbooks.
+// Stages the pinned asset-tooling releases for the web build (#59 S2, #86, #112): `zoo-scenery`
+// meshes, `zoo-effects` particle flipbooks and the animated `zoo-animals` characters.
 //
 // Per release Zoo pins three things in assets/<dir>/: the release tag and tar SHA-256
 // (<release>.pin.json), its own copy of the bundle's export.ref.json, and the release lineage.
 // `zoo-effects` also pins its own copy of the release descriptor (atlas layouts and burst
-// presets). This script downloads each tar (cached under .artifacts/), checks the pinned SHA-256,
+// presets). `zoo-animals` is a `gltf-resources-v1` bundle: its lineage is the release's own
+// lineage.json, and the staged directory keeps the verified bundle layout (manifest.json, each
+// pinned scene and its resources) so 3d-lab's bundle adapter reads it unchanged. This script downloads each tar (cached under .artifacts/), checks the pinned SHA-256,
 // verifies it with asset-tooling's own `pack-asset-bundle.ts --verify --ref` at the pinned
 // asset-tooling commit, and writes the files plus a provenance manifest to
 // apps/web/public/<release>/. Any mismatch fails the build.
@@ -41,6 +43,30 @@ type Lineage = {
   release: string
   parts: Record<string, { sha256: string; byteLength: number }>
 }
+type BundleEntry = {
+  key: string
+  variant: string
+  path: string
+  sha256: string
+  source: { sha256: string }
+  resources: { path: string; sha256: string; byteLength: number }[]
+}
+type AnimalLineage = {
+  release: string
+  profile: string
+  license: { spdx: string; attribution: string; evidenceUrl: string }
+  animals: Record<
+    string,
+    {
+      imported: { sha256: string }
+      provenance: { issue: string; recipe: Record<string, string>; generator: string }
+      observations: {
+        size: { width: number; depth: number; height: number }
+        clips: Record<string, { seconds: number }>
+      }
+    }
+  >
+}
 type EffectDescriptor = {
   schema: string
   effects: {
@@ -70,13 +96,14 @@ const readJson = async <T>(file: string) => JSON.parse(await readFile(file, "utf
 const releases = [
   { dir: path.join(root, "assets/scenery"), pinFile: "zoo-scenery.pin.json", extension: "glb" },
   { dir: path.join(root, "assets/effects"), pinFile: "zoo-effects.pin.json", extension: "png" },
+  { dir: path.join(root, "assets/animals"), pinFile: "zoo-animals.pin.json", extension: "gltf" },
 ] as const
 const pins = await Promise.all(
   releases.map(({ dir, pinFile }) => readJson<Pin>(path.join(dir, pinFile))),
 )
 const commit = pins[0]!.assetToolingCommit
 if (pins.some((pin) => pin.assetToolingCommit !== commit)) {
-  throw new Error("zoo-scenery and zoo-effects must pin the same asset-tooling commit")
+  throw new Error("every staged asset-tooling release must pin the same asset-tooling commit")
 }
 
 // The pinned asset-tooling checkout that verifies the tars.
@@ -115,7 +142,7 @@ const { readAssetBundleTar } = (await import(path.join(tooling, "src/asset-bundl
 for (const [index, { dir, extension }] of releases.entries()) {
   const pin = pins[index]!
   const name = pin.release
-  const lineage = await readJson<Lineage>(path.join(dir, "lineage.json"))
+  const lineage = await readJson<Lineage | AnimalLineage>(path.join(dir, "lineage.json"))
   const refPath = path.join(dir, "export.ref.json")
   if (lineage.release !== name) {
     throw new Error(`${name}: lineage.json is for release ${lineage.release}`)
@@ -157,9 +184,14 @@ for (const [index, { dir, extension }] of releases.entries()) {
 
   // Extract the verified closure with asset-tooling's own strict tar reader.
   const files = new Map(readAssetBundleTar(tar).map((entry) => [entry.path, entry.bytes]))
+  if (extension === "gltf") {
+    await stageCharacterBundle(pin, lineage as AnimalLineage, ref.sha256, files)
+    continue
+  }
   const manifest = JSON.parse(Buffer.from(files.get("manifest.json")!).toString("utf8")) as {
     assets: ManifestEntry[]
   }
+  const plain = lineage as Lineage
   const descriptor =
     extension === "png"
       ? await readJson<EffectDescriptor>(path.join(dir, `${name}.descriptor.json`))
@@ -180,7 +212,7 @@ for (const [index, { dir, extension }] of releases.entries()) {
     const bytes = files.get(entry.path)!
     if (
       sha256(bytes) !== entry.source.sha256 ||
-      lineage.parts[piece]?.sha256 !== entry.source.sha256
+      plain.parts[piece]?.sha256 !== entry.source.sha256
     ) {
       throw new Error(`${name}: ${piece} does not match the pinned lineage`)
     }
@@ -209,8 +241,87 @@ for (const [index, { dir, extension }] of releases.entries()) {
         manifestSha256: ref.sha256,
         assetToolingCommit: pin.assetToolingCommit,
         profile: pin.profile,
-        recipe: lineage.recipe,
-        provenance: lineage.provenance,
+        recipe: plain.recipe,
+        provenance: plain.provenance,
+        pieces,
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  console.log(
+    `Staged ${Object.keys(pieces).length} ${name} pieces from release ${name} (tar ${pin.tarSha256.slice(0, 12)})`,
+  )
+}
+
+/**
+ * Stages the pinned members of a verified `gltf-resources-v1` character bundle: the bundle's own
+ * manifest.json, each pinned scene with its resources at their bundle-relative paths, and a
+ * provenance manifest with the lineage facts the park view needs (clip names, full-size height).
+ */
+async function stageCharacterBundle(
+  pin: Pin,
+  lineage: AnimalLineage,
+  manifestSha256: string,
+  files: Map<string, Uint8Array>,
+) {
+  const name = pin.release
+  if (lineage.profile !== "quadruped-rigid") {
+    throw new Error(`${name}: unexpected lineage profile ${lineage.profile}`)
+  }
+  const manifestBytes = files.get("manifest.json")!
+  const manifest = JSON.parse(Buffer.from(manifestBytes).toString("utf8")) as {
+    assets: BundleEntry[]
+  }
+  const out = path.join(root, `apps/web/public/${name}`)
+  await rm(out, { recursive: true, force: true })
+  await mkdir(out, { recursive: true })
+  await writeFile(path.join(out, "manifest.json"), manifestBytes)
+  const write = async (relative: string, bytes: Uint8Array) => {
+    await mkdir(path.dirname(path.join(out, relative)), { recursive: true })
+    await writeFile(path.join(out, relative), bytes)
+  }
+  const pieces: Record<string, Record<string, unknown>> = {}
+  for (const [piece, { key, variant }] of Object.entries(pin.pieces)) {
+    const entry = manifest.assets.find((asset) => asset.key === key && asset.variant === variant)
+    if (!entry) {
+      throw new Error(`${name}: the release has no ${key} variant ${variant}`)
+    }
+    const animal = lineage.animals[key]
+    const scene = files.get(entry.path)
+    if (!scene || sha256(scene) !== entry.sha256 || animal?.imported.sha256 !== entry.source.sha256) {
+      throw new Error(`${name}: ${piece} does not match the pinned lineage`)
+    }
+    await write(entry.path, scene)
+    for (const resource of entry.resources) {
+      const bytes = files.get(resource.path)
+      if (!bytes || sha256(bytes) !== resource.sha256) {
+        throw new Error(`${name}: ${piece} resource ${resource.path} does not match its manifest`)
+      }
+      await write(resource.path, bytes)
+    }
+    pieces[piece] = {
+      key,
+      variant,
+      sceneSha256: entry.sha256,
+      height: animal.observations.size.height,
+      clips: Object.keys(animal.observations.clips),
+      issue: animal.provenance.issue,
+      recipe: animal.provenance.recipe,
+    }
+  }
+  await writeFile(
+    path.join(out, `${name.replace(/^zoo-/, "")}.json`),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        release: name,
+        tarSha256: pin.tarSha256,
+        manifestSha256,
+        assetToolingCommit: pin.assetToolingCommit,
+        profile: pin.profile,
+        license: lineage.license,
+        provenance: Object.values(lineage.animals)[0]?.provenance.generator ?? "",
         pieces,
       },
       null,

@@ -78,6 +78,45 @@ export type SceneFrameInput = {
   timeSeconds: number
   animate: boolean
   resolveActor: ActorResolver
+  /**
+   * Full-size height in metres of each loaded `zoo-animals` character, keyed by the species'
+   * presentation `asset_ref` (#112). Null when the characters failed to load: the animals then
+   * fall back to the readable low-poly figures.
+   */
+  animalHeights: ReadonlyMap<string, number> | null
+}
+
+/** The uniform park scale of the `zoo-animals` characters (metres → park units). */
+export const ANIMAL_SCALE = 0.32
+
+/** The clip zoo-core's animal state selects (#112); clip timing never feeds back. */
+export type AnimalClip = "idle" | "walk" | "rest"
+
+/** One animal presented by an imported `zoo-animals` character. */
+export type AnimalPose = {
+  id: number
+  /** The species' presentation `asset_ref`. */
+  species: SpeciesKey
+  x: number
+  z: number
+  lift: number
+  /** Yaw (about +y, 0 facing +z) of the animal's presented travel; null keeps its last facing. */
+  heading: number | null
+  clip: AnimalClip
+  /** Cosmetic seed: desynchronizes clip phases between animals. */
+  seed: number
+}
+
+/**
+ * zoo-core's activity → clip: a walking animal walks, an unwell one lies down (zoo-core rests it
+ * in place until treated, #109), and every other resting animal stands idle. Feeding has no
+ * authoritative per-animal state yet (#107), so `feed` is never played.
+ */
+export function animalClip(animal: Animal): AnimalClip {
+  if (animal.activity === "walking") {
+    return "walk"
+  }
+  return animal.health.status === "unwell" ? "rest" : "idle"
 }
 
 /** Screen-pickable anchors for entities that do not map 1:1 to a clicked ground tile. */
@@ -101,6 +140,8 @@ export type SceneFrame = {
   nodes: RendererSceneNode[]
   anchors: PickAnchor[]
   presence: Presence[]
+  /** Animals drawn as imported characters; empty while the fallback figures are in use. */
+  animals: AnimalPose[]
 }
 
 const IDENTITY: Quat = [0, 0, 0, 1]
@@ -1483,7 +1524,8 @@ function habitatNodes(habitat: Habitat, selected: boolean, kit: SceneryKit): Ren
 }
 
 // ---------------------------------------------------------------------------------------------
-// Animals — low-poly figures built facing local +z.
+// Animals — imported `zoo-animals` characters (#112), posed by the park view's presenter, with
+// the low-poly figures (built facing local +z) as the readable fallback when they fail to load.
 
 type Figure = ReturnType<typeof model>
 
@@ -1583,29 +1625,52 @@ function animalFigure(m: Figure, species: SpeciesKey, stride: number): RendererS
 function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presence[]) {
   const nodes: RendererSceneNode[] = []
   const anchors: PickAnchor[] = []
+  const poses: AnimalPose[] = []
   const cells = environmentCells(input.snapshot)
   for (const animal of animals) {
     // A stable cosmetic offset keeps animals sharing a tile apart.
     const spot = animal.cosmetic_seed % 6
     const slotX = ((spot % 3) - 1) * 0.26
     const slotZ = ((Math.floor(spot / 3) % 2) - 0.5) * 0.3
-    const [x, z] = input.resolveActor(
-      `animal:${animal.id}`,
-      animal.x + 0.5 + slotX,
-      animal.y + 0.5 + slotZ,
-    )
-    const phase = animal.animation_phase * 0.37 + animal.id
-    const wander = input.animate ? Math.sin(input.timeSeconds * 0.35 + phase) * 0.8 : 0
-    const walking = animal.activity === "walking"
-    const stride = input.animate && walking ? Math.sin(input.timeSeconds * 4 + phase) : 0
-    const yaw = phase + wander
+    const goalX = animal.x + 0.5 + slotX
+    const goalZ = animal.y + 0.5 + slotZ
+    const [x, z] = input.resolveActor(`animal:${animal.id}`, goalX, goalZ)
     const lift = standingLift(cells, x, z)
-    const m = model(`animal:${animal.id}`, { x, z }, yaw, lift)
     const size = ANIMAL_SHADOW_SIZE[animal.species] ?? 0.22
-    nodes.push(
-      blobShadow(`animal:${animal.id}:shadow`, x, z, size, 0.22, lift),
-      ...animalFigure(m, animal.species, stride),
-    )
+    nodes.push(blobShadow(`animal:${animal.id}:shadow`, x, z, size, 0.22, lift))
+    const height = input.animalHeights?.get(animal.species)
+    let pickHeight = ANIMAL_PICK_HEIGHT[animal.species] ?? 0.25
+    let pickRadius = size + 0.1
+    if (height !== undefined) {
+      // Face the presented travel, else the tile zoo-core is walking it to.
+      let heading: number | null = null
+      if (Math.hypot(goalX - x, goalZ - z) > 0.03) {
+        heading = Math.atan2(goalX - x, goalZ - z)
+      } else if (animal.activity === "walking" && animal.target) {
+        const dx = animal.target.x - animal.x
+        const dz = animal.target.y - animal.y
+        heading = dx === 0 && dz === 0 ? null : Math.atan2(dx, dz)
+      }
+      poses.push({
+        id: animal.id,
+        species: animal.species,
+        x,
+        z,
+        lift,
+        heading,
+        clip: animalClip(animal),
+        seed: animal.cosmetic_seed,
+      })
+      pickHeight = height * ANIMAL_SCALE * 0.55
+      pickRadius = Math.max(pickRadius, height * ANIMAL_SCALE * 0.45)
+    } else {
+      const phase = animal.animation_phase * 0.37 + animal.id
+      const wander = input.animate ? Math.sin(input.timeSeconds * 0.35 + phase) * 0.8 : 0
+      const walking = animal.activity === "walking"
+      const stride = input.animate && walking ? Math.sin(input.timeSeconds * 4 + phase) : 0
+      const m = model(`animal:${animal.id}`, { x, z }, phase + wander, lift)
+      nodes.push(...animalFigure(m, animal.species, stride))
+    }
     if (animal.id === input.overlay.selectedAnimalId) {
       nodes.push(
         node(
@@ -1620,16 +1685,15 @@ function animalNodes(animals: Animal[], input: SceneFrameInput, presence: Presen
       )
     }
     presence.push({ key: `animal:${animal.id}`, kind: "animal", x, z, working: false })
-    const height = ANIMAL_PICK_HEIGHT[animal.species] ?? 0.25
     anchors.push({
       kind: "animal",
       id: animal.id,
       habitatId: animal.habitat_id,
-      point: [x, height + lift, z],
-      radius: size + 0.1,
+      point: [x, pickHeight + lift, z],
+      radius: pickRadius,
     })
   }
-  return { nodes, anchors }
+  return { nodes, anchors, poses }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2238,7 +2302,7 @@ export function buildActorFrame(input: SceneFrameInput): SceneFrame {
     ),
     { kind: "depot", point: [depot.x + 0.5, 0.5, depot.y + 0.5], radius: 0.55 },
   ]
-  return { nodes, anchors, presence }
+  return { nodes, anchors, presence, animals: animals.poses }
 }
 
 /** Resolve validated content IDs to the renderer's existing presentation profiles.

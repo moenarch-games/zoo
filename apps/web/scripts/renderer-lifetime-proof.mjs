@@ -57,7 +57,8 @@ export async function runRendererLifetimeAcceptance(context) {
     const url = new URL(previewUrl)
     url.search = query
     await cdp.send("Page.navigate", { url: url.href })
-    await enterNewPark({ evaluate, sleep })
+    // Riverside's animals (#112) put imported characters into every load/dispose cycle.
+    await enterNewPark({ evaluate, sleep }, { scenario: "living-starter" })
   }
   const resources = () => evaluate(`window.__zooParkView.resources()`)
   const lifetime = () => evaluate(`({...window.__zooRendererLifetime})`)
@@ -65,6 +66,7 @@ export async function runRendererLifetimeAcceptance(context) {
     window.__zooRendererLifetime?.mounts === ${mounts} &&
     window.__zooParkView?.ready && window.__zooParkView.nodeCount() > 500 &&
     window.__zooParkView.resources() !== null &&
+    window.__zooParkView.animals().instances > 0 &&
     document.querySelector('.park-view[data-renderer="ready"] canvas.park-canvas'))`
 
   // --- 1. Repeated load/dispose returns to the same live resources ------------------------------

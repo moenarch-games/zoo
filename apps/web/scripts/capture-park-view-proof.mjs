@@ -3,6 +3,7 @@ import {existsSync, mkdirSync, rmSync, writeFileSync} from "node:fs"
 
 import {runConstructionAcceptance} from "./construction-proof.mjs"
 import {runAnimalIdentityAcceptance} from "./animal-identity-proof.mjs"
+import {runAnimatedAnimalsAcceptance} from "./animated-animals-proof.mjs"
 import {runHabitatDesignAcceptance} from "./habitat-design-proof.mjs"
 import {runCirculationAcceptance} from "./circulation-proof.mjs"
 import {runLandExpansionAcceptance} from "./land-expansion-proof.mjs"
@@ -523,6 +524,9 @@ try {
 
   // #96 individual animals: pick two of one habitat, inspect needs, rename, locate, reload, phone tap.
   await runAnimalIdentityAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, mouse, frame, screenshot})
+
+  // #112 animated animals: zoo-animals characters in the habitat, clips from zoo-core, fallback.
+  await runAnimatedAnimalsAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, mouse, frame, screenshot})
 
   // #97 habitat design: build a suitable habitat, see a bad edit refused, recover, phone tap.
   await runHabitatDesignAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})

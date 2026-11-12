@@ -2,7 +2,7 @@
 // production preview and headless Chromium. On the populated Riverside zoo it picks two animals
 // of one habitat on the canvas and sees two distinct individuals with zoo-core's name, activity
 // and needs, renames one, locates it, finds it in the habitat roster, saves, reloads, continues
-// and picks it again under its new name; then taps an animal on a phone-sized touch viewport.
+// and picks it again under its new name; then taps another animal on a phone-sized touch viewport.
 import { enterNewPark } from "./park-library-proof.mjs"
 
 const MENU = `[aria-label="Park menu"][role="dialog"]`
@@ -143,17 +143,26 @@ export async function runAnimalIdentityAcceptance(context) {
   })
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 })
   await evaluate(`document.querySelector('.window-title button')?.click()`)
+  // Fold the scenario goals so they do not cover the habitat on the phone.
+  await evaluate(`document.querySelectorAll('details[open] > summary').forEach((summary) => summary.click())`)
   await sleep(600)
-  const tap = await animalPoint(3)
+  // The first other animal the phone's side panel does not cover (where the animals stand
+  // depends on how long the park ran before the pause).
+  const tapped = await evaluate(`[3, 4, 1, 5, 6, 7].find((id) => {
+    const point = window.__zooParkView.animalPoint(id)
+    return point?.visible && document.elementFromPoint(point.x, point.y)?.classList.contains('park-canvas')
+  }) ?? null`)
+  assert(tapped !== null, "#96: no animal is uncovered on the phone")
+  const tap = await animalPoint(tapped)
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: tap.x, y: tap.y, id: 0 }] })
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
   await frame()
-  await waitFor("animal #3's inspector on the phone", `document.querySelector('.animal-card')?.dataset.animalId === '3'`)
+  await waitFor(`animal #${tapped}'s inspector on the phone`, `document.querySelector('.animal-card')?.dataset.animalId === '${tapped}'`)
   await screenshot("test-results/animal-inspector-phone.png")
   await cdp.send("Emulation.clearDeviceMetricsOverride")
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false })
 
   console.log(
-    `Animal identity acceptance passed: picked animals #1 and #2 of one habitat as distinct individuals (${first.title}: ${first.activity}), renamed #2 to Biscuit, located it, found it in the roster, kept it through save → reload → continue, and tapped animal #3 on a phone.`,
+    `Animal identity acceptance passed: picked animals #1 and #2 of one habitat as distinct individuals (${first.title}: ${first.activity}), renamed #2 to Biscuit, located it, found it in the roster, kept it through save → reload → continue, and tapped animal #${tapped} on a phone.`,
   )
 }
