@@ -30,6 +30,15 @@ const FRAMING_SAMPLES: usize = 24;
 const FRAMING_ITERATIONS: usize = 32;
 /// How far (in tiles) the orbit target may be dragged past the park edge.
 const PAN_MARGIN: f32 = 3.0;
+/// Watching an animal (#141) brings the camera at least this close (in tiles from the animal),
+/// so an individual reads clearly in any park size; a closer view is kept.
+const FOLLOW_DISTANCE: f32 = 7.0;
+/// Exponential approach rate (per second) of the follow target and zoom: about 0.6 s to settle.
+const FOLLOW_SMOOTHING_PER_SECOND: f32 = 5.0;
+/// A single follow step never integrates more than this, so a stalled tab does not jump.
+const FOLLOW_MAX_STEP_SECONDS: f32 = 0.25;
+/// Below this distance (tiles) or zoom ratio the follow camera snaps onto its goal.
+const FOLLOW_SNAP: f32 = 1.0e-3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParkCameraError {
@@ -113,6 +122,15 @@ pub struct ParkCameraRig {
     yaw_degrees: f32,
     pitch_degrees: f32,
     zoom: f32,
+    follow: Option<FollowState>,
+}
+
+/// Presentation-only follow state (#141): the ground point being watched and, until it is
+/// reached or the player zooms, the zoom the camera is easing towards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FollowState {
+    goal: Vec3,
+    zoom_goal: Option<f32>,
 }
 
 impl ParkCameraRig {
@@ -132,6 +150,7 @@ impl ParkCameraRig {
             yaw_degrees: DEFAULT_YAW_DEGREES.rem_euclid(360.0),
             pitch_degrees: DEFAULT_PITCH_DEGREES,
             zoom: 1.0,
+            follow: None,
         })
     }
 
@@ -161,6 +180,7 @@ impl ParkCameraRig {
             yaw_degrees: DEFAULT_YAW_DEGREES.rem_euclid(360.0),
             pitch_degrees: DEFAULT_PITCH_DEGREES,
             zoom: 1.0,
+            follow: None,
             ..*self
         };
     }
@@ -188,6 +208,14 @@ impl ParkCameraRig {
             return Err(ParkCameraError::InvalidZoomFactor);
         }
         let anchor = anchor.validate()?;
+        if let Some(follow) = self.follow.as_mut() {
+            // Watching keeps the animal centered: zoom about the target, and the player's zoom
+            // replaces the follow camera's own zoom-in.
+            validate_aspect(aspect)?;
+            follow.zoom_goal = None;
+            self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+            return Ok(());
+        }
         let before = self.pick_ground(anchor, aspect)?;
         self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
         let after = self.pick_ground(anchor, aspect)?;
@@ -198,12 +226,14 @@ impl ParkCameraRig {
     }
 
     /// Drags the ground so the point under `from` ends up under `to` ("grab the map" panning).
+    /// Panning is how the player looks elsewhere, so it ends any follow.
     pub fn pan_drag(
         &mut self,
         from: ScreenPoint,
         to: ScreenPoint,
         aspect: f32,
     ) -> Result<(), ParkCameraError> {
+        self.follow = None;
         let from = self.pick_ground(from.validate()?, aspect)?;
         let to = self.pick_ground(to.validate()?, aspect)?;
         if let (Some(from), Some(to)) = (from, to) {
@@ -224,6 +254,84 @@ impl ParkCameraRig {
         if zoom.is_finite() {
             self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
         }
+    }
+
+    /// Watches a ground point (#141), normally an individual animal's presented position. The
+    /// first call starts following and eases the camera in to at most [`FOLLOW_DISTANCE`] from
+    /// the animal, whatever the park's size (a closer view is kept); later calls only move the
+    /// goal. The target itself moves in [`Self::step_follow`], so a moving animal is tracked
+    /// smoothly. Orbit, tilt and zoom stay free while following; pan, reset, focus and
+    /// [`Self::release_follow`] end it. Non-finite points are ignored.
+    pub fn follow_point(&mut self, x: f32, z: f32, aspect: f32) -> Result<(), ParkCameraError> {
+        validate_aspect(aspect)?;
+        if !x.is_finite() || !z.is_finite() {
+            return Ok(());
+        }
+        let goal = Vec3::new(
+            x.clamp(-PAN_MARGIN, self.park_width + PAN_MARGIN),
+            0.0,
+            z.clamp(-PAN_MARGIN, self.park_depth + PAN_MARGIN),
+        );
+        match self.follow.as_mut() {
+            Some(follow) => follow.goal = goal,
+            None => {
+                let watch_zoom =
+                    (self.fit_distance(aspect)? / FOLLOW_DISTANCE).clamp(MIN_ZOOM, MAX_ZOOM);
+                self.follow = Some(FollowState {
+                    goal,
+                    zoom_goal: (self.zoom < watch_zoom).then_some(watch_zoom),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_following(self) -> bool {
+        self.follow.is_some()
+    }
+
+    /// Ends following and leaves the camera where it is.
+    pub fn release_follow(&mut self) {
+        self.follow = None;
+    }
+
+    /// Advances the follow camera by `seconds` of presentation time with a frame-rate
+    /// independent exponential approach. Returns whether the camera moved.
+    pub fn step_follow(&mut self, seconds: f32) -> bool {
+        let Some(mut follow) = self.follow else {
+            return false;
+        };
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return false;
+        }
+        let blend =
+            1.0 - (-seconds.min(FOLLOW_MAX_STEP_SECONDS) * FOLLOW_SMOOTHING_PER_SECOND).exp();
+        let mut moved = false;
+        let dx = follow.goal.x - self.target.x;
+        let dz = follow.goal.z - self.target.z;
+        if dx != 0.0 || dz != 0.0 {
+            moved = true;
+            if dx.hypot(dz) <= FOLLOW_SNAP {
+                self.target.x = follow.goal.x;
+                self.target.z = follow.goal.z;
+            } else {
+                self.target.x += dx * blend;
+                self.target.z += dz * blend;
+            }
+        }
+        if let Some(goal) = follow.zoom_goal {
+            moved = true;
+            // Ease in log space so the zoom-in feels uniform at every distance.
+            let next = (self.zoom.ln() + (goal.ln() - self.zoom.ln()) * blend).exp();
+            if (next / goal - 1.0).abs() <= FOLLOW_SNAP {
+                self.zoom = goal;
+                follow.zoom_goal = None;
+            } else {
+                self.zoom = next.clamp(MIN_ZOOM, MAX_ZOOM);
+            }
+        }
+        self.follow = Some(follow);
+        moved
     }
 
     fn shift_target(&mut self, delta_x: f32, delta_z: f32) {
@@ -454,6 +562,22 @@ impl ParkCameraBridge {
 
     pub fn orbit_by_degrees(&mut self, yaw_delta: f32, pitch_delta: f32) {
         self.rig.orbit_by_degrees(yaw_delta, pitch_delta);
+    }
+
+    pub fn follow_point(&mut self, x: f32, z: f32, aspect: f32) -> Result<(), JsValue> {
+        self.rig.follow_point(x, z, aspect).map_err(js_error)
+    }
+
+    pub fn step_follow(&mut self, seconds: f32) -> bool {
+        self.rig.step_follow(seconds)
+    }
+
+    pub fn release_follow(&mut self) {
+        self.rig.release_follow();
+    }
+
+    pub fn is_following(&self) -> bool {
+        self.rig.is_following()
     }
 
     pub fn zoom_at(
@@ -734,6 +858,183 @@ mod tests {
             rig.pick_ground(ScreenPoint::new(f32::NAN, 0.0), DESKTOP),
             Err(ParkCameraError::InvalidScreenPoint)
         );
+    }
+
+    fn settle(rig: &mut ParkCameraRig) {
+        for _ in 0..240 {
+            rig.step_follow(1.0 / 60.0);
+        }
+    }
+
+    fn center_ground(rig: ParkCameraRig, aspect: f32) -> Vec3 {
+        rig.pick_ground(ScreenPoint::new(0.0, 0.0), aspect)
+            .expect("pick")
+            .expect("the screen center reaches the ground")
+    }
+
+    #[test]
+    fn following_eases_onto_the_animal_without_overshoot_and_zooms_in() {
+        let mut rig = rig();
+        rig.follow_point(4.25, 11.5, DESKTOP)
+            .expect("aspect is valid");
+        assert!(rig.is_following());
+        let goal = Vec3::new(4.25, 0.0, 11.5);
+        let mut previous = (rig.target().x - goal.x).hypot(rig.target().z - goal.z);
+        let mut previous_zoom = rig.zoom();
+        assert!(
+            rig.step_follow(1.0 / 60.0),
+            "the first step moves the camera"
+        );
+        for _ in 0..240 {
+            rig.step_follow(1.0 / 60.0);
+            let distance = (rig.target().x - goal.x).hypot(rig.target().z - goal.z);
+            assert!(
+                distance <= previous,
+                "the target never moves away from the animal"
+            );
+            assert!(
+                rig.zoom() >= previous_zoom
+                    && rig.distance(DESKTOP).expect("distance") >= FOLLOW_DISTANCE - 1.0e-3
+            );
+            previous = distance;
+            previous_zoom = rig.zoom();
+        }
+        assert_eq!(rig.target(), goal);
+        assert!((rig.distance(DESKTOP).expect("distance") - FOLLOW_DISTANCE).abs() < 1.0e-2);
+        assert!(
+            !rig.step_follow(1.0 / 60.0),
+            "a settled follow camera stays still"
+        );
+        for aspect in [DESKTOP, PHONE] {
+            let center = center_ground(rig, aspect);
+            assert!((center.x - goal.x).abs() < 1.0e-2 && (center.z - goal.z).abs() < 1.0e-2);
+        }
+    }
+
+    #[test]
+    fn following_tracks_a_moving_animal_and_is_frame_rate_independent() {
+        let mut coarse = rig();
+        let mut fine = rig();
+        for step in 0..30 {
+            // The animal walks one tile per second across the park.
+            let x = 3.0 + step as f32 * 0.1;
+            coarse
+                .follow_point(x, 6.5, DESKTOP)
+                .expect("aspect is valid");
+            fine.follow_point(x, 6.5, DESKTOP).expect("aspect is valid");
+            coarse.step_follow(0.1);
+            for _ in 0..10 {
+                fine.step_follow(0.01);
+            }
+            assert!((coarse.target().x - fine.target().x).abs() < 1.0e-3);
+            assert!((coarse.zoom() - fine.zoom()).abs() < 1.0e-3);
+        }
+        assert!(
+            (coarse.target().x - 5.9).abs() < 0.5,
+            "the camera keeps up with the animal"
+        );
+        let before = coarse.target();
+        coarse
+            .follow_point(f32::NAN, 6.5, DESKTOP)
+            .expect("aspect is valid");
+        assert_eq!(
+            coarse.follow_point(1.0, 1.0, f32::NAN),
+            Err(ParkCameraError::InvalidAspect)
+        );
+        coarse.step_follow(f32::INFINITY);
+        coarse.step_follow(-1.0);
+        assert_eq!(coarse.target(), before, "invalid input changes nothing");
+    }
+
+    #[test]
+    fn a_closer_view_is_kept_when_following_starts() {
+        let mut rig = rig();
+        rig.zoom_at(6.5, ScreenPoint::new(0.0, 0.0), DESKTOP)
+            .expect("zoom");
+        let zoom = rig.zoom();
+        rig.follow_point(10.0, 7.0, DESKTOP)
+            .expect("aspect is valid");
+        settle(&mut rig);
+        assert_eq!(rig.zoom(), zoom);
+    }
+
+    #[test]
+    fn following_survives_full_orbit_at_both_tilt_bounds_and_zoom() {
+        for aspect in [DESKTOP, PHONE] {
+            for pitch_extreme in [-200.0, 200.0] {
+                let mut rig = rig();
+                rig.follow_point(15.5, 3.5, DESKTOP)
+                    .expect("aspect is valid");
+                settle(&mut rig);
+                rig.orbit_by_degrees(0.0, pitch_extreme);
+                for _ in 0..36 {
+                    rig.orbit_by_degrees(10.0, 0.0);
+                    rig.step_follow(1.0 / 60.0);
+                    assert!(rig.is_following());
+                    let center = center_ground(rig, aspect);
+                    assert!(
+                        (center.x - 15.5).abs() < 1.0e-2 && (center.z - 3.5).abs() < 1.0e-2,
+                        "the animal stays centered at yaw {} pitch {}",
+                        rig.yaw_degrees(),
+                        rig.pitch_degrees(),
+                    );
+                }
+                // Zooming while following keeps the animal centered rather than the cursor point.
+                rig.zoom_at(1.5, ScreenPoint::new(0.6, -0.4), aspect)
+                    .expect("zoom");
+                assert!(rig.is_following());
+                let center = center_ground(rig, aspect);
+                assert!((center.x - 15.5).abs() < 1.0e-2 && (center.z - 3.5).abs() < 1.0e-2);
+            }
+        }
+    }
+
+    #[test]
+    fn pan_reset_focus_and_release_end_following() {
+        let mut panned = rig();
+        panned
+            .follow_point(5.0, 5.0, DESKTOP)
+            .expect("aspect is valid");
+        panned
+            .pan_drag(
+                ScreenPoint::new(0.0, 0.0),
+                ScreenPoint::new(0.1, 0.0),
+                DESKTOP,
+            )
+            .expect("pan");
+        assert!(!panned.is_following());
+        let target = panned.target();
+        assert!(!panned.step_follow(0.1));
+        assert_eq!(
+            panned.target(),
+            target,
+            "a released camera stays where it is"
+        );
+
+        let mut reset = rig();
+        reset
+            .follow_point(5.0, 5.0, DESKTOP)
+            .expect("aspect is valid");
+        settle(&mut reset);
+        reset.reset();
+        assert_eq!(reset, rig());
+
+        let mut focused = rig();
+        focused
+            .follow_point(5.0, 5.0, DESKTOP)
+            .expect("aspect is valid");
+        focused.focus_tile(2.0, 2.0, 1.8);
+        assert!(!focused.is_following());
+
+        let mut released = rig();
+        released
+            .follow_point(5.0, 5.0, DESKTOP)
+            .expect("aspect is valid");
+        released.step_follow(0.05);
+        released.release_follow();
+        let target = released.target();
+        assert!(!released.is_following() && !released.step_follow(0.1));
+        assert_eq!(released.target(), target);
     }
 
     #[test]

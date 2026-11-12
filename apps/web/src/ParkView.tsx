@@ -58,6 +58,14 @@ type Props = {
   cornerTool?: boolean
   /** Each new token reframes the camera: on `focus` (a scenario objective) or the whole park. */
   camera: CameraRequest
+  /**
+   * The animal the camera watches (#141), by stable ID, or `null`. Following is presentation
+   * only: zoo-scene eases the camera onto the animal's presented position every frame while
+   * orbit, tilt and zoom stay free.
+   */
+  follow?: number | null
+  /** The view ended following by itself: a pan, Escape or the reset key. */
+  onFollowEnd?: () => void
   tooltip?: ReactNode
   onTileDown: (tile: Point) => void
   onTileDrag: (tile: Point) => void
@@ -119,6 +127,8 @@ const MULTI_TOUCH_DECISION_PX = 14
 type ViewDebugHook = {
   ready: boolean
   camera: () => { yawDegrees: number; pitchDegrees: number; zoom: number; target: Vec3 } | null
+  /** The animal the zoo-scene follow camera is tracking (#141), or `null`. */
+  followAnimalId: () => number | null
   projectWorld: (point: Vec3) => { x: number; y: number; visible: boolean } | null
   /** The screen point of animal `id`'s rendered pick anchor (#96 browser proof). */
   animalPoint: (id: number) => { x: number; y: number; visible: boolean } | null
@@ -253,6 +263,10 @@ export default function ParkView(props: Props) {
     const pointers = new Map<number, { x: number; y: number; type: string }>()
     const actors = new Map<string, { x: number; z: number; seen: boolean }>()
     let actorsMoving = false
+    // The animal zoo-scene is following, and one whose follow the view itself ended (so it is
+    // not re-engaged before the app clears its request).
+    let following: number | null = null
+    let followEnded: number | null = null
 
     const aspect = () => viewport.width / viewport.height
 
@@ -375,6 +389,42 @@ export default function ParkView(props: Props) {
       }
     }
 
+    // Feeds the watched animal's presented position (last frame's pick anchor) to the zoo-scene
+    // follow camera (#141). A pan, Escape or reset inside the view ends following in zoo-scene;
+    // that is reported once so the app drops its request.
+    const updateFollow = (requested: number | null, dt: number) => {
+      if (!bridge) {
+        return
+      }
+      if (requested === null) {
+        followEnded = null
+        following = null
+        if (bridge.is_following()) {
+          bridge.release_follow()
+        }
+        return
+      }
+      if (requested === followEnded) {
+        return
+      }
+      if (following === requested && !bridge.is_following()) {
+        following = null
+        followEnded = requested
+        propsRef.current.onFollowEnd?.()
+        return
+      }
+      const anchor = anchors.find((entry) => entry.kind === "animal" && entry.id === requested)
+      if (!anchor) {
+        return
+      }
+      following = requested
+      followEnded = null
+      bridge.follow_point(anchor.point[0], anchor.point[2], aspect())
+      if (bridge.step_follow(dt)) {
+        cameraDirtyRef.current = true
+      }
+    }
+
     const renderFrame = (now: number) => {
       frameHandle = window.requestAnimationFrame(renderFrame)
       if (!renderer || !bridge || !kit) {
@@ -384,6 +434,7 @@ export default function ParkView(props: Props) {
       lastTime = now
       const current = propsRef.current
       try {
+        updateFollow(current.follow ?? null, dt)
         let cameraChanged = false
         if (cameraDirtyRef.current || !camera) {
           camera = JSON.parse(bridge.frame_json(aspect())) as CameraFrame
@@ -708,7 +759,11 @@ export default function ParkView(props: Props) {
             bridge?.orbit_by_degrees(0, (next.mid[1] - gesture.mid[1]) * TILT_DEGREES_PER_PIXEL)
             cameraDirtyRef.current = true
           } else {
-            panBetween(gesture.mid, next.mid)
+            // While watching an animal (#141) a pinch or twist zooms and orbits around it; the
+            // drift of the fingers' midpoint must not pan the camera away and end following.
+            if (!bridge?.is_following()) {
+              panBetween(gesture.mid, next.mid)
+            }
             zoomAt(next.distance / gesture.distance, next.mid[0], next.mid[1])
             let turn = next.angle - gesture.angle
             if (turn > Math.PI) {
@@ -809,6 +864,9 @@ export default function ParkView(props: Props) {
           if (gesture?.kind === "tool" || gesture?.kind === "toolPending") {
             endToolGesture(false)
             gesture = null
+          } else if (bridge?.is_following()) {
+            // Stops watching an animal (#141); the next frame reports it to the app.
+            bridge.release_follow()
           }
           break
         case "ArrowLeft":
@@ -879,6 +937,7 @@ export default function ParkView(props: Props) {
             zoom: camera.zoom,
             target: camera.target,
           },
+        followAnimalId: () => (bridge?.is_following() ? following : null),
         projectWorld: (point) => {
           if (!camera) {
             return null
@@ -1071,7 +1130,7 @@ export default function ParkView(props: Props) {
         ref={canvasRef}
         className="park-canvas"
         tabIndex={0}
-        aria-label="Zoo park 3D view. Drag to pan, right-drag to rotate, scroll to zoom."
+        aria-label="Zoo park 3D view. Drag to pan, right-drag to rotate, scroll to zoom. Click an animal to watch it; Escape stops watching."
       />
       {props.tooltip && (
         <div ref={tooltipRef} className="park-tooltip bevel">

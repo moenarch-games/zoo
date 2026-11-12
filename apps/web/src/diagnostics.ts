@@ -90,6 +90,8 @@ declare global {
   // oxlint-disable-next-line typescript/consistent-type-definitions -- global augmentation requires interface merging.
   interface Window {
     __zooDiagnostics?: { exportText: () => string }
+    /** The complete authoritative park as a `zoo-save` document; read-only (#141 proof). */
+    __zooSimulation?: { stateJson: () => string | null; snapshotJson: () => string | null }
     __zooFaults?: {
       simulation: (kind: string) => string
       /** Unmounts and remounts the park view, exercising the renderer's full load/dispose cycle. */

@@ -522,8 +522,9 @@ try {
   // #95 non-rectangular habitats: draw an L outline, inspect, move its gate, reshape, cancel, undo.
   await runHabitatShapesAcceptance({cdp, evaluate, assert, sleep, previewUrl, project, tile, clickButton, mouse, key, frame, screenshot})
 
-  // #96 individual animals: pick two of one habitat, inspect needs, rename, locate, reload, phone tap.
-  await runAnimalIdentityAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, mouse, frame, screenshot})
+  // #96 individual animals and #141 watch/follow: watch, follow through orbit, distinct second
+  // animal, inspect, rename, locate, reload, follow a walker, phone tap and touch stop.
+  await runAnimalIdentityAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, mouse, key, frame, screenshot})
 
   // #112 animated animals: zoo-animals characters in the habitat, clips from zoo-core, fallback.
   await runAnimatedAnimalsAcceptance({cdp, evaluate, assert, sleep, previewUrl, clickButton, mouse, frame, screenshot})
