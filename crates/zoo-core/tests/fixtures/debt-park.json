@@ -1151,6 +1151,17 @@
         "y": 7
       }
     ],
+    "conditions": {
+      "definition": null,
+      "history": [],
+      "next_event_day": 1,
+      "planned_through_day": 7,
+      "rules": {
+        "events": true,
+        "weather_effects": true
+      },
+      "scheduled": null
+    },
     "day": 6,
     "depot": {
       "x": 2,
@@ -3005,5 +3016,5 @@
       }
     ]
   },
-  "schema_version": 21
+  "schema_version": 22
 }

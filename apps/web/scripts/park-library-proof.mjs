@@ -126,7 +126,7 @@ export async function runParkLibraryAcceptance(context) {
   const cash = () => evaluate(`document.querySelector('.stat strong')?.textContent ?? ''`)
   const hudClock = (page = evaluate) =>
     page(
-      `[...document.querySelectorAll('.stat')].find((stat) => stat.querySelector('span')?.textContent === 'Day')?.querySelector('strong')?.textContent ?? ''`,
+      `[...document.querySelectorAll('.stat')].find((stat) => stat.querySelector('span')?.textContent.startsWith('Day'))?.querySelector('strong')?.textContent ?? ''`,
     )
   const status = (page = evaluate) =>
     page(`document.querySelector('.save-status')?.textContent ?? ''`)

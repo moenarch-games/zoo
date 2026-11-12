@@ -11,6 +11,13 @@ import {
 } from "react"
 
 import { AnimalHealthPanel } from "./AnimalHealth"
+import {
+  ConditionsPanel,
+  conditionsLabel,
+  loadDisplaySettings,
+  storeDisplaySettings,
+  type DisplaySettings,
+} from "./ConditionsPanel"
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import { EducationPanel, type EducationCommands } from "./EducationPanel"
 import {
@@ -346,6 +353,12 @@ export default function App() {
   const [selectedConcessionId, setSelectedConcessionId] = useState<number | null>(null)
   // #94: the management workspace (null when closed) and the active overlay.
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab | null>(null)
+  // Lighting and weather visuals (#118): browser display settings, never game rules.
+  const [display, setDisplay] = useState<DisplaySettings>(loadDisplaySettings)
+  const changeDisplay = (settings: DisplaySettings) => {
+    setDisplay(settings)
+    storeDisplaySettings(settings)
+  }
   const [overlayKind, setOverlayKind] = useState<OverlayKind | null>(null)
   const [hoveredTile, setHoveredTile] = useState<Point | null>(null)
   const [fenceStart, setFenceStart] = useState<Point | null>(null)
@@ -1570,6 +1583,8 @@ export default function App() {
         return "Open animal"
       case "open_finances":
         return "Open finances"
+      case "add_shelter":
+        return "Add shelter"
     }
   }
 
@@ -1601,6 +1616,13 @@ export default function App() {
       case "open_finances":
         setWorkspaceTab("finances")
         return
+      case "add_shelter": {
+        const { subject } = alert
+        if (subject.kind === "habitat") {
+          perform(() => game.add_shelter(subject.id))
+        }
+        return
+      }
       case "inspect_animal":
         jumpTo(alert.subject, alert.focus)
         return
@@ -2474,12 +2496,28 @@ export default function App() {
           <span>Rating</span>
           <strong>{snapshot.rating}/999</strong>
         </div>
-        <div className="stat">
-          <span>Day</span>
+        <button
+          className={`stat conditions-button${snapshot.conditions.scheduled ? " announced" : ""}`}
+          data-weather={snapshot.conditions.weather}
+          data-phase={snapshot.conditions.light.phase}
+          onClick={() => openWorkspace("conditions")}
+          aria-label={`Weather and events: day ${snapshot.day}, ${clock(snapshot.minute_of_day)}, ${
+            snapshot.conditions.season_label
+          }, ${snapshot.conditions.forecast[0]?.label ?? "Fair"}${
+            snapshot.conditions.scheduled
+              ? `, ${snapshot.conditions.scheduled.label} announced`
+              : ""
+          }`}
+          title={snapshot.conditions.summary}
+        >
+          <span>
+            Day · {conditionsLabel(snapshot.conditions)}
+            {snapshot.conditions.scheduled && <span aria-hidden="true"> ★</span>}
+          </span>
           <strong>
             {snapshot.day} · {clock(snapshot.minute_of_day)}
           </strong>
-        </div>
+        </button>
         <div className="manage-controls">
           <button
             className={`alerts-button${
@@ -2574,6 +2612,7 @@ export default function App() {
             key={parkViewMount}
             snapshot={snapshot}
             overlay={overlay}
+            display={display}
             paused={speed === 0}
             dragTool={
               tool === "path" ||
@@ -2632,6 +2671,17 @@ export default function App() {
                     stocked: habitat.species.length > 0,
                   }))}
                 commands={educationCommands}
+              />
+            }
+            conditions={
+              <ConditionsPanel
+                conditions={snapshot.conditions}
+                day={snapshot.day}
+                onRule={(rule, enabled) =>
+                  sendPricing((game) => game.set_condition_rule(rule, enabled))
+                }
+                display={display}
+                onDisplay={changeDisplay}
               />
             }
           />

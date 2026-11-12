@@ -65,6 +65,7 @@ const MIGRATIONS: &[Migration] = &[
     v18_add_utilities,
     v19_add_finances,
     v20_add_education,
+    v21_add_conditions,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -269,6 +270,30 @@ fn v17_add_animal_health(mut value: Value) -> Result<Value, SaveError> {
             ledger.insert(field.to_owned(), json!(0));
         }
     }
+    Ok(value)
+}
+
+/// Schema 22 (#118) adds the park calendar's conditions. An older park keeps the fair weather it
+/// always had (no weather stream, so no events either) with both rules on; nothing was
+/// announced and every day up to tomorrow counts as already considered.
+fn v21_add_conditions(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let day = park
+        .get("day")
+        .and_then(Value::as_u64)
+        .and_then(|day| u32::try_from(day).ok())
+        .ok_or_else(|| invalid("park/day: missing or not a number"))?;
+    let mut conditions = crate::conditions::Conditions::new(None);
+    conditions.planned_through_day = day.saturating_add(crate::conditions::EVENT_LEAD_DAYS);
+    conditions.next_event_day = day;
+    park.insert(
+        "conditions".to_owned(),
+        serde_json::to_value(conditions).expect("conditions serialization"),
+    );
     Ok(value)
 }
 
@@ -1472,6 +1497,9 @@ impl GameState {
 
     fn save_violation_result(&self) -> Result<(), String> {
         self.scenario_violation()?;
+        if let Some(violation) = self.conditions.violation(self.day, self.minute_of_day) {
+            return Err(violation);
+        }
         self.land_violation()?;
         if let Some(violation) = self.environment_save_violation() {
             return Err(violation);

@@ -2,6 +2,7 @@ import {
   createThreeSceneRenderer,
   createWorldProjector,
   type RendererCamera,
+  type RendererEnvironment,
   type RendererInstanceBatch,
   type RendererSceneNode,
   type RendererWorkObservations,
@@ -9,9 +10,11 @@ import {
 } from "@moritzbrantner/three-d-renderer"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
+import type { DisplaySettings } from "./ConditionsPanel"
 import { loadEffectsKit } from "./effects-kit"
 import type { Point, Snapshot } from "./game-types"
 import { ParkEffects, type ParkEffectsState } from "./park-effects"
+import { DAY_BACKGROUND, parkEnvironment } from "./park-lighting"
 import {
   buildActorFrame,
   buildSceneryNodes,
@@ -42,6 +45,8 @@ export type ParkPick =
 type Props = {
   snapshot: Snapshot
   overlay: SceneOverlay
+  /** Day/night lighting and weather visuals (#118); presentation only. */
+  display: DisplaySettings
   paused: boolean
   /** When true, a primary drag starting on a park tile drives the tool instead of panning. */
   dragTool: boolean
@@ -96,7 +101,7 @@ type Gesture =
 
 type TwoPointerState = { mid: [number, number]; distance: number; angle: number }
 
-const BACKGROUND = "#a9d6e5"
+const BACKGROUND = DAY_BACKGROUND
 const CLICK_SLOP_MOUSE = 5
 const CLICK_SLOP_TOUCH = 10
 /** Wheel zoom per delta unit, by WheelEvent.deltaMode (pixel, line, page). */
@@ -126,6 +131,8 @@ type ViewDebugHook = {
   resources: () => RendererResources | null
   /** Cosmetic particle bursts (#86): live/started per effect and the renderer's atlas count. */
   effects: () => (ParkEffectsState & { reducedMotion: boolean; liveAtlases: number }) | null
+  /** The frame environment last submitted (#118); `null` for the renderer's default daylight. */
+  environment: () => RendererEnvironment | null
 }
 
 type RendererResources = {
@@ -193,7 +200,7 @@ export default function ParkView(props: Props) {
   // Any new snapshot or overlay requires a full scene rebuild on the next frame.
   useEffect(() => {
     sceneDirtyRef.current = true
-  }, [props.snapshot, props.overlay])
+  }, [props.snapshot, props.overlay, props.display])
 
   const { width: parkWidth, height: parkHeight } = props.snapshot
 
@@ -212,6 +219,7 @@ export default function ParkView(props: Props) {
     let kit: SceneryKit | null = null
     let effects: ParkEffects | null = null
     let sources: EffectSources = { foliage: [], ponds: [] }
+    let environment: RendererEnvironment | undefined
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     let camera: CameraFrame | null = null
     let frameHandle = 0
@@ -414,10 +422,13 @@ export default function ParkView(props: Props) {
             animate,
             !reducedMotion.matches,
           )
+          // Daylight and weather from zoo-core's calendar (#118); omitted means default daylight.
+          environment = parkEnvironment(current.snapshot.conditions, current.display)
           work = renderer.render({
             camera,
             nodes: frame.nodes,
             instanceBatches,
+            ...(environment ? { environment } : {}),
             ...(effectFrame ? { effects: effectFrame } : {}),
           })
         } else if (cameraChanged) {
@@ -900,6 +911,7 @@ export default function ParkView(props: Props) {
             reducedMotion: reducedMotion.matches,
             liveAtlases: work?.liveEffectAtlasCount ?? 0,
           },
+        environment: () => environment ?? null,
       }
     }
 

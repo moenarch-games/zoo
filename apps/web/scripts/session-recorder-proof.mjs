@@ -56,7 +56,7 @@ export async function runSessionRecorderAcceptance(context) {
   const exportText = () => evaluate(`window.__zooDiagnostics.exportText()`)
   const exported = async () => JSON.parse(await exportText())
   const hudClock = () =>
-    evaluate(`[...document.querySelectorAll('.stat')].find((stat) => stat.querySelector('span')?.textContent === 'Day')?.querySelector('strong')?.textContent ?? ''`)
+    evaluate(`[...document.querySelectorAll('.stat')].find((stat) => stat.querySelector('span')?.textContent.startsWith('Day'))?.querySelector('strong')?.textContent ?? ''`)
   const panelCount = () => evaluate(`document.querySelectorAll(${JSON.stringify(PANEL)}).length`)
   const panelButton = (label) =>
     evaluate(`(() => {

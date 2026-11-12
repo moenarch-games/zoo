@@ -2351,3 +2351,105 @@ button[data-plan-toggle].active {
 .education-note {
   color: #55665d;
 }
+
+/* Weather and events (#118). */
+.conditions-button.stat {
+  align-items: flex-start;
+  min-height: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conditions-button.stat span {
+  white-space: nowrap;
+}
+
+.conditions-button[data-weather="heat"] {
+  background: rgb(176 96 20 / 55%);
+}
+
+.conditions-button[data-phase="night"] {
+  background: rgb(20 28 60 / 55%);
+}
+
+.conditions-button.announced {
+  box-shadow: inset 0 0 0 2px #f6d36f;
+}
+
+.conditions-panel {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.conditions-panel h3,
+.conditions-panel p {
+  margin: 0;
+}
+
+.conditions-panel section {
+  display: grid;
+  gap: 6px;
+}
+
+.conditions-summary[data-active="true"] {
+  font-weight: 700;
+}
+
+.conditions-light,
+.conditions-note {
+  color: #50655d;
+}
+
+.forecast {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.forecast li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgb(7 39 34 / 8%);
+}
+
+.forecast li[data-weather="heat"] {
+  background: #f8dcae;
+}
+
+.event-history {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.condition-rules,
+.display-settings {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid rgb(7 39 34 / 20%);
+  border-radius: 4px;
+}
+
+.condition-rules label,
+.display-settings label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-height: 32px;
+}
+
+.condition-rules small,
+.display-settings small {
+  display: block;
+  color: #50655d;
+}

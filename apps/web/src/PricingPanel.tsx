@@ -110,6 +110,7 @@ const PROFILE_LABELS: Record<VisitorProfile, string> = {
   family: "Family",
   enthusiast: "Enthusiasts",
   stroller: "Strollers",
+  school: "School class",
 }
 
 function gateLine(note: GateNote) {

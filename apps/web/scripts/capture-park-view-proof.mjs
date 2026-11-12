@@ -16,6 +16,7 @@ import {runAnimalHealthAcceptance} from "./animal-health-proof.mjs"
 import {runUtilitiesAcceptance} from "./utilities-proof.mjs"
 import {runFinancesAcceptance} from "./finances-proof.mjs"
 import {runEducationAcceptance} from "./education-proof.mjs"
+import {runConditionsAcceptance} from "./conditions-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -592,6 +593,10 @@ try {
   // #116: a sign and keeper talks teach guests, completing the education objective; the grant
   // and donations show in the ledger, and a talk is canceled by touch on a phone.
   await runEducationAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, tile, mouse, key})
+
+  // #118: tomorrow's heat is forecast and warned; a shelter prepares one habitat, which stays
+  // comfortable on the hot day while the unprepared one does not; night stays readable.
+  await runConditionsAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, tile, mouse, key})
   }
 } finally {
   cdp?.close()

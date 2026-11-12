@@ -66,6 +66,8 @@ pub(crate) enum AlertCode {
     LowCash,
     /// Cash is below zero: purchases wait while costs keep accruing (#115).
     CashDeficit,
+    /// A habitat without shade for every animal on a hot day, today or tomorrow (#118).
+    HeatShade,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -117,6 +119,8 @@ pub(crate) enum AlertAction {
     BuildClimatePlant,
     /// Open the finances report (#115).
     OpenFinances,
+    /// Add a shelter to the habitat for shade (#118).
+    AddShelter,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -739,6 +743,7 @@ impl GameState {
         self.detect_health_alerts(&mut raise);
         self.detect_utility_alerts(&mut raise);
         self.detect_finance_alerts(&mut raise);
+        self.detect_heat_alerts(&mut raise);
 
         for keeper in self.keepers.iter().filter(|keeper| {
             keeper.zone_id.is_none() && keeper.role == super::care::CareRole::Keeper

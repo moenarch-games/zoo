@@ -942,6 +942,7 @@ impl GameState {
             service_gate,
             quarantine: false,
             utilities: super::utility::HabitatUtilities::default(),
+            weather: self.effective_weather(),
         });
     }
 

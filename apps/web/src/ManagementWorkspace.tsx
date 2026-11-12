@@ -29,6 +29,7 @@ export type WorkspaceTab =
   | "prices"
   | "finances"
   | "education"
+  | "conditions"
 
 /** Something a row or alert can focus: the alert subjects, plus guests and work zones. */
 export type JumpTarget = AlertSubject | { kind: "guest"; id: number } | { kind: "zone"; id: number }
@@ -53,6 +54,7 @@ const TABS: { tab: WorkspaceTab; label: string }[] = [
   { tab: "prices", label: "Prices" },
   { tab: "finances", label: "Finances" },
   { tab: "education", label: "Education" },
+  { tab: "conditions", label: "Weather" },
 ]
 
 export function money(cents: number) {
@@ -566,6 +568,7 @@ export function ManagementWorkspace({
   prices,
   finances,
   education,
+  conditions,
 }: {
   snapshot: Snapshot
   tab: WorkspaceTab
@@ -580,6 +583,8 @@ export function ManagementWorkspace({
   finances: (ledger: ReactNode) => ReactNode
   /** The education and conservation report (#116), composed by the app with its commands. */
   education: ReactNode
+  /** Weather, forecast, events, rules and display settings (#118), composed by the app. */
+  conditions: ReactNode
 }) {
   const label = (key: string | null) =>
     key === null
@@ -901,6 +906,7 @@ export function ManagementWorkspace({
         )}
         {tab === "prices" && prices}
         {tab === "education" && education}
+        {tab === "conditions" && conditions}
         {tab === "finances" &&
           finances(
             <DataTable

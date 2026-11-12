@@ -53,6 +53,11 @@
       "hint": "Build an education sign beside the path next to a habitat, or schedule a keeper talk from Manage › Education."
     }
   ],
+  "conditions": {
+    "season_days": 4,
+    "heat_percent": [0, 60, 20, 0],
+    "school_visit": { "chance_percent": 35, "students": 8, "arrival_minute": 600, "cooldown_days": 4 }
+  },
   "grants": [
     {
       "id": "community-learning-grant",

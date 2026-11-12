@@ -16,7 +16,7 @@ jobs:
       validate-foundation-audit: ${{ steps.merge-scope.outputs.validate-foundation-audit }}
       validate-assets: ${{ steps.merge-scope.outputs.validate-assets }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -112,6 +112,7 @@ jobs:
             apps/web/test-results/mixed-species-*.png
             apps/web/test-results/animal-health-*.png
             apps/web/test-results/education-*.png
+            apps/web/test-results/conditions-*.png
           if-no-files-found: error
           retention-days: 7
       - name: Upload playable web preview
