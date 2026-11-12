@@ -691,7 +691,10 @@ impl GameState {
                 "Full · new litter lands on the path".to_owned()
             }
             ConcessionKind::Bin => format!("{}/{capacity} full", stand.fill),
-            ConcessionKind::Food | ConcessionKind::Drink => return None,
+            ConcessionKind::Food
+            | ConcessionKind::Drink
+            | ConcessionKind::WaterPump
+            | ConcessionKind::ClimatePlant => return None,
         })
     }
 

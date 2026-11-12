@@ -110,7 +110,8 @@ fn protected_six_species_facility_command_tick_oracle() {
     // the oracle was re-recorded with ZOO_WRITE_CONTENT_BASELINE=1 at that change. #103 did the
     // same: guests arrive in groups and choose habitats by profile. #104 did too: keepers
     // collect feed at the depot and walk to care spots inside habitats. #106 did too: guests pay
-    // admission from one seeded budget and arrive valuing the visit by its price.
+    // admission from one seeded budget and arrive valuing the visit by its price. #113 did too:
+    // penguins draw pool water and climate control, so an unsupplied penguin habitat is short.
     if std::env::var_os("ZOO_WRITE_CONTENT_BASELINE").is_some() {
         std::fs::write(
             "tests/fixtures/content-command-baseline.json",

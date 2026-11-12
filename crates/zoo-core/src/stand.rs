@@ -918,7 +918,11 @@ impl GameState {
                     .saturating_add(comfort::DRINK_BLADDER)
                     .min(100);
             }
-            ConcessionKind::Toilet | ConcessionKind::Bench | ConcessionKind::Bin => {}
+            ConcessionKind::Toilet
+            | ConcessionKind::Bench
+            | ConcessionKind::Bin
+            | ConcessionKind::WaterPump
+            | ConcessionKind::ClimatePlant => {}
         }
         let happiness = if degraded { 1 } else { 3 };
         guest.happiness = guest.happiness.saturating_add(happiness).min(100);

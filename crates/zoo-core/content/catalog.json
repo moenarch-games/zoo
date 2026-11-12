@@ -342,6 +342,10 @@
         "shelter": true,
         "enrichment": true
       },
+      "utilities": {
+        "water": 1,
+        "climate": 1
+      },
       "purchase_cost_cents": 30000,
       "appeal": 110,
       "minimum_social_group": 4,
@@ -485,6 +489,46 @@
       "footprint": {
         "width": 1,
         "height": 1
+      }
+    },
+    {
+      "key": "water_pump",
+      "label": "Water pump",
+      "service": "water_pump",
+      "asset_ref": "water_pump",
+      "unlock_ref": "available",
+      "build_cost_cents": 9000,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 40,
+      "capacity": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      },
+      "utility": {
+        "kind": "water",
+        "capacity": 12,
+        "coverage_tiles": 24
+      }
+    },
+    {
+      "key": "climate_plant",
+      "label": "Climate plant",
+      "service": "climate_plant",
+      "asset_ref": "climate_plant",
+      "unlock_ref": "available",
+      "build_cost_cents": 16000,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 90,
+      "capacity": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      },
+      "utility": {
+        "kind": "climate",
+        "capacity": 8,
+        "coverage_tiles": 24
       }
     },
     {

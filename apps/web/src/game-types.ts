@@ -211,6 +211,54 @@ export type Habitat = Point & {
   appeal: number
   /** Set aside for quarantine: it takes only unwell animals (#109). */
   quarantine: boolean
+  /** Pool water and climate control: demand, supply and why it is short (#113). */
+  utilities: HabitatUtilities
+}
+
+export type UtilityKind = "water" | "climate"
+export type UtilityPriority = "high" | "normal" | "low"
+export type ShortageReason = "none_built" | "unconnected" | "failed" | "overloaded"
+
+/** One utility's allocation to a habitat, computed by zoo-core (#113). */
+export type UtilitySupply = {
+  kind: UtilityKind
+  label: string
+  demand: number
+  supplied: number
+  /** `short` is the warning hour; `degraded` lowers welfare until it is fixed. */
+  status: "not_needed" | "supplied" | "short" | "degraded"
+  reason: ShortageReason | null
+  detail: string
+  fix: string | null
+  shortage_minutes: number
+  /** Place in this utility's service order, from 1; 0 without demand. */
+  rank: number
+  draws: { concession_id: number; units: number }[]
+  /** Plants of this kind the habitat reaches, nearest first. */
+  reachable: number[]
+}
+
+export type HabitatUtilities = {
+  priority: UtilityPriority
+  water: UtilitySupply
+  climate: UtilitySupply
+}
+
+/** A utility plant's capacity, allocation and failure state (#113). */
+export type UtilityFacility = {
+  kind: UtilityKind
+  capacity: number
+  coverage_tiles: number
+  allocated: number
+  working: boolean
+  overloaded: boolean
+  short_habitats: number[]
+  consumers: { habitat_id: number; units: number; rank: number; priority: UtilityPriority }[]
+  hourly_operating_cents: number
+  replacement_cents: number
+  can_replace: boolean
+  service_minutes: number
+  status: string
 }
 
 /** One resident species of a habitat, summarized by zoo-core from its own animals (#108). */
@@ -361,6 +409,8 @@ export type Concession = Point & {
   comfort: ComfortFacility | null
   /** Food and drink stands (#102); `null` for comfort facilities. */
   stand: StandOperations | null
+  /** Water pumps and climate plants (#113); `null` for every other facility. */
+  utility: UtilityFacility | null
 }
 
 /** Why a sale was lost, counted by zoo-core per stand (#102). */
@@ -635,7 +685,16 @@ export type VisitsState = {
 export type FacilityOffer = {
   key: string
   label: string
-  service: "food" | "drink" | "toilet" | "bench" | "bin" | "entrance" | "animal_care_depot"
+  service:
+    | "food"
+    | "drink"
+    | "toilet"
+    | "bench"
+    | "bin"
+    | "water_pump"
+    | "climate_plant"
+    | "entrance"
+    | "animal_care_depot"
   asset_ref: string
   unlock_ref: string
   build_cost_cents: number
@@ -651,6 +710,8 @@ export type FacilityOffer = {
     stock_capacity: number
     stock_unit_cost_cents: number
   }
+  /** What a utility plant supplies (#113); absent for every other facility. */
+  utility?: { kind: UtilityKind; capacity: number; coverage_tiles: number }
 }
 
 export type SpeciesOffer = {
@@ -693,6 +754,9 @@ export type FinanceBreakdown = {
   vet_hiring_expense_cents: number
   vet_wages_expense_cents: number
   medicine_expense_cents: number
+  /** Utility plants (#113). */
+  utility_operation_expense_cents: number
+  utility_replacement_expense_cents: number
 }
 
 export type FinanceDay = {
@@ -966,6 +1030,8 @@ export type AlertAction =
   | "hire_vet"
   | "buy_medicine"
   | "inspect_animal"
+  | "build_water_pump"
+  | "build_climate_plant"
 
 /**
  * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and
@@ -982,7 +1048,14 @@ export type Alert = {
   last_minute: number
 }
 
-export type OverlayKind = "access" | "welfare" | "staff" | "cleanliness" | "facilities" | "viewing"
+export type OverlayKind =
+  | "access"
+  | "welfare"
+  | "staff"
+  | "cleanliness"
+  | "facilities"
+  | "viewing"
+  | "utilities"
 export type OverlayLevel = "good" | "warn" | "bad"
 
 /** A Rust-graded management overlay; computed on request, never per frame. */

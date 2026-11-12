@@ -605,6 +605,7 @@ impl GameState {
     fn public_access_lost(&self, tiles: &[Position]) -> Vec<Affected> {
         self.concessions
             .iter()
+            .filter(|stand| !stand.kind.is_utility())
             .filter(|stand| {
                 let customers = self.concession_customer_tiles(stand.id);
                 !customers.is_empty() && customers.iter().all(|tile| tiles.contains(tile))
@@ -734,8 +735,13 @@ impl GameState {
         if let Some(habitat_id) = self.service_gate_owner(position) {
             return reject(gate_access_message(habitat_id));
         }
-        if !self.touches_public_path(position) {
-            return reject("Concession stands must touch a public guest path".to_owned());
+        let kind = ConcessionKind::parse(&definition.service).expect("checked concession kind");
+        if !self.touches_required_path(position, kind) {
+            return reject(if kind.is_utility() {
+                format!("{} must touch a path mechanics can walk", definition.label)
+            } else {
+                "Concession stands must touch a public guest path".to_owned()
+            });
         }
         let cost = definition.build_cost_cents;
         if self.cash_cents < cost {
@@ -753,10 +759,16 @@ impl GameState {
         )
     }
 
-    fn touches_public_path(&self, position: Position) -> bool {
+    /// Guest facilities need a public path; utility plants only a staff-walkable one (#113).
+    fn touches_required_path(&self, position: Position, kind: ConcessionKind) -> bool {
+        let mover = if kind.is_utility() {
+            Mover::Staff
+        } else {
+            Mover::Guest
+        };
         self.neighbors(position)
             .into_iter()
-            .any(|neighbor| self.walkable(Mover::Guest, neighbor))
+            .any(|neighbor| self.walkable(mover, neighbor))
     }
 
     pub(crate) fn place_concession(&mut self, x: u32, y: u32, kind_name: &str) -> ActionResult {
@@ -929,6 +941,7 @@ impl GameState {
             care_schedule: None,
             service_gate,
             quarantine: false,
+            utilities: super::utility::HabitatUtilities::default(),
         });
     }
 
@@ -1520,7 +1533,7 @@ impl GameState {
                 if let Some(habitat_id) = self.service_gate_owner(position) {
                     return Err(gate_access_message(habitat_id));
                 }
-                if !self.touches_public_path(position) {
+                if !self.touches_required_path(position, stand.kind) {
                     return Err("the stand would no longer touch a guest path".to_owned());
                 }
             }

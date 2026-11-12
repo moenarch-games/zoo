@@ -94,6 +94,7 @@ import {
 } from "./scenery-manifest"
 import { StandActions, StandRows } from "./StandPanel"
 import { type LoadCheck, useParkLibrary } from "./use-park-library"
+import { HabitatUtilitiesPanel, UtilityPlantActions, UtilityPlantRows } from "./UtilityPanel"
 import init, { scenario_catalog_json, ZooGame } from "./wasm/zoo_core"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
 
@@ -190,14 +191,24 @@ function guestStateLabel(state: Guest["state"]) {
   }
 }
 
-/** Build-tool glyphs for the facility services the park can build (#101). */
+/** Build-tool glyphs for the facility services the park can build (#101, #113). */
 const FACILITY_ICONS: Partial<Record<FacilityOffer["service"], string>> = {
   food: "▰",
   drink: "▥",
   toilet: "WC",
   bench: "⑃",
   bin: "♻",
+  water_pump: "≋",
+  climate_plant: "❄",
 }
+
+/** The facility an alert's build fix places. */
+const BUILD_ACTION_SERVICE = {
+  build_toilet: "toilet",
+  build_bench: "bench",
+  build_water_pump: "water_pump",
+  build_climate_plant: "climate_plant",
+} as const satisfies Partial<Record<Alert["action"], FacilityOffer["service"]>>
 
 function toolHint(tool: Tool, snapshot: Snapshot | null) {
   if (tool.startsWith("facility:")) {
@@ -1537,8 +1548,10 @@ export default function App() {
       case "inspect_facility":
         return "Open facility"
       case "build_toilet":
-      case "build_bench": {
-        const service = alert.action === "build_toilet" ? "toilet" : "bench"
+      case "build_bench":
+      case "build_water_pump":
+      case "build_climate_plant": {
+        const service = BUILD_ACTION_SERVICE[alert.action]
         const offer = snapshot.facility_catalog.find((entry) => entry.service === service)
         return offer ? `Build ${offer.label} · ${money(offer.build_cost_cents)}` : null
       }
@@ -1606,8 +1619,10 @@ export default function App() {
         jumpTo(alert.subject, alert.focus)
         return
       case "build_toilet":
-      case "build_bench": {
-        const service = alert.action === "build_toilet" ? "toilet" : "bench"
+      case "build_bench":
+      case "build_water_pump":
+      case "build_climate_plant": {
+        const service = BUILD_ACTION_SERVICE[alert.action]
         const offer = snapshot.facility_catalog.find((entry) => entry.service === service)
         if (!offer) {
           return
@@ -1615,7 +1630,11 @@ export default function App() {
         jumpTo(alert.subject, alert.focus)
         setTool(`facility:${offer.key}`)
         setWorkspaceTab(null)
-        inform(`${offer.label}: place it on grass beside a path where guests walk.`)
+        inform(
+          offer.utility
+            ? `${offer.label}: place it on grass beside a path that reaches the habitat's service gate.`
+            : `${offer.label}: place it on grass beside a path where guests walk.`,
+        )
       }
     }
   }
@@ -3430,6 +3449,23 @@ export default function App() {
                     }
                   }}
                 />
+                <HabitatUtilitiesPanel
+                  habitat={selectedHabitat}
+                  plants={snapshot.concessions}
+                  onPriority={(priority) => {
+                    const game = gameRef.current
+                    if (game) {
+                      perform(() => game.set_habitat_utility_priority(selectedHabitat.id, priority))
+                    }
+                  }}
+                  onReplace={(plantId) => {
+                    const game = gameRef.current
+                    if (game) {
+                      perform(() => game.replace_utility(plantId))
+                    }
+                  }}
+                  onOpenPlant={selectConcession}
+                />
                 <button
                   className="shop-row"
                   data-testid="quarantine-toggle"
@@ -3530,18 +3566,22 @@ export default function App() {
                       <dt>Maintenance</dt>
                       <dd>{selectedConcession.maintenance_status}</dd>
                     </div>
-                    <div
-                      className={selectedConcession.customer_tiles.length > 0 ? "" : "zone-warning"}
-                    >
-                      <dt>Customers</dt>
-                      <dd data-stand-customers>
-                        {selectedConcession.customer_tiles.length > 0
-                          ? `Public side ${selectedConcession.customer_tiles
-                              .map((tile) => `${tile.x},${tile.y}`)
-                              .join(" · ")}`
-                          : "No public path: guests cannot buy here"}
-                      </dd>
-                    </div>
+                    {!selectedConcession.utility && (
+                      <div
+                        className={
+                          selectedConcession.customer_tiles.length > 0 ? "" : "zone-warning"
+                        }
+                      >
+                        <dt>Customers</dt>
+                        <dd data-stand-customers>
+                          {selectedConcession.customer_tiles.length > 0
+                            ? `Public side ${selectedConcession.customer_tiles
+                                .map((tile) => `${tile.x},${tile.y}`)
+                                .join(" · ")}`
+                            : "No public path: guests cannot buy here"}
+                        </dd>
+                      </div>
+                    )}
                     <div className={selectedConcession.active_service_point ? "" : "zone-warning"}>
                       <dt>Service entrance</dt>
                       <dd data-stand-service>
@@ -3557,12 +3597,16 @@ export default function App() {
                           : "No service point reachable from the depot"}
                       </dd>
                     </div>
-                    {selectedConcession.comfort ? (
+                    {selectedConcession.utility && (
+                      <UtilityPlantRows utility={selectedConcession.utility} />
+                    )}
+                    {!selectedConcession.utility && selectedConcession.comfort && (
                       <ComfortRows
                         comfort={selectedConcession.comfort}
                         demand={snapshot.operations.comfort}
                       />
-                    ) : (
+                    )}
+                    {!selectedConcession.utility && !selectedConcession.comfort && (
                       <>
                         <div>
                           <dt>Price</dt>
@@ -3581,6 +3625,17 @@ export default function App() {
                       </>
                     )}
                   </dl>
+                  {selectedConcession.utility && (
+                    <UtilityPlantActions
+                      utility={selectedConcession.utility}
+                      onReplace={() => {
+                        const game = gameRef.current
+                        if (game) {
+                          perform(() => game.replace_utility(selectedConcession.id))
+                        }
+                      }}
+                    />
+                  )}
                   {selectedConcession.stand && (
                     <StandActions
                       stand={selectedConcession.stand}

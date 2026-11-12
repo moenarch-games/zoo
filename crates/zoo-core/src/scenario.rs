@@ -164,7 +164,30 @@ impl Unlocks {
                 .facilities
                 .iter()
                 .any(|facility| facility.key == key)
-        })
+        })?;
+        // An unlocked species that needs a utility must come with a plant that supplies it
+        // (#113), so no scenario offers animals the player cannot keep comfortable.
+        for species in catalog
+            .species
+            .iter()
+            .filter(|species| self.species_unlocked(&species.key))
+        {
+            for kind in crate::utility::UtilityKind::ALL {
+                if species.utilities.of(kind) > 0
+                    && !catalog.facilities.iter().any(|facility| {
+                        facility.utility.is_some_and(|utility| utility.kind == kind)
+                            && self.facility_unlocked(&facility.key)
+                    })
+                {
+                    return Err(format!(
+                        "unlocks: {} needs {} but no plant supplying it is unlocked",
+                        species.key,
+                        kind.key()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1151,5 +1174,23 @@ mod tests {
             result.message
         );
         assert_eq!(park.species_catalog().len(), 1);
+    }
+
+    #[test]
+    fn unlocked_species_need_an_unlocked_plant_for_each_utility_they_draw() {
+        let error = with(|v| {
+            v["unlocks"] = serde_json::json!({"species": ["penguin"], "facilities": ["water_pump"]})
+        })
+        .expect_err("penguins need climate control");
+        assert!(error.contains("penguin needs climate"), "{error}");
+        assert!(
+            with(|v| {
+                v["unlocks"] = serde_json::json!({
+                    "species": ["penguin"],
+                    "facilities": ["water_pump", "climate_plant"]
+                })
+            })
+            .is_ok()
+        );
     }
 }
