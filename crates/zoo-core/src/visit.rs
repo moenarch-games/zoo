@@ -381,7 +381,9 @@ impl GameState {
         let rules = profile.rules();
         let mut best: Option<(i64, u32, ViewingSpot, u32, bool)> = None;
         for habitat in &self.habitats {
+            // Quarantine is behind the scenes (#109).
             if !habitat.stocked()
+                || habitat.quarantine
                 || habitat.welfare() < MIN_ENGAGING_HABITAT_WELFARE
                 || seen.contains(&habitat.id)
             {
@@ -453,7 +455,7 @@ impl GameState {
         let mut keys: Vec<String> = self
             .habitats
             .iter()
-            .filter(|habitat| habitat.stocked())
+            .filter(|habitat| habitat.stocked() && !habitat.quarantine)
             .flat_map(Habitat::species_keys)
             .collect();
         keys.sort();

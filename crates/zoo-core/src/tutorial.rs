@@ -198,7 +198,7 @@ impl GameState {
 
     fn guide_staffing_problem(&self, habitat: &Habitat) -> Option<String> {
         let problem = self.zone_staffing_problem(habitat)?;
-        if self.habitat_zone(habitat).is_some() && self.keepers.is_empty() {
+        if self.habitat_zone(habitat).is_some() && !self.has_keepers() {
             return Some(format!(
                 "{problem}. You have no keepers yet: hire one at the depot first."
             ));

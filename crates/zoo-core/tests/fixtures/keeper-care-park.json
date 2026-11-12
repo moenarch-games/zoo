@@ -20,6 +20,7 @@
         "shallow_water_tile_cents": 1500
       },
       "maintenance_repair_cents": 2500,
+      "medicine_batch_cents": 4000,
       "staff": {
         "janitor": {
           "hire_cents": 18000,
@@ -35,6 +36,10 @@
         },
         "vendor": {
           "hourly_wage_cents": 600
+        },
+        "vet": {
+          "hire_cents": 30000,
+          "hourly_wage_cents": 1500
         }
       },
       "upkeep": {
@@ -621,6 +626,7 @@
     ],
     "care_jobs": [
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 540,
         "habitat_id": 1,
@@ -634,6 +640,7 @@
         "work_minutes": 15
       },
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 540,
         "habitat_id": 2,
@@ -647,6 +654,7 @@
         "work_minutes": 15
       },
       {
+        "animal_id": null,
         "category": "feeding",
         "due_minute": 540,
         "habitat_id": 3,
@@ -693,9 +701,12 @@
       "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 0,
       "mechanic_wages_expense_cents": 0,
+      "medicine_expense_cents": 0,
       "park_upkeep_expense_cents": 0,
       "stand_stock_expense_cents": 0,
-      "vendor_wages_expense_cents": 0
+      "vendor_wages_expense_cents": 0,
+      "vet_hiring_expense_cents": 0,
+      "vet_wages_expense_cents": 0
     },
     "groups": [],
     "guests": [],
@@ -711,6 +722,14 @@
             "cosmetic_seed": 3220922670,
             "decisions": 3,
             "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
             "id": 1,
             "life_stage": "adult",
             "name": "Juniper",
@@ -769,6 +788,7 @@
         },
         "food": 40,
         "id": 1,
+        "quarantine": false,
         "residents": [
           {
             "species": {
@@ -879,6 +899,14 @@
             "cosmetic_seed": 87230898,
             "decisions": 3,
             "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
             "id": 2,
             "life_stage": "adult",
             "name": "Pebble",
@@ -937,6 +965,7 @@
         },
         "food": 40,
         "id": 2,
+        "quarantine": false,
         "residents": [
           {
             "species": {
@@ -1044,6 +1073,14 @@
             "cosmetic_seed": 2243798901,
             "decisions": 3,
             "energy": 100,
+            "health": {
+              "illness": null,
+              "quarantine_home": null,
+              "risk": {
+                "sniffles": 0,
+                "upset_tummy": 0
+              }
+            },
             "id": 3,
             "life_stage": "adult",
             "name": "Clover",
@@ -1102,6 +1139,7 @@
         },
         "food": 40,
         "id": 3,
+        "quarantine": false,
         "residents": [
           {
             "species": {
@@ -1209,9 +1247,11 @@
           }
         },
         "carrying_feed": false,
+        "carrying_medicine": false,
         "deliveries_completed": 0,
         "exit": null,
         "id": 1,
+        "role": "keeper",
         "schedule": {
           "categories": [
             "feeding",
@@ -1229,9 +1269,11 @@
       {
         "activity": "at_depot",
         "carrying_feed": false,
+        "carrying_medicine": false,
         "deliveries_completed": 0,
         "exit": null,
         "id": 2,
+        "role": "keeper",
         "schedule": {
           "categories": [
             "feeding",
@@ -1249,9 +1291,11 @@
       {
         "activity": "at_depot",
         "carrying_feed": false,
+        "carrying_medicine": false,
         "deliveries_completed": 0,
         "exit": null,
         "id": 3,
+        "role": "keeper",
         "schedule": {
           "categories": [
             "feeding",
@@ -1271,6 +1315,7 @@
     "litter": [],
     "maintenance": [],
     "mechanics": [],
+    "medicine_kits": 0,
     "minute_of_day": 570,
     "movement_accumulator": 0,
     "next_animal_id": 4,
@@ -1931,5 +1976,5 @@
       }
     ]
   },
-  "schema_version": 17
+  "schema_version": 18
 }

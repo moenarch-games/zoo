@@ -186,7 +186,9 @@ pub(crate) enum FenceMaterial {
 /// Fences are bounded well above any real enclosure height.
 pub(crate) const MAX_FENCE_HEIGHT_CM: u32 = 1_000;
 
-/// Recurring keeper work categories a habitat schedule can generate.
+/// Animal-care work categories. The first four are recurring keeper work a habitat schedule
+/// can generate; `Treatment` is veterinary work an unwell animal generates (#109), never part
+/// of a schedule and never done by keepers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CareCategory {
@@ -194,9 +196,11 @@ pub(crate) enum CareCategory {
     Cleaning,
     Inspection,
     Enrichment,
+    Treatment,
 }
 
 impl CareCategory {
+    /// The routine keeper categories, in catalog order.
     pub const ALL: [Self; 4] = [
         Self::Feeding,
         Self::Cleaning,
@@ -210,9 +214,11 @@ impl CareCategory {
             Self::Cleaning => "cleaning",
             Self::Inspection => "inspection",
             Self::Enrichment => "enrichment",
+            Self::Treatment => "treatment",
         }
     }
 
+    /// A routine category by key; treatment is not something a schedule or keeper takes.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "feeding" => Some(Self::Feeding),
@@ -311,6 +317,8 @@ pub(crate) struct Balance {
     pub habitat_care: HabitatCareCosts,
     pub habitat_environment: EnvironmentCosts,
     pub feed_batch_cents: i64,
+    /// One batch of medicine kits for the depot (#109).
+    pub medicine_batch_cents: i64,
     pub maintenance_repair_cents: i64,
     pub staff: StaffCosts,
     pub upkeep: ParkUpkeep,
@@ -360,6 +368,8 @@ pub(crate) struct StaffCosts {
     pub keeper: StaffRole,
     pub janitor: StaffRole,
     pub mechanic: StaffRole,
+    /// Veterinarians treat unwell animals anywhere in the park (#109).
+    pub vet: StaffRole,
     /// Stand vendors (#102) are posted to a stand rather than hired at the depot, so they only
     /// cost wages.
     pub vendor: VendorRole,
@@ -420,6 +430,7 @@ impl Balance {
                 environment.elevation_step_cents,
             ),
             ("feed_batch_cents", self.feed_batch_cents),
+            ("medicine_batch_cents", self.medicine_batch_cents),
             ("maintenance_repair_cents", self.maintenance_repair_cents),
             ("staff/keeper/hire_cents", staff.keeper.hire_cents),
             (
@@ -436,6 +447,8 @@ impl Balance {
                 "staff/mechanic/hourly_wage_cents",
                 staff.mechanic.hourly_wage_cents,
             ),
+            ("staff/vet/hire_cents", staff.vet.hire_cents),
+            ("staff/vet/hourly_wage_cents", staff.vet.hourly_wage_cents),
             (
                 "staff/vendor/hourly_wage_cents",
                 staff.vendor.hourly_wage_cents,
@@ -699,6 +712,11 @@ impl Catalog {
             let mut categories = HashSet::new();
             for (t, task) in schedule.iter().enumerate() {
                 let path = format!("{prefix}/care/schedule/{t}");
+                if task.category == CareCategory::Treatment {
+                    return Err(format!(
+                        "{path}/category: treatment is veterinary work, not a scheduled task"
+                    ));
+                }
                 if !categories.insert(task.category) {
                     return Err(format!("{path}/category: duplicate care category"));
                 }

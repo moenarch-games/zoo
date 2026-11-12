@@ -396,7 +396,9 @@ impl Habitat {
                 .map_or(station, |object| object.position)
         };
         match category {
-            CareCategory::Feeding => station,
+            // A treatment is given where the patient rests; the station is where it falls back
+            // to when the patient cannot be found (#109).
+            CareCategory::Feeding | CareCategory::Treatment => station,
             CareCategory::Cleaning => {
                 let gate = self.gate_tile();
                 area.pool()
@@ -683,6 +685,28 @@ impl Habitat {
                 )
             };
             parts.push(part(key, label, 1, ratio(provided, required), detail));
+        }
+        // An unwell group is less content until it recovers (#109); healthy groups have no
+        // health part, so their welfare is exactly as before.
+        let group: Vec<_> = self
+            .animals
+            .iter()
+            .filter(|animal| animal.species == species.key)
+            .collect();
+        let ill = group.iter().filter(|animal| animal.health.is_ill()).count();
+        if ill > 0 {
+            let score = group
+                .iter()
+                .map(|animal| animal.health.score())
+                .sum::<u32>()
+                / u32::try_from(group.len()).unwrap_or(1).max(1);
+            parts.push(part(
+                "health",
+                "Health",
+                1,
+                score,
+                format!("{ill} of {} unwell or recovering", group.len()),
+            ));
         }
         parts
     }

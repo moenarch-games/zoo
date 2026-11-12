@@ -112,11 +112,22 @@ impl KeeperActivity {
     }
 }
 
+/// What an animal-care worker is hired as (#109). Keepers work their zone's routine schedule;
+/// vets work park-wide, take only treatment jobs, and never take a keeper's routine work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CareRole {
+    #[default]
+    Keeper,
+    Vet,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Supply {
     None,
     FeedCrate,
     CleaningFee,
+    MedicineKit,
 }
 
 /// What a job holds of the park's supplies (#104). Reserving never moves stock; collecting a
@@ -136,6 +147,10 @@ pub(crate) enum JobSupply {
     Cleaning,
     /// Cleaning supplies already paid at dispatch by a schema 14 save, never charged again.
     CleaningPrepaid,
+    /// One medicine kit on the depot shelf is earmarked for this treatment (#109).
+    MedicineReserved,
+    /// The vet carries the treatment's kit (once completed: the kit was used).
+    MedicineCarried,
 }
 
 /// Where a job stands for the player (#104): due jobs are `queued` while keepers are merely
@@ -188,6 +203,14 @@ impl Default for KeeperSchedule {
 }
 
 impl KeeperSchedule {
+    /// A vet is on call all day for treatments only (#109); shifts arrive with #105.
+    pub fn vet() -> Self {
+        Self {
+            categories: vec![CareCategory::Treatment],
+            ..Self::default()
+        }
+    }
+
     pub fn on_shift(&self, minute_of_day: u32) -> bool {
         let (start, end) = (self.shift_start_minute, self.shift_end_minute);
         if start < end {
@@ -295,6 +318,8 @@ pub(crate) struct CareJob {
     /// completion, released when the job is interrupted.
     pub supply: JobSupply,
     pub resolved_minute: Option<u64>,
+    /// The patient of a treatment job (#109); `None` for routine care.
+    pub animal_id: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -333,6 +358,8 @@ pub(crate) struct CareJobView {
     pub route_tiles: Option<u32>,
     /// Where inside the habitat the care is performed.
     pub care_spot: Option<super::Position>,
+    /// The patient of a treatment job (#109).
+    pub animal_id: Option<u32>,
 }
 
 /// The park's care backlog at a glance (#104).
@@ -354,6 +381,12 @@ pub(crate) struct CareBacklogView {
     pub feed_carried: u32,
     /// Due jobs the depot cannot supply right now.
     pub supply_shortages: u32,
+    /// Medicine kits on the shelf, earmarked for treatments and in vets' hands (#109).
+    pub medicine_on_shelf: u32,
+    pub medicine_reserved: u32,
+    pub medicine_carried: u32,
+    /// Open treatments: unwell animals waiting for or under a vet's care.
+    pub treatments_open: u32,
 }
 
 impl GameState {
@@ -364,10 +397,16 @@ impl GameState {
     pub(crate) fn advance_care_jobs(&mut self) {
         let now = self.absolute_minute();
         self.generate_care_jobs(now);
+        self.generate_treatment_jobs(now);
         self.reconcile_care_jobs(now);
+        self.reconcile_treatment_jobs(now);
 
         for job in &mut self.care_jobs {
-            if job.state == CareJobState::Due && now >= job.due_minute + CARE_GRACE_MINUTES {
+            // A treatment waits for a vet as long as its patient is unwell (#109).
+            if job.state == CareJobState::Due
+                && job.category != CareCategory::Treatment
+                && now >= job.due_minute + CARE_GRACE_MINUTES
+            {
                 job.state = CareJobState::Missed;
                 job.resolved_minute = Some(now);
                 self.pending_events.push(crate::session::DomainEvent {
@@ -448,6 +487,7 @@ impl GameState {
                         keeper_ids: Vec::new(),
                         supply: JobSupply::None,
                         resolved_minute: None,
+                        animal_id: None,
                     });
                 }
             }
@@ -461,7 +501,9 @@ impl GameState {
         let stale: Vec<u32> = self
             .care_jobs
             .iter()
-            .filter(|job| job.state == CareJobState::InProgress)
+            .filter(|job| {
+                job.state == CareJobState::InProgress && job.category != CareCategory::Treatment
+            })
             .filter(|job| {
                 let zone = self
                     .habitats
@@ -497,7 +539,8 @@ impl GameState {
         };
         let crew = std::mem::take(&mut job.keeper_ids);
         job.supply = JobSupply::None;
-        let missed = now >= job.due_minute + CARE_GRACE_MINUTES;
+        let missed =
+            job.category != CareCategory::Treatment && now >= job.due_minute + CARE_GRACE_MINUTES;
         if missed {
             job.state = CareJobState::Missed;
             job.resolved_minute = Some(now);
@@ -515,22 +558,31 @@ impl GameState {
         }
     }
 
-    /// Whether the scheduler may give this keeper a job of `category` in `zone_id` now,
-    /// ignoring whether the keeper is busy.
-    fn keeper_eligible(&self, keeper: &Keeper, zone_id: u32, category: CareCategory) -> bool {
-        keeper.zone_id == Some(zone_id)
-            && keeper.schedule.accepts(category)
-            && keeper.schedule.on_shift(self.minute_of_day)
+    /// Whether the scheduler may give this worker a job of `category` now, ignoring whether
+    /// it is busy: a keeper of the job's zone for routine care, any vet for a treatment
+    /// (#109); either way on shift and accepting the category.
+    fn keeper_eligible(
+        &self,
+        keeper: &Keeper,
+        zone_id: Option<u32>,
+        category: CareCategory,
+    ) -> bool {
+        let placed = match category {
+            CareCategory::Treatment => keeper.role == CareRole::Vet,
+            _ => keeper.role == CareRole::Keeper && zone_id.is_some() && keeper.zone_id == zone_id,
+        };
+        placed && keeper.schedule.accepts(category) && keeper.schedule.on_shift(self.minute_of_day)
     }
 
-    /// Free for a new job: at or returning to the depot with empty hands. A keeper walking a
-    /// crate back from an interrupted job returns it first.
+    /// Free for a new job: at or returning to the depot with empty hands. A worker walking a
+    /// crate or medicine kit back from an interrupted job returns it first.
     fn keeper_free(keeper: &Keeper) -> bool {
-        keeper.activity.is_free() && !keeper.carrying_feed
+        keeper.activity.is_free() && !keeper.carrying_feed && !keeper.carrying_medicine
     }
 
     /// The supplies a job needs at dispatch: a feed crate when the animals are hungry, the
-    /// cleaning supplies when the habitat is dirty. Inspection and enrichment need none yet.
+    /// cleaning supplies when the habitat is dirty, a medicine kit for a treatment.
+    /// Inspection and enrichment need none yet.
     fn job_supply(&self, habitat: &super::Habitat, category: CareCategory) -> Supply {
         match category {
             CareCategory::Feeding
@@ -539,10 +591,28 @@ impl GameState {
                 Supply::FeedCrate
             }
             CareCategory::Cleaning if habitat.cleanliness < 100 => Supply::CleaningFee,
+            CareCategory::Treatment => Supply::MedicineKit,
             _ => Supply::None,
         }
     }
 
+    /// Medicine kits earmarked by dispatched treatments whose vets have not collected them.
+    pub(crate) fn reserved_medicine_kits(&self) -> u32 {
+        self.care_jobs
+            .iter()
+            .filter(|job| {
+                job.state == CareJobState::InProgress && job.supply == JobSupply::MedicineReserved
+            })
+            .count() as u32
+    }
+
+    /// Kits in vets' hands: on their way to a treatment or back to the depot shelf.
+    pub(crate) fn carried_medicine_kits(&self) -> u32 {
+        self.keepers
+            .iter()
+            .filter(|keeper| keeper.carrying_medicine)
+            .count() as u32
+    }
     /// Crates earmarked by dispatched jobs whose workers have not collected them yet.
     pub(crate) fn reserved_feed_crates(&self) -> u32 {
         self.care_jobs
@@ -568,6 +638,9 @@ impl GameState {
         match supply {
             Supply::FeedCrate if self.feed_crates <= self.reserved_feed_crates() => {
                 Some("The animal-care depot is out of unreserved feed crates")
+            }
+            Supply::MedicineKit if self.medicine_kits <= self.reserved_medicine_kits() => {
+                Some("The animal-care depot is out of unreserved medicine kits")
             }
             Supply::CleaningFee => {
                 let promised = self
@@ -596,9 +669,11 @@ impl GameState {
             return;
         };
         let habitat = &self.habitats[habitat_index];
-        let Some(zone_id) = self.habitat_zone(habitat) else {
+        // Vets work park-wide; routine care belongs to the zone holding the gate.
+        let zone_id = self.habitat_zone(habitat);
+        if zone_id.is_none() && category != CareCategory::Treatment {
             return;
-        };
+        }
         // The park has a single depot, so the nearest reachable depot with unreserved stock
         // is that depot or none.
         let supply = self.job_supply(habitat, category);
@@ -607,8 +682,9 @@ impl GameState {
         }
         let depot = self.depot_position();
         let to_gate = KeeperActivity::ToGate { job_id };
-        // The crate's leg: from the depot shelf to the gate.
-        let depot_leg = if supply == Supply::FeedCrate {
+        // The crate's (or medicine kit's) leg: from the depot shelf to the gate.
+        let carried = matches!(supply, Supply::FeedCrate | Supply::MedicineKit);
+        let depot_leg = if carried {
             self.count_path_search();
             let Some(leg) = self.route_for(depot, to_gate, None) else {
                 return;
@@ -661,11 +737,12 @@ impl GameState {
         job.supply = match supply {
             Supply::FeedCrate => JobSupply::FeedReserved,
             Supply::CleaningFee => JobSupply::Cleaning,
+            Supply::MedicineKit => JobSupply::MedicineReserved,
             Supply::None => JobSupply::None,
         };
         for (order, &(_, direct, keeper_index)) in crew.iter().enumerate() {
-            // Only the worker (the first of the crew) fetches the crate.
-            self.keepers[keeper_index].activity = if order == 0 && supply == Supply::FeedCrate {
+            // Only the worker (the first of the crew) fetches the crate or kit.
+            self.keepers[keeper_index].activity = if order == 0 && carried {
                 KeeperActivity::CollectingStock { job_id }
             } else if direct <= 1 {
                 // A keeper still inside after the previous job is already at this gate.
@@ -675,9 +752,7 @@ impl GameState {
             };
         }
         let worker = crew[0].2;
-        if supply == Supply::FeedCrate
-            && (self.keepers[worker].x, self.keepers[worker].y) == (depot.x, depot.y)
-        {
+        if carried && (self.keepers[worker].x, self.keepers[worker].y) == (depot.x, depot.y) {
             self.collect_stock(worker, job_id);
         }
         self.start_when_crew_assembled(job_id);
@@ -686,21 +761,32 @@ impl GameState {
     /// The worker at the depot takes the job's reserved crate off the shelf and heads for the
     /// gate. The reservation guarantees the crate is there.
     fn collect_stock(&mut self, keeper_index: usize, job_id: u32) {
-        let Some(job) = self
-            .care_jobs
-            .iter_mut()
-            .find(|job| job.id == job_id && job.supply == JobSupply::FeedReserved)
-        else {
+        let Some(job) = self.care_jobs.iter_mut().find(|job| {
+            job.id == job_id
+                && matches!(
+                    job.supply,
+                    JobSupply::FeedReserved | JobSupply::MedicineReserved
+                )
+        }) else {
             self.keepers[keeper_index].activity = KeeperActivity::ToGate { job_id };
             return;
         };
-        if self.feed_crates == 0 {
-            return;
-        }
-        self.feed_crates -= 1;
-        job.supply = JobSupply::FeedCarried;
         let keeper = &mut self.keepers[keeper_index];
-        keeper.carrying_feed = true;
+        if job.supply == JobSupply::MedicineReserved {
+            if self.medicine_kits == 0 {
+                return;
+            }
+            self.medicine_kits -= 1;
+            job.supply = JobSupply::MedicineCarried;
+            keeper.carrying_medicine = true;
+        } else {
+            if self.feed_crates == 0 {
+                return;
+            }
+            self.feed_crates -= 1;
+            job.supply = JobSupply::FeedCarried;
+            keeper.carrying_feed = true;
+        }
         keeper.activity = KeeperActivity::ToGate { job_id };
     }
 
@@ -731,7 +817,16 @@ impl GameState {
     /// The tile inside the job's habitat where its care is performed.
     pub(crate) fn job_care_spot(&self, job: &CareJob) -> Option<Position> {
         let habitat = self.habitats.iter().find(|h| h.id == job.habitat_id)?;
-        Some(habitat.care_spot(job.category))
+        // A treatment is given where the patient rests (#109).
+        let patient = job.animal_id.and_then(|id| {
+            habitat
+                .animals
+                .iter()
+                .find(|animal| animal.id == id)
+                .map(|animal| animal.position)
+                .filter(|&position| habitat.roam_area().contains(position))
+        });
+        Some(patient.unwrap_or_else(|| habitat.care_spot(job.category)))
     }
 
     /// Once the whole crew stands on the care spot, the work starts.
@@ -776,11 +871,12 @@ impl GameState {
         };
         job.state = CareJobState::Completed;
         job.resolved_minute = Some(now);
-        let (habitat_id, category, supply, worker_id) = (
+        let (habitat_id, category, supply, worker_id, animal_id) = (
             job.habitat_id,
             job.category,
             job.supply,
             job.keeper_ids.first().copied(),
+            job.animal_id,
         );
         let cleaning_cents = self.catalog.balance.habitat_care.cleaning_cents;
         match (category, supply) {
@@ -791,6 +887,16 @@ impl GameState {
                 }
                 if let Some(habitat) = self.habitats.iter_mut().find(|h| h.id == habitat_id) {
                     habitat.food = 100;
+                }
+            }
+            (CareCategory::Treatment, JobSupply::MedicineCarried) => {
+                if let Some(worker) = self.keepers.iter_mut().find(|k| Some(k.id) == worker_id) {
+                    worker.carrying_medicine = false;
+                }
+                // Reconciliation cancels a treatment whose patient left or is no longer
+                // unwell, so the kit treats exactly the patient it was carried for.
+                if let Some(animal_id) = animal_id {
+                    self.begin_recovery(animal_id);
                 }
             }
             (CareCategory::Cleaning, JobSupply::Cleaning | JobSupply::CleaningPrepaid) => {
@@ -856,9 +962,7 @@ impl GameState {
             | KeeperActivity::Working { .. } => return Some(vec![here]),
             KeeperActivity::ToCareSpot { job_id } => {
                 let (job, habitat) = job_habitat(job_id)?;
-                return habitat
-                    .roam_area()
-                    .path(here, habitat.care_spot(job.category));
+                return habitat.roam_area().path(here, self.job_care_spot(job)?);
             }
             KeeperActivity::ToGate { job_id } => {
                 let (_, habitat) = job_habitat(job_id)?;
@@ -930,9 +1034,13 @@ impl GameState {
             self.count_path_search();
             let Some(route) = self.keeper_route(keeper) else {
                 let lapsed = keeper.activity.job_id().filter(|&job_id| {
-                    self.care_jobs
-                        .iter()
-                        .any(|job| job.id == job_id && now >= job.due_minute + CARE_GRACE_MINUTES)
+                    self.care_jobs.iter().any(|job| {
+                        // A vet with no route hands the treatment back at once: it never
+                        // lapses, and another vet may still reach the patient (#109).
+                        job.id == job_id
+                            && (job.category == CareCategory::Treatment
+                                || now >= job.due_minute + CARE_GRACE_MINUTES)
+                    })
                 });
                 if let Some(job_id) = lapsed {
                     self.interrupt_care_job(job_id, now);
@@ -978,10 +1086,14 @@ impl GameState {
                 let keeper = &mut self.keepers[keeper_index];
                 keeper.exit = None;
                 keeper.activity = KeeperActivity::AtDepot;
-                // A crate from an interrupted job goes back on the shelf.
+                // A crate or kit from an interrupted job goes back on the shelf.
                 if keeper.carrying_feed {
                     keeper.carrying_feed = false;
                     self.feed_crates = self.feed_crates.saturating_add(1);
+                }
+                if keeper.carrying_medicine {
+                    keeper.carrying_medicine = false;
+                    self.medicine_kits = self.medicine_kits.saturating_add(1);
                 }
             }
             KeeperActivity::CollectingStock { job_id } if job_exists(self, job_id) => {
@@ -1001,7 +1113,7 @@ impl GameState {
     /// is back on the shelf.
     pub(crate) fn release_habitat_keepers(&mut self, habitat_id: u32) {
         let depot = self.depot_position();
-        let mut returned = 0;
+        let (mut returned, mut kits) = (0, 0);
         for keeper_index in 0..self.keepers.len() {
             let keeper = &self.keepers[keeper_index];
             let on_habitat_job = keeper.activity.job_id().is_some_and(|job_id| {
@@ -1024,9 +1136,14 @@ impl GameState {
                     keeper.carrying_feed = false;
                     returned += 1;
                 }
+                if keeper.carrying_medicine {
+                    keeper.carrying_medicine = false;
+                    kits += 1;
+                }
             }
         }
         self.feed_crates = self.feed_crates.saturating_add(returned);
+        self.medicine_kits = self.medicine_kits.saturating_add(kits);
         self.care_jobs.retain(|job| job.habitat_id != habitat_id);
     }
 
@@ -1046,9 +1163,14 @@ impl GameState {
         let performs_care = job.is_none_or(|job| job.keeper_ids.first() == Some(&keeper.id));
         let partner =
             job.and_then(|job| job.keeper_ids.iter().copied().find(|&id| id != keeper.id));
+        let stock = if job.is_some_and(|job| job.category == CareCategory::Treatment) {
+            "medicine kit"
+        } else {
+            "feed crate"
+        };
         let status = match (keeper.activity, &route) {
             (KeeperActivity::CollectingStock { .. }, None) => {
-                "Blocked: no path to the depot to collect feed".to_owned()
+                format!("Blocked: no path to the depot to collect {stock}")
             }
             (KeeperActivity::ToGate { .. }, None) => {
                 format!("Blocked: no path to habitat #{habitat}'s service gate")
@@ -1058,10 +1180,13 @@ impl GameState {
             }
             (KeeperActivity::ToDepot, None) => "Blocked: no path back to the depot".to_owned(),
             (KeeperActivity::CollectingStock { .. }, Some(_)) => {
-                format!("Collecting a feed crate at the depot for habitat #{habitat}")
+                format!("Collecting a {stock} at the depot for habitat #{habitat}")
             }
             (KeeperActivity::ToGate { .. }, Some(_)) if keeper.carrying_feed => {
                 format!("Carrying feed to habitat #{habitat}'s service gate")
+            }
+            (KeeperActivity::ToGate { .. }, Some(_)) if keeper.carrying_medicine => {
+                format!("Carrying medicine to habitat #{habitat}'s service gate")
             }
             (KeeperActivity::ToGate { .. }, Some(_)) => {
                 format!("Walking to habitat #{habitat}'s service gate for {lower}")
@@ -1090,7 +1215,13 @@ impl GameState {
             (KeeperActivity::ToDepot, Some(_)) if keeper.carrying_feed => {
                 "Returning an unused feed crate to the depot".to_owned()
             }
+            (KeeperActivity::ToDepot, Some(_)) if keeper.carrying_medicine => {
+                "Returning an unused medicine kit to the depot".to_owned()
+            }
             (KeeperActivity::ToDepot, Some(_)) => "Returning to the depot".to_owned(),
+            (KeeperActivity::AtDepot, _) if keeper.role == CareRole::Vet => {
+                "Available to treat unwell animals anywhere in the park".to_owned()
+            }
             (KeeperActivity::AtDepot, _) => match keeper.zone_id {
                 None => "Idle · needs a work zone".to_owned(),
                 Some(_) if !keeper.schedule.on_shift(self.minute_of_day) => format!(
@@ -1105,7 +1236,8 @@ impl GameState {
             x: keeper.x,
             y: keeper.y,
             zone_id: keeper.zone_id,
-            needs_zone: keeper.zone_id.is_none(),
+            role: keeper.role,
+            needs_zone: keeper.role == CareRole::Keeper && keeper.zone_id.is_none(),
             categories: keeper.schedule.categories.clone(),
             shift_start_minute: keeper.schedule.shift_start_minute,
             shift_end_minute: keeper.schedule.shift_end_minute,
@@ -1115,6 +1247,7 @@ impl GameState {
             job_id: keeper.activity.job_id(),
             habitat_id: job.map(|job| job.habitat_id),
             carrying_feed: keeper.carrying_feed,
+            carrying_medicine: keeper.carrying_medicine,
             route: route.unwrap_or_default(),
             status,
         }
@@ -1129,6 +1262,15 @@ impl GameState {
         shift_start_minute: u32,
         shift_end_minute: u32,
     ) -> ActionResult {
+        if self
+            .keepers
+            .iter()
+            .any(|k| k.id == keeper_id && k.role == CareRole::Vet)
+        {
+            return ActionResult::error(format!(
+                "Vet #{keeper_id} is on call all day for unwell animals; keepers take scheduled care"
+            ));
+        }
         let mut accepted = Vec::new();
         for key in categories
             .split(',')
@@ -1170,6 +1312,72 @@ impl GameState {
         ActionResult::ok(format!("Keeper #{keeper_id} schedule updated"))
     }
 
+    /// Why a due treatment has no vet yet (#109): no vet on staff, no medicine, no path to the
+    /// patient's habitat, or every vet busy or off shift. Vets never treat remotely: each
+    /// blocked state names the fix.
+    fn treatment_wait(&self, habitat: &super::Habitat) -> Option<CareWait> {
+        use crate::alerts::AlertAction;
+        let wait = |message: String, blocked: bool, action, supply_shortage: bool| {
+            Some(CareWait {
+                message,
+                blocked,
+                action,
+                supply_shortage,
+            })
+        };
+        let vets = || self.keepers.iter().filter(|k| k.role == CareRole::Vet);
+        if vets().next().is_none() {
+            return wait(
+                "No vet is on staff to treat it; hire a vet at the depot".to_owned(),
+                true,
+                AlertAction::HireVet,
+                false,
+            );
+        }
+        let on_shift = || vets().filter(|k| self.keeper_eligible(k, None, CareCategory::Treatment));
+        if on_shift().next().is_none() {
+            return wait(
+                "No vet is on shift".to_owned(),
+                false,
+                AlertAction::HireVet,
+                false,
+            );
+        }
+        if let Some(shortage) = self.supply_shortage(Supply::MedicineKit) {
+            return wait(
+                format!("{shortage}; buy medicine at the depot"),
+                true,
+                AlertAction::BuyMedicine,
+                true,
+            );
+        }
+        if !self.service_gate_reachable(habitat) {
+            return wait(
+                format!(
+                    "Vets cannot reach habitat #{}: its service gate has no path from the depot",
+                    habitat.id
+                ),
+                true,
+                AlertAction::BuildPath,
+                false,
+            );
+        }
+        if on_shift().any(Self::keeper_free) {
+            return wait(
+                "A free vet has no route to the service gate".to_owned(),
+                true,
+                AlertAction::BuildPath,
+                false,
+            );
+        }
+        wait(
+            "Every vet is busy with another patient".to_owned(),
+            false,
+            AlertAction::HireVet,
+            false,
+        )
+    }
+
     /// Why a due job has no keeper yet, so short staffing is visible on the job itself. Crew
     /// jobs say how many of their required keepers the zone can field. Problems the player
     /// must fix are `blocked`; keepers that are merely busy or off shift leave it queued.
@@ -1195,12 +1403,15 @@ impl GameState {
             })
         };
         let habitat = self.habitats.iter().find(|h| h.id == job.habitat_id)?;
+        if job.category == CareCategory::Treatment {
+            return self.treatment_wait(habitat);
+        }
         let Some(zone_id) = self.habitat_zone(habitat) else {
             let problem = self.zone_staffing_problem(habitat)?;
             return blocked(problem, AlertAction::DrawZone);
         };
         if let Some(problem) = self.zone_staffing_problem(habitat) {
-            let action = if self.keepers.is_empty() {
+            let action = if !self.has_keepers() {
                 AlertAction::HireKeeper
             } else {
                 AlertAction::AssignKeeper
@@ -1227,7 +1438,8 @@ impl GameState {
         if accepting < need {
             return blocked(short(accepting, "exists"), AlertAction::AssignKeeper);
         }
-        let eligible = || zone_keepers().filter(|k| self.keeper_eligible(k, zone_id, job.category));
+        let eligible =
+            || zone_keepers().filter(|k| self.keeper_eligible(k, Some(zone_id), job.category));
         let on_shift = eligible().count();
         if on_shift == 0 {
             return queued(format!("No zone #{zone_id} {category} keeper is on shift"));
@@ -1398,6 +1610,7 @@ impl GameState {
                         None
                     },
                     care_spot: self.job_care_spot(job),
+                    animal_id: job.animal_id,
                 }
             })
             .collect()
@@ -1438,8 +1651,17 @@ impl GameState {
             feed_reserved: self.reserved_feed_crates(),
             feed_carried: self.carried_feed_crates(),
             supply_shortages: 0,
+            medicine_on_shelf: self.medicine_kits,
+            medicine_reserved: self.reserved_medicine_kits(),
+            medicine_carried: self.carried_medicine_kits(),
+            treatments_open: 0,
         };
         for job in &self.care_jobs {
+            if job.category == CareCategory::Treatment
+                && matches!(job.state, CareJobState::Due | CareJobState::InProgress)
+            {
+                view.treatments_open += 1;
+            }
             match job.state {
                 CareJobState::Completed => view.completed_recent += 1,
                 CareJobState::Missed => view.missed_recent += 1,

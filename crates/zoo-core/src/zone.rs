@@ -244,6 +244,11 @@ impl GameState {
         else {
             return ActionResult::error(format!("Keeper #{keeper_id} does not exist"));
         };
+        if keeper.role == crate::care::CareRole::Vet {
+            return ActionResult::error(format!(
+                "Vet #{keeper_id} works the whole park; only keepers take a work zone"
+            ));
+        }
         if keeper.zone_id == Some(zone_id) {
             return ActionResult::ok(format!(
                 "Keeper #{keeper_id} already works in zone #{zone_id}"

@@ -7,6 +7,7 @@ mod content;
 mod enclosure;
 mod environment;
 mod gate;
+mod health;
 mod land;
 mod mixed;
 mod overlay;
@@ -235,6 +236,8 @@ struct Concession {
 #[serde(deny_unknown_fields)]
 struct Keeper {
     id: u32,
+    /// Keeper or vet (#109); vets take only treatments, anywhere in the park.
+    role: care::CareRole,
     /// The keeper's work zone; `None` leaves the keeper idle and flagged as needing one.
     zone_id: Option<u32>,
     /// Which care jobs and hours the scheduler may give this keeper.
@@ -249,6 +252,9 @@ struct Keeper {
     /// A feed crate collected from the depot: for the current feeding job, or being walked
     /// back after an interrupted one (#104).
     carrying_feed: bool,
+    /// A medicine kit collected from the depot by a vet, for its treatment or being walked
+    /// back (#109).
+    carrying_medicine: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -327,6 +333,10 @@ enum ExpenseCategory {
     StandStock,
     /// Marketing campaigns (#106).
     Marketing,
+    /// Hiring vets, their hourly wages and depot medicine (#109).
+    VetHiring,
+    VetWages,
+    Medicine,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +363,10 @@ struct FinanceLedger {
     stand_stock_expense_cents: i64,
     /// Marketing campaigns (#106; save schema 16).
     marketing_expense_cents: i64,
+    /// Veterinary care (#109; save schema 18).
+    vet_hiring_expense_cents: i64,
+    vet_wages_expense_cents: i64,
+    medicine_expense_cents: i64,
 }
 
 impl FinanceLedger {
@@ -398,6 +412,9 @@ impl FinanceLedger {
             ExpenseCategory::VendorWages => self.vendor_wages_expense_cents += cents,
             ExpenseCategory::StandStock => self.stand_stock_expense_cents += cents,
             ExpenseCategory::Marketing => self.marketing_expense_cents += cents,
+            ExpenseCategory::VetHiring => self.vet_hiring_expense_cents += cents,
+            ExpenseCategory::VetWages => self.vet_wages_expense_cents += cents,
+            ExpenseCategory::Medicine => self.medicine_expense_cents += cents,
         }
         true
     }
@@ -423,6 +440,9 @@ impl FinanceLedger {
             + self.vendor_wages_expense_cents
             + self.stand_stock_expense_cents
             + self.marketing_expense_cents
+            + self.vet_hiring_expense_cents
+            + self.vet_wages_expense_cents
+            + self.medicine_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -561,6 +581,9 @@ struct Habitat {
     care_schedule: Option<care::CareSchedule>,
     /// The fence segment keepers walk through; its outside tile must stay unbuilt.
     service_gate: FenceSegment,
+    /// Set aside for quarantine (#109): it takes only unwell animals, each remembering its
+    /// home habitat.
+    quarantine: bool,
 }
 
 impl Habitat {
@@ -842,6 +865,8 @@ struct GameState {
     pricing: pricing::Pricing,
     cash_cents: i64,
     feed_crates: u32,
+    /// Medicine kits on the depot shelf (#109).
+    medicine_kits: u32,
     day: u32,
     minute_of_day: u32,
     next_habitat_id: u32,
@@ -956,6 +981,7 @@ impl GameState {
             pricing: pricing::Pricing::new(admission),
             cash_cents: 5_000_000,
             feed_crates: 0,
+            medicine_kits: 0,
             day: 1,
             minute_of_day: 9 * 60,
             next_habitat_id: 1,
@@ -1077,6 +1103,7 @@ impl GameState {
         self.next_keeper_id = self.next_keeper_id.saturating_add(1);
         self.keepers.push(Keeper {
             id,
+            role: care::CareRole::Keeper,
             zone_id: None,
             schedule: care::KeeperSchedule::default(),
             deliveries_completed: 0,
@@ -1085,6 +1112,7 @@ impl GameState {
             activity: care::KeeperActivity::AtDepot,
             exit: None,
             carrying_feed: false,
+            carrying_medicine: false,
         });
         ActionResult::ok(format!("Keeper #{id} hired at the animal-care depot"))
     }
@@ -1271,6 +1299,12 @@ impl GameState {
             }
             if self
                 .minute_of_day
+                .is_multiple_of(health::HEALTH_INTERVAL_MINUTES)
+            {
+                self.advance_health();
+            }
+            if self
+                .minute_of_day
                 .is_multiple_of(MAINTENANCE_DECAY_INTERVAL_MINUTES)
             {
                 self.advance_concession_maintenance();
@@ -1327,6 +1361,9 @@ impl GameState {
             return Some(violation);
         }
         if let Some(violation) = self.pricing_violation() {
+            return Some(violation);
+        }
+        if let Some(violation) = self.health_violation() {
             return Some(violation);
         }
         fn ordered(name: &str, ids: impl Iterator<Item = u32>, next: u32) -> Option<String> {
@@ -2224,7 +2261,12 @@ impl GameState {
             .fold(habitat_upkeep, |total, stand| {
                 total.saturating_add(stand.definition.hourly_upkeep_cents)
             });
-        let keeper_wages = times(self.keepers.len(), balance.staff.keeper.hourly_wage_cents);
+        let vets = self.vet_count();
+        let keeper_wages = times(
+            self.keepers.len() - vets,
+            balance.staff.keeper.hourly_wage_cents,
+        );
+        let vet_wages = times(vets, balance.staff.vet.hourly_wage_cents);
         let janitor_wages = times(self.janitors.len(), balance.staff.janitor.hourly_wage_cents);
         let mechanic_wages = times(
             self.mechanics.len(),
@@ -2240,6 +2282,7 @@ impl GameState {
             (ExpenseCategory::JanitorWages, janitor_wages),
             (ExpenseCategory::MechanicWages, mechanic_wages),
             (ExpenseCategory::VendorWages, vendor_wages),
+            (ExpenseCategory::VetWages, vet_wages),
         ];
         let mut ledger = self.finance_today;
         let mut cash = self.cash_cents;
@@ -2850,6 +2893,7 @@ impl GameState {
                         .iter()
                         .find(|resident| resident.species.key == animal.species)
                         .map_or(100, |resident| resident.welfare),
+                    health: self.health_view(habitat, animal),
                     cosmetic_seed: animal.cosmetic_seed,
                     animation_phase: animal.cosmetic_seed % 100,
                 })
@@ -3094,6 +3138,11 @@ impl GameState {
             mechanic_hire_cost_cents: self.catalog.balance.staff.mechanic.hire_cents,
             mechanic_hourly_wage_cents: self.catalog.balance.staff.mechanic.hourly_wage_cents,
             maintenance_repair_cost_cents: self.catalog.balance.maintenance_repair_cents,
+            medicine_kits: self.medicine_kits,
+            medicine_batch_kits: health::MEDICINE_BATCH_KITS,
+            medicine_batch_cost_cents: self.catalog.balance.medicine_batch_cents,
+            vet_hire_cost_cents: self.catalog.balance.staff.vet.hire_cents,
+            vet_hourly_wage_cents: self.catalog.balance.staff.vet.hourly_wage_cents,
             care_backlog: self.care_backlog_view(),
             keepers: self
                 .keepers
@@ -3242,6 +3291,7 @@ impl GameState {
                     feeding_status: self.feeding_status(habitat),
                     care_status: habitat.care_status(staffing.as_deref(), gate_reachable),
                     appeal: habitat.appeal(),
+                    quarantine: habitat.quarantine,
                 }
             })
             .collect();
@@ -3483,6 +3533,8 @@ struct KeeperView {
     id: u32,
     x: u32,
     y: u32,
+    /// Keeper or vet (#109).
+    role: care::CareRole,
     zone_id: Option<u32>,
     /// No work zone: the keeper stays idle until assigned one.
     needs_zone: bool,
@@ -3499,6 +3551,8 @@ struct KeeperView {
     habitat_id: Option<u32>,
     /// Whether the keeper carries a feed crate (#104).
     carrying_feed: bool,
+    /// Whether the vet carries a medicine kit (#109).
+    carrying_medicine: bool,
     /// Remaining walk from the keeper's tile to its destination; empty when blocked.
     route: Vec<Position>,
     status: String,
@@ -3548,6 +3602,12 @@ struct AnimalCareDepotView {
     mechanic_hire_cost_cents: i64,
     mechanic_hourly_wage_cents: i64,
     maintenance_repair_cost_cents: i64,
+    /// Medicine stock and vet costs (#109).
+    medicine_kits: u32,
+    medicine_batch_kits: u32,
+    medicine_batch_cost_cents: i64,
+    vet_hire_cost_cents: i64,
+    vet_hourly_wage_cents: i64,
     /// The park's care backlog and where its feed is (#104).
     care_backlog: care::CareBacklogView,
     keepers: Vec<KeeperView>,
@@ -3634,6 +3694,8 @@ struct HabitatView {
     feeding_status: String,
     care_status: String,
     appeal: u32,
+    /// Set aside for quarantine (#109).
+    quarantine: bool,
 }
 
 #[derive(Serialize)]
@@ -3665,6 +3727,8 @@ struct AnimalView {
     energy: u32,
     /// Its species' welfare in its habitat (#108).
     welfare: u32,
+    /// Risk, illness, treatment and quarantine (#109).
+    health: health::HealthView,
     /// Presentation-only variation: tile offset and animation phase.
     cosmetic_seed: u32,
     animation_phase: u32,
@@ -4050,6 +4114,12 @@ impl ZooGame {
             "hire_keeper" => self.hire_keeper(),
             "hire_janitor" => self.hire_janitor(),
             "hire_mechanic" => self.hire_mechanic(),
+            "hire_vet" => self.hire_vet(),
+            "buy_medicine" => self.buy_medicine(),
+            "set_habitat_quarantine" => {
+                self.set_habitat_quarantine(number("habitat_id")?, flag("enabled")?)
+            }
+            "quarantine_animal" => self.quarantine_animal(number("animal_id")?),
             "set_keeper_schedule" => self.set_keeper_schedule(
                 number("keeper_id")?,
                 text("categories")?,
@@ -4593,6 +4663,42 @@ impl ZooGame {
         self.command("hire_keeper", serde_json::json!({}), GameState::hire_keeper)
     }
 
+    /// Hires a vet at the depot: vets treat unwell animals anywhere in the park (#109).
+    pub fn hire_vet(&mut self) -> String {
+        self.command("hire_vet", serde_json::json!({}), GameState::hire_vet)
+    }
+
+    /// Buys a batch of medicine kits for the depot (#109).
+    pub fn buy_medicine(&mut self) -> String {
+        self.command(
+            "buy_medicine",
+            serde_json::json!({}),
+            GameState::buy_medicine,
+        )
+    }
+
+    /// Sets an empty habitat aside for quarantine, or returns it to ordinary use (#109).
+    pub fn set_habitat_quarantine(&mut self, habitat_id: u32, enabled: bool) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "enabled": enabled });
+        self.command("set_habitat_quarantine", args, |state| {
+            state.set_habitat_quarantine(habitat_id, enabled)
+        })
+    }
+
+    /// Previews moving an ill animal into quarantine (#109).
+    pub fn evaluate_quarantine(&self, animal_id: u32) -> String {
+        serde_json::to_string(&self.state.evaluate_quarantine(animal_id))
+            .expect("quarantine preview serialization is infallible")
+    }
+
+    /// Moves an ill animal into quarantine; it returns home once recovered (#109).
+    pub fn quarantine_animal(&mut self, animal_id: u32) -> String {
+        let args = serde_json::json!({ "animal_id": animal_id });
+        self.command("quarantine_animal", args, |state| {
+            state.quarantine_animal(animal_id)
+        })
+    }
+
     pub fn hire_janitor(&mut self) -> String {
         self.command(
             "hire_janitor",
@@ -4888,6 +4994,7 @@ mod tests {
                 activity: animal::Activity::Resting { until_minute: 0 },
                 energy: 100,
                 decisions: 0,
+                health: health::Health::default(),
             }],
             food: 100,
             water: 100,
@@ -4899,6 +5006,7 @@ mod tests {
                 y,
                 side: FenceSide::North,
             },
+            quarantine: false,
         }
     }
 
@@ -5859,6 +5967,7 @@ mod tests {
             keeper_ids: Vec::new(),
             supply: care::JobSupply::None,
             resolved_minute: None,
+            animal_id: None,
         });
         id
     }
