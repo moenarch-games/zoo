@@ -772,6 +772,7 @@
           "auto_restock": true,
           "delivery_due": null,
           "open": true,
+          "price_cents": 350,
           "queue": [],
           "stock": 48,
           "today": {
@@ -781,6 +782,7 @@
               "gave_up": 0,
               "out_of_stock": 0,
               "queue_full": 0,
+              "too_expensive": 0,
               "unaffordable": 0,
               "unstaffed": 0
             },
@@ -799,6 +801,7 @@
               "gave_up": 0,
               "out_of_stock": 0,
               "queue_full": 0,
+              "too_expensive": 0,
               "unaffordable": 0,
               "unstaffed": 0
             },
@@ -852,6 +855,7 @@
           "auto_restock": true,
           "delivery_due": null,
           "open": true,
+          "price_cents": 500,
           "queue": [],
           "stock": 38,
           "today": {
@@ -861,6 +865,7 @@
               "gave_up": 0,
               "out_of_stock": 0,
               "queue_full": 0,
+              "too_expensive": 0,
               "unaffordable": 0,
               "unstaffed": 0
             },
@@ -879,6 +884,7 @@
               "gave_up": 0,
               "out_of_stock": 0,
               "queue_full": 0,
+              "too_expensive": 0,
               "unaffordable": 0,
               "unstaffed": 0
             },
@@ -955,6 +961,7 @@
       "keeper_wages_expense_cents": 7200,
       "land_expense_cents": 0,
       "maintenance_repair_expense_cents": 0,
+      "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 22000,
       "mechanic_wages_expense_cents": 2000,
       "park_upkeep_expense_cents": 3362,
@@ -993,7 +1000,7 @@
         "bladder": 29,
         "bought_drink": true,
         "bought_food": true,
-        "cash_cents": 450,
+        "cash_cents": 1150,
         "cleanliness_concern": false,
         "crowd_minutes": 0,
         "energy": 72,
@@ -1027,7 +1034,7 @@
         "target_habitat": 3,
         "thirst": 19,
         "unmet_need": null,
-        "value_perception": 71,
+        "value_perception": 77,
         "viewing_minutes": 29,
         "visit": null,
         "visited_habitats": [
@@ -1041,7 +1048,7 @@
         "bladder": 26,
         "bought_drink": true,
         "bought_food": true,
-        "cash_cents": 750,
+        "cash_cents": 1550,
         "cleanliness_concern": false,
         "crowd_minutes": 0,
         "energy": 72,
@@ -1075,7 +1082,7 @@
         "target_habitat": 3,
         "thirst": 17,
         "unmet_need": null,
-        "value_perception": 65,
+        "value_perception": 71,
         "viewing_minutes": 0,
         "visit": null,
         "visited_habitats": [],
@@ -1087,7 +1094,7 @@
         "bladder": 35,
         "bought_drink": false,
         "bought_food": false,
-        "cash_cents": 1900,
+        "cash_cents": 2000,
         "cleanliness_concern": false,
         "crowd_minutes": 0,
         "energy": 84,
@@ -1169,7 +1176,7 @@
         "target_habitat": 3,
         "thirst": 28,
         "unmet_need": null,
-        "value_perception": 66,
+        "value_perception": 72,
         "viewing_minutes": 0,
         "visit": null,
         "visited_habitats": [],
@@ -1181,7 +1188,7 @@
         "bladder": 35,
         "bought_drink": false,
         "bought_food": false,
-        "cash_cents": 2200,
+        "cash_cents": 1600,
         "cleanliness_concern": false,
         "crowd_minutes": 0,
         "energy": 84,
@@ -1267,7 +1274,7 @@
         "target_habitat": 3,
         "thirst": 28,
         "unmet_need": null,
-        "value_perception": 66,
+        "value_perception": 72,
         "viewing_minutes": 0,
         "visit": null,
         "visited_habitats": [],
@@ -2087,6 +2094,54 @@
         "tool": "habitat_inspector"
       }
     ],
+    "pricing": {
+      "admission_cents": 1200,
+      "campaign": null,
+      "campaigns_run": 0,
+      "open": true,
+      "recent": [
+        {
+          "arrival": 1,
+          "minute": 588,
+          "outcome": "admitted",
+          "price_cents": 1200,
+          "profile": "stroller",
+          "size": 2,
+          "value_cents": 3820,
+          "willing_cents": 3200
+        },
+        {
+          "arrival": 2,
+          "minute": 636,
+          "outcome": "admitted",
+          "price_cents": 1200,
+          "profile": "enthusiast",
+          "size": 2,
+          "value_cents": 3815,
+          "willing_cents": 2800
+        }
+      ],
+      "today": {
+        "admission_cents": 4800,
+        "groups_admitted": 2,
+        "groups_at_gate": 2,
+        "people_admitted": 4,
+        "people_at_gate": 4,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      },
+      "total": {
+        "admission_cents": 4800,
+        "groups_admitted": 2,
+        "groups_at_gate": 2,
+        "people_admitted": 4,
+        "people_at_gate": 4,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      }
+    },
     "scenario": {
       "digest": "fnv1a64:bbdb6064fbf624d6",
       "id": "first-zoo",
@@ -2515,5 +2570,5 @@
       }
     ]
   },
-  "schema_version": 15
+  "schema_version": 16
 }

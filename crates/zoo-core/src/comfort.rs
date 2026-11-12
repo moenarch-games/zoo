@@ -94,6 +94,9 @@ pub(crate) struct Visit {
     /// Queueing: minutes left before giving up. Using: minutes spent so far.
     pub minutes: u32,
     pub resume: Resume,
+    /// The price agreed when a stand's vendor started serving the guest (#106); the sale charges
+    /// exactly this. Zero until then, and always zero at toilets and benches.
+    pub price_cents: i64,
 }
 
 /// Janitor work at one toilet or bin: at most one open task per facility.
@@ -253,19 +256,22 @@ impl GameState {
                 continue;
             };
             let start = guest_position(guest);
-            let cash = guest.cash_cents;
+            let buyer = super::stand::Buyer {
+                cash: guest.cash_cents,
+                tolerance: self.stand_tolerance(guest),
+            };
             let mut choice = None;
             for need in wanted.iter().copied() {
                 if need.stand().is_some() {
                     let counts = heading.get_or_insert_with(|| self.stand_heading_counts());
-                    match self.pick_stand(need, start, cash, counts) {
+                    match self.pick_stand(need, start, buyer, counts) {
                         Ok((stand, route)) => {
                             counts[stand] += 1;
                             self.start_stand_visit(index, stand, need, route, resume);
                             choice = Some(None);
                             break;
                         }
-                        Err(refused) => self.refuse_stand(refused),
+                        Err(refused) => self.refuse_stand(index, refused),
                     }
                 } else if let Some((facility, route, free)) = self.pick_facility(need, start) {
                     choice = Some(Some((need, facility, route, free)));
@@ -292,6 +298,7 @@ impl GameState {
                 need,
                 minutes: 0,
                 resume,
+                price_cents: 0,
             });
             guest.state = GuestState::WalkingToFacility;
             guest.route = route;

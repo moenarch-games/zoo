@@ -672,6 +672,7 @@
       "keeper_wages_expense_cents": 0,
       "land_expense_cents": 0,
       "maintenance_repair_expense_cents": 0,
+      "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 0,
       "mechanic_wages_expense_cents": 0,
       "park_upkeep_expense_cents": 0,
@@ -1452,6 +1453,33 @@
         "tool": "habitat_inspector"
       }
     ],
+    "pricing": {
+      "admission_cents": 1200,
+      "campaign": null,
+      "campaigns_run": 0,
+      "open": true,
+      "recent": [],
+      "today": {
+        "admission_cents": 0,
+        "groups_admitted": 0,
+        "groups_at_gate": 0,
+        "people_admitted": 0,
+        "people_at_gate": 0,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      },
+      "total": {
+        "admission_cents": 0,
+        "groups_admitted": 0,
+        "groups_at_gate": 0,
+        "people_admitted": 0,
+        "people_at_gate": 0,
+        "turned_away_closed": 0,
+        "turned_away_over_budget": 0,
+        "turned_away_too_expensive": 0
+      }
+    },
     "scenario": {
       "digest": "fnv1a64:bbdb6064fbf624d6",
       "id": "first-zoo",
@@ -1873,5 +1901,5 @@
       }
     ]
   },
-  "schema_version": 15
+  "schema_version": 16
 }

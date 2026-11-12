@@ -603,7 +603,7 @@ pub(crate) struct DailySummary {
     profit_cents: i64,
     income_cents: i64,
     expenses_cents: i64,
-    /// Guests admitted today: today's admission income at the park's admission price.
+    /// People admitted at the gate today, and the current admission price (#106).
     admissions: u32,
     admissions_income_cents: i64,
     admission_price_cents: i64,
@@ -627,12 +627,8 @@ pub(crate) struct DailySummary {
 impl GameState {
     pub(crate) fn daily_summary(&self) -> DailySummary {
         let ledger = self.finance_today;
-        let price = self.catalog.balance.admission_price_cents;
-        let admissions = if price > 0 {
-            (ledger.admissions_income_cents / price) as u32
-        } else {
-            0
-        };
+        let price = self.pricing.admission_cents;
+        let admissions = self.pricing.today.people_admitted;
         let stocked: Vec<&Habitat> = self
             .habitats
             .iter()
