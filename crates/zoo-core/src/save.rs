@@ -64,6 +64,7 @@ const MIGRATIONS: &[Migration] = &[
     v17_add_animal_health,
     v18_add_utilities,
     v19_add_finances,
+    v20_add_education,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -268,6 +269,99 @@ fn v17_add_animal_health(mut value: Value) -> Result<Value, SaveError> {
             ledger.insert(field.to_owned(), json!(0));
         }
     }
+    Ok(value)
+}
+
+/// Schema 21 (#116) adds education, donations, conservation milestones and grants. No guest has
+/// learned anything yet, no talk is scheduled, nothing was donated or earned, and an older park
+/// keeps the grants it had: none. Every ledger (today's and each history day's) gains zero
+/// donation and grant income. The embedded catalog gains the built-in education sign and the
+/// built-in sourced fact of every species it defines under a built-in key.
+fn v20_add_education(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let content = value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content: missing or not an object"))?;
+    let species: HashSet<String> = content
+        .get("species")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("content/species: missing or not an array"))?
+        .iter()
+        .filter_map(|species| species.get("key").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let facilities = content
+        .get_mut("facilities")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/facilities: missing or not an array"))?;
+    let defined: HashSet<String> = facilities
+        .iter()
+        .filter_map(|facility| facility.get("service").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    if !defined.contains("sign") {
+        for sign in built_in
+            .facilities
+            .iter()
+            .filter(|facility| facility.service == "sign")
+        {
+            facilities.push(serde_json::to_value(sign).expect("facility serialization"));
+        }
+    }
+    let facts: Vec<Value> = built_in
+        .facts
+        .iter()
+        .filter(|fact| species.contains(&fact.species))
+        .map(|fact| serde_json::to_value(fact).expect("fact serialization"))
+        .collect();
+    if !facts.is_empty() {
+        content.insert("facts".to_owned(), Value::Array(facts));
+    }
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    for guest in park
+        .get_mut("guests")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/guests: missing or not an array"))?
+    {
+        guest
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/guests: entry is not an object"))?
+            .insert("lessons".to_owned(), json!([]));
+    }
+    let add_lines = |ledger: &mut Value| -> Result<(), SaveError> {
+        let ledger = ledger
+            .as_object_mut()
+            .ok_or_else(|| invalid("park ledger: not an object"))?;
+        for field in ["donation_income_cents", "grant_income_cents"] {
+            ledger.insert(field.to_owned(), json!(0));
+        }
+        Ok(())
+    };
+    add_lines(
+        park.get_mut("finance_today")
+            .ok_or_else(|| invalid("park/finance_today: missing"))?,
+    )?;
+    for day in park
+        .get_mut("finance")
+        .and_then(|finance| finance.get_mut("history"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/finance/history: missing or not an array"))?
+    {
+        add_lines(
+            day.get_mut("ledger")
+                .ok_or_else(|| invalid("park/finance/history: day without a ledger"))?,
+        )?;
+    }
+    park.insert(
+        "education".to_owned(),
+        serde_json::to_value(crate::education::Education::default())
+            .expect("education serialization"),
+    );
     Ok(value)
 }
 

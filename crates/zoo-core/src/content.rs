@@ -24,6 +24,7 @@ const SCENE_COMPOSED_PRESENTATIONS: &[&str] = &[
     "litter_bin",
     "water_pump",
     "climate_plant",
+    "education_sign",
 ];
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
@@ -42,6 +43,22 @@ pub(crate) struct Catalog {
     pub species_compatibility: Vec<SpeciesPairing>,
     pub facilities: Vec<Facility>,
     pub unlocks: Vec<Unlock>,
+    /// One sourced educational fact per species at most, shown on signs and at keeper talks
+    /// (#116). A species without one still teaches its name and habitat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<SpeciesFact>,
+}
+
+/// An authored educational fact with its source (#116). Facts describe real animals; the park's
+/// education and conservation milestones are game state and claim no real-world impact.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SpeciesFact {
+    pub species: String,
+    pub fact: String,
+    pub source_title: String,
+    /// An `https://` link to the source.
+    pub source_url: String,
 }
 
 /// An authored mixed-exhibit verdict for two species (#108): a simplified game profile, not
@@ -209,6 +226,9 @@ pub(crate) enum CareCategory {
     Inspection,
     Enrichment,
     Treatment,
+    /// A keeper talk to guests (#116): generated from a habitat's talk schedule, never part of
+    /// a care schedule.
+    Talk,
 }
 
 impl CareCategory {
@@ -227,7 +247,13 @@ impl CareCategory {
             Self::Inspection => "inspection",
             Self::Enrichment => "enrichment",
             Self::Treatment => "treatment",
+            Self::Talk => "talk",
         }
+    }
+
+    /// Routine habitat care, as opposed to a vet's treatment or a keeper talk.
+    pub fn is_routine(self) -> bool {
+        Self::ALL.contains(&self)
     }
 
     /// A routine category by key; treatment is not something a schedule or keeper takes.
@@ -733,6 +759,11 @@ impl Catalog {
                         "{path}/category: treatment is veterinary work, not a scheduled task"
                     ));
                 }
+                if task.category == CareCategory::Talk {
+                    return Err(format!(
+                        "{path}/category: talks are scheduled per habitat, not by species"
+                    ));
+                }
                 if !categories.insert(task.category) {
                     return Err(format!("{path}/category: duplicate care category"));
                 }
@@ -851,6 +882,7 @@ impl Catalog {
                 "bin" => "litter_bin",
                 "water_pump" => "water_pump",
                 "climate_plant" => "climate_plant",
+                "sign" => "education_sign",
                 "entrance" => "entrance",
                 "animal_care_depot" => "animal_care_depot",
                 _ => return Err(format!("{prefix}/service: unsupported existing service")),
@@ -978,6 +1010,26 @@ impl Catalog {
                         kind.key()
                     ));
                 }
+            }
+        }
+        let mut taught = HashSet::new();
+        for (i, fact) in self.facts.iter().enumerate() {
+            let prefix = format!("facts/{i}");
+            if !self
+                .species
+                .iter()
+                .any(|species| species.key == fact.species)
+            {
+                return Err(format!("{prefix}/species: unknown species"));
+            }
+            if !taught.insert(fact.species.as_str()) {
+                return Err(format!("{prefix}/species: one fact per species"));
+            }
+            text(&fact.fact, &format!("{prefix}/fact"))?;
+            text(&fact.source_title, &format!("{prefix}/source_title"))?;
+            text(&fact.source_url, &format!("{prefix}/source_url"))?;
+            if !fact.source_url.starts_with("https://") {
+                return Err(format!("{prefix}/source_url: expected an https:// link"));
             }
         }
         for fixed in ["entrance", "animal_care_depot"] {

@@ -1229,6 +1229,13 @@ function concessionNodes(snapshot: Snapshot): RendererSceneNode[] {
       )
       continue
     }
+    if (stand.sign) {
+      nodes.push(
+        blobShadow(`concession:${stand.id}:shadow`, x, z, 0.3, 0.12),
+        ...educationSignNodes(m, stand.sign),
+      )
+      continue
+    }
     const accent: Hex = stand.kind === "food" ? "#e0913f" : "#4fa9c7"
     let awning: Hex = accent
     if (stand.service_state === "failed") {
@@ -1352,6 +1359,23 @@ function utilityPlantNodes(
   nodes.push(m.sphere("lamp", [0.26, 0.6, 0.2], 0.05, lamp))
   if (!utility.working) {
     nodes.push(m.box("out-of-order", [0, 0.2, 0.3], [0.5, 0.1, 0.02], "#6b4e32"))
+  }
+  return nodes
+}
+
+/** Education signs (#116): a post and a board, with a coloured badge only while the sign
+ * teaches; the decision is zoo-core's. */
+function educationSignNodes(
+  m: ReturnType<typeof model>,
+  sign: NonNullable<Snapshot["concessions"][number]["sign"]>,
+): RendererSceneNode[] {
+  const nodes = [
+    m.cylinder("post", [0, 0.22, -0.05], 0.03, 0.44, "#6b4e32"),
+    m.box("board", [0, 0.5, -0.02], [0.5, 0.3, 0.04], "#f3ead2"),
+    m.box("frame", [0, 0.66, -0.02], [0.54, 0.03, 0.05], "#6b4e32"),
+  ]
+  if (sign.status === "teaching") {
+    nodes.push(m.sphere("badge", [0.16, 0.56, 0.01], 0.05, "#3f8f6b"))
   }
   return nodes
 }

@@ -28,6 +28,7 @@ export type WorkspaceTab =
   | "facilities"
   | "prices"
   | "finances"
+  | "education"
 
 /** Something a row or alert can focus: the alert subjects, plus guests and work zones. */
 export type JumpTarget = AlertSubject | { kind: "guest"; id: number } | { kind: "zone"; id: number }
@@ -51,6 +52,7 @@ const TABS: { tab: WorkspaceTab; label: string }[] = [
   { tab: "facilities", label: "Facilities" },
   { tab: "prices", label: "Prices" },
   { tab: "finances", label: "Finances" },
+  { tab: "education", label: "Education" },
 ]
 
 export function money(cents: number) {
@@ -195,6 +197,8 @@ function janitorAssignment(target: Janitor["target"]) {
 const INCOME_LINES: [keyof FinanceBreakdown, string][] = [
   ["admissions_income_cents", "Admissions"],
   ["concession_income_cents", "Guest concessions"],
+  ["donation_income_cents", "Donations"],
+  ["grant_income_cents", "Grants"],
 ]
 
 const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
@@ -561,6 +565,7 @@ export function ManagementWorkspace({
   actionLabel,
   prices,
   finances,
+  education,
 }: {
   snapshot: Snapshot
   tab: WorkspaceTab
@@ -573,6 +578,8 @@ export function ManagementWorkspace({
   prices: ReactNode
   /** The finances panel (#115), composed by the app around the ledger table. */
   finances: (ledger: ReactNode) => ReactNode
+  /** The education and conservation report (#116), composed by the app with its commands. */
+  education: ReactNode
 }) {
   const label = (key: string | null) =>
     key === null
@@ -893,6 +900,7 @@ export function ManagementWorkspace({
           />
         )}
         {tab === "prices" && prices}
+        {tab === "education" && education}
         {tab === "finances" &&
           finances(
             <DataTable

@@ -53,7 +53,7 @@ export type ServicePoint = Point & {
 export type CareCategory = "feeding" | "cleaning" | "inspection" | "enrichment"
 
 /** A care job's work: routine keeper care, or a vet's treatment of one animal (#109). */
-export type CareJobCategory = CareCategory | "treatment"
+export type CareJobCategory = CareCategory | "treatment" | "talk"
 
 export type CareTask = {
   category: CareCategory
@@ -411,6 +411,8 @@ export type Concession = Point & {
   stand: StandOperations | null
   /** Water pumps and climate plants (#113); `null` for every other facility. */
   utility: UtilityFacility | null
+  /** An education sign: what it teaches, or why it teaches nothing (#116); absent otherwise. */
+  sign?: SignState
 }
 
 /** Why a sale was lost, counted by zoo-core per stand (#102). */
@@ -633,6 +635,9 @@ export type Guest = Point & {
   crowded: boolean
   /** Why the guest is walking out, once decided (#103). */
   exit: ExitCause | null
+  /** Learning points this visit and what they were learned about (#116). */
+  learning: number
+  lessons: Lesson[]
 }
 
 export type VisitorProfile = "family" | "enthusiast" | "stroller"
@@ -693,6 +698,7 @@ export type FacilityOffer = {
     | "bin"
     | "water_pump"
     | "climate_plant"
+    | "sign"
     | "entrance"
     | "animal_care_depot"
   asset_ref: string
@@ -731,6 +737,9 @@ export type SpeciesOffer = {
 export type FinanceBreakdown = {
   admissions_income_cents: number
   concession_income_cents: number
+  /** Guests' donations and scenario grants (#116). */
+  donation_income_cents: number
+  grant_income_cents: number
   construction_expense_cents: number
   animal_purchase_expense_cents: number
   habitat_care_expense_cents: number
@@ -1011,6 +1020,8 @@ export type Snapshot = {
   visits: VisitsState
   /** Prices, the gate, observed demand and marketing (#106). */
   pricing: PricingState
+  /** Signs, talks, learning, donations, conservation milestones and grants (#116). */
+  education: EducationState
 }
 
 export type ParcelStatus = "owned" | "available" | "unaffordable" | "locked"
@@ -1401,4 +1412,118 @@ export type PricingState = {
   campaign_cost_cents: number
   campaign_minutes: number
   campaign_arrival_boost_percent: number
+}
+
+/** What one guest learned about one species (#116). */
+export type Lesson = {
+  species: string
+  habitat_id: number
+  source: "sign" | "talk"
+  points: number
+}
+
+/** An authored species fact and its source (#116). */
+export type SpeciesFact = {
+  species: string
+  fact: string
+  source_title: string
+  source_url: string
+}
+
+/** What an education sign teaches, or why it teaches nothing (#116). */
+export type SignState = Point & {
+  id: number
+  habitat_id: number | null
+  species: string[]
+  status: "teaching" | "decorative" | "unreachable"
+  detail: string
+  facts: SpeciesFact[]
+}
+
+export type TalkOutcome = {
+  habitat_id: number
+  minute: number
+  given: boolean
+  attendees: number
+  detail: string
+}
+
+/** A habitat's daily keeper talk and where it stands (#116). */
+export type TalkState = {
+  habitat_id: number
+  species: string
+  start_minute_of_day: number
+  duration_minutes: number
+  places: number
+  next_due_minute: number
+  status: "scheduled" | "waiting_for_keeper" | "keeper_on_the_way" | "in_progress" | "blocked"
+  detail: string
+  attendees: number
+  last: TalkOutcome | null
+}
+
+export type EducationCounts = {
+  guests_educated: number
+  sign_lessons: number
+  talk_lessons: number
+  talks_given: number
+  talks_canceled: number
+  attendees: number
+  donors: number
+  donations_cents: number
+  grants_cents: number
+}
+
+export type AchievementKind = "thriving_exhibit" | "vet_recovery" | "supported_rehoming"
+
+export type EarnedAchievement = {
+  kind: AchievementKind
+  minute: number
+  habitat_id: number
+  animal_ids: number[]
+  detail: string
+}
+
+/** A conservation milestone: earned once, from real animals and events (#116). */
+export type AchievementState = {
+  kind: AchievementKind
+  title: string
+  description: string
+  earned: EarnedAchievement | null
+  progress: string
+}
+
+export type Rehoming = {
+  animal_id: number
+  minute: number
+  eligible: boolean
+  detail: string
+}
+
+/** A scenario grant and its explicit condition (#116). */
+export type GrantState = {
+  id: string
+  title: string
+  condition: string
+  amount_cents: number
+  awarded_minute: number | null
+  progress: string
+}
+
+/** The Rust-owned conservation and education report (#116). */
+export type EducationState = {
+  signs: SignState[]
+  talks: TalkState[]
+  learning: {
+    learners_now: number
+    average_learning: number
+    today: EducationCounts
+    total: EducationCounts
+  }
+  donations: { habitat_id: number; label: string; donors: number; cents: number }[]
+  recent_talks: TalkOutcome[]
+  achievements: AchievementState[]
+  recent_rehomings: Rehoming[]
+  grants: GrantState[]
+  reasons: string[]
 }

@@ -399,7 +399,7 @@ impl Habitat {
         match category {
             // A treatment is given where the patient rests; the station is where it falls back
             // to when the patient cannot be found (#109).
-            CareCategory::Feeding | CareCategory::Treatment => station,
+            CareCategory::Feeding | CareCategory::Treatment | CareCategory::Talk => station,
             CareCategory::Cleaning => {
                 let gate = self.gate_tile();
                 area.pool()

@@ -44,6 +44,21 @@
       "title": "Open a third stocked habitat",
       "goal": { "kind": "stocked_habitats", "at_least": 3 },
       "focus": { "x": 20, "y": 6 }
+    },
+    {
+      "id": "teach-guests",
+      "title": "Teach 12 guests about the animals",
+      "goal": { "kind": "guests_educated", "at_least": 12 },
+      "focus": { "x": 6, "y": 10 },
+      "hint": "Build an education sign beside the path next to a habitat, or schedule a keeper talk from Manage › Education."
+    }
+  ],
+  "grants": [
+    {
+      "id": "community-learning-grant",
+      "title": "Community learning grant",
+      "goal": { "kind": "talks_given", "at_least": 2 },
+      "amount_cents": 150000
     }
   ]
 }

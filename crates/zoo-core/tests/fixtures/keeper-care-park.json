@@ -177,6 +177,21 @@
         }
       },
       {
+        "asset_ref": "education_sign",
+        "build_cost_cents": 2500,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 5,
+        "key": "sign",
+        "label": "Education sign",
+        "price_cents": 0,
+        "service": "sign",
+        "unlock_ref": "available"
+      },
+      {
         "asset_ref": "entrance",
         "build_cost_cents": 0,
         "capacity": 0,
@@ -205,6 +220,44 @@
         "price_cents": 0,
         "service": "animal_care_depot",
         "unlock_ref": "available"
+      }
+    ],
+    "facts": [
+      {
+        "fact": "The capybara is the largest living rodent. It is a superb swimmer and can stay underwater for several minutes.",
+        "source_title": "Wikipedia: Capybara",
+        "source_url": "https://en.wikipedia.org/wiki/Capybara",
+        "species": "capybara"
+      },
+      {
+        "fact": "A flamingo's pink colour comes from carotenoid pigments in the plankton it eats.",
+        "source_title": "Wikipedia: Flamingo",
+        "source_url": "https://en.wikipedia.org/wiki/Flamingo",
+        "species": "flamingo"
+      },
+      {
+        "fact": "Every zebra's stripe pattern is unique to that individual.",
+        "source_title": "Wikipedia: Zebra",
+        "source_url": "https://en.wikipedia.org/wiki/Zebra",
+        "species": "zebra"
+      },
+      {
+        "fact": "Giraffes are the tallest living land animals and the largest ruminants.",
+        "source_title": "Wikipedia: Giraffe",
+        "source_url": "https://en.wikipedia.org/wiki/Giraffe",
+        "species": "giraffe"
+      },
+      {
+        "fact": "Elephants are the largest living land animals.",
+        "source_title": "Wikipedia: Elephant",
+        "source_url": "https://en.wikipedia.org/wiki/Elephant",
+        "species": "elephant"
+      },
+      {
+        "fact": "Penguins cannot fly: their wings evolved into flippers for swimming.",
+        "source_title": "Wikipedia: Penguin",
+        "source_url": "https://en.wikipedia.org/wiki/Penguin",
+        "species": "penguin"
       }
     ],
     "fences": [
@@ -721,6 +774,40 @@
       "x": 2,
       "y": 6
     },
+    "education": {
+      "achievements": [],
+      "attendance": [],
+      "donations": [],
+      "grants": [],
+      "recent_rehomings": [],
+      "recent_talks": [],
+      "recovered_animals": [],
+      "streaks": [],
+      "supported_rehomings": 0,
+      "talks": [],
+      "today": {
+        "attendees": 0,
+        "donations_cents": 0,
+        "donors": 0,
+        "grants_cents": 0,
+        "guests_educated": 0,
+        "sign_lessons": 0,
+        "talk_lessons": 0,
+        "talks_canceled": 0,
+        "talks_given": 0
+      },
+      "total": {
+        "attendees": 0,
+        "donations_cents": 0,
+        "donors": 0,
+        "grants_cents": 0,
+        "guests_educated": 0,
+        "sign_lessons": 0,
+        "talk_lessons": 0,
+        "talks_canceled": 0,
+        "talks_given": 0
+      }
+    },
     "elapsed_minutes": 30,
     "entrance": {
       "x": 0,
@@ -751,6 +838,8 @@
       "animal_purchase_expense_cents": 75000,
       "concession_income_cents": 0,
       "construction_expense_cents": 176000,
+      "donation_income_cents": 0,
+      "grant_income_cents": 0,
       "habitat_care_expense_cents": 0,
       "janitor_hiring_expense_cents": 0,
       "janitor_wages_expense_cents": 0,
@@ -2104,5 +2193,5 @@
       }
     ]
   },
-  "schema_version": 20
+  "schema_version": 21
 }

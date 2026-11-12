@@ -4,6 +4,7 @@ mod care;
 mod comfort;
 mod construction;
 mod content;
+mod education;
 mod enclosure;
 mod environment;
 mod finance;
@@ -176,6 +177,8 @@ enum ConcessionKind {
     /// Utility plants (#113): they serve habitats, not guests.
     WaterPump,
     ClimatePlant,
+    /// Education signs (#116): they teach guests about the nearest stocked habitat.
+    Sign,
 }
 
 impl ConcessionKind {
@@ -188,6 +191,7 @@ impl ConcessionKind {
             "bin" => Some(Self::Bin),
             "water_pump" => Some(Self::WaterPump),
             "climate_plant" => Some(Self::ClimatePlant),
+            "sign" => Some(Self::Sign),
             _ => None,
         }
     }
@@ -201,6 +205,7 @@ impl ConcessionKind {
             Self::Bin => "bin",
             Self::WaterPump => "water_pump",
             Self::ClimatePlant => "climate_plant",
+            Self::Sign => "sign",
         }
     }
 
@@ -335,6 +340,10 @@ struct MaintenanceTask {
 enum IncomeCategory {
     Admissions,
     Concessions,
+    /// Guests' gifts after learning about the animals (#116).
+    Donations,
+    /// Scenario grants for education and conservation goals (#116).
+    Grants,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -375,6 +384,9 @@ enum ExpenseCategory {
 struct FinanceLedger {
     admissions_income_cents: i64,
     concession_income_cents: i64,
+    /// Donations and grants (#116; save schema 21).
+    donation_income_cents: i64,
+    grant_income_cents: i64,
     construction_expense_cents: i64,
     animal_purchase_expense_cents: i64,
     habitat_care_expense_cents: i64,
@@ -421,6 +433,8 @@ impl FinanceLedger {
         match category {
             IncomeCategory::Admissions => self.admissions_income_cents += cents,
             IncomeCategory::Concessions => self.concession_income_cents += cents,
+            IncomeCategory::Donations => self.donation_income_cents += cents,
+            IncomeCategory::Grants => self.grant_income_cents += cents,
         }
         true
     }
@@ -464,7 +478,10 @@ impl FinanceLedger {
     }
 
     fn income_total_cents(self) -> i64 {
-        self.admissions_income_cents + self.concession_income_cents
+        self.admissions_income_cents
+            + self.concession_income_cents
+            + self.donation_income_cents
+            + self.grant_income_cents
     }
 
     fn expense_total_cents(self) -> i64 {
@@ -871,6 +888,8 @@ struct Guest {
     crowd_minutes: u32,
     /// Why the guest is walking out, once it has decided to leave (#103).
     exit: Option<visit::ExitCause>,
+    /// What the guest has learned about the animals this visit (#116).
+    lessons: Vec<education::Lesson>,
 }
 
 impl Guest {
@@ -949,6 +968,8 @@ struct GameState {
     finance_today: FinanceLedger,
     /// Opening cash, completed days, the loan and deficit days (#115).
     finance: finance::Finances,
+    /// Talks, learning, donations, conservation milestones and grants (#116).
+    education: education::Education,
     /// Simulated minutes since this park session started (the diagnostics clock).
     elapsed_minutes: u64,
     /// Domain events produced by the latest command or advance, drained by the recorder.
@@ -1065,6 +1086,7 @@ impl GameState {
                 opening_cash_cents: 5_000_000,
                 ..finance::Finances::default()
             },
+            education: education::Education::default(),
             elapsed_minutes: 0,
             pending_events: Vec::new(),
             care_jobs: Vec::new(),
@@ -1335,6 +1357,7 @@ impl GameState {
                 self.construction.clear();
                 self.visits.today = visit::ExitCounts::default();
                 self.pricing.today = pricing::GateCounts::default();
+                self.education.today = education::Counts::default();
                 for stand in &mut self.concessions {
                     stand.sales_today = 0;
                     if let Some(ops) = stand.stand.as_mut() {
@@ -1398,6 +1421,7 @@ impl GameState {
             }
 
             self.advance_viewing();
+            self.advance_education();
             self.advance_groups();
             self.update_alerts();
         }
@@ -1436,6 +1460,9 @@ impl GameState {
             return Some(violation);
         }
         if let Some(violation) = self.health_violation() {
+            return Some(violation);
+        }
+        if let Some(violation) = self.education_violation() {
             return Some(violation);
         }
         fn ordered(name: &str, ids: impl Iterator<Item = u32>, next: u32) -> Option<String> {
@@ -1757,6 +1784,7 @@ impl GameState {
                 self.release_facility_slot(*id);
                 self.emit("guest_left", Some(*id));
             }
+            self.collect_donations(&leave_ids);
             self.record_exits(&leave_ids);
             self.guests.retain(|guest| !leave_ids.contains(&guest.id));
         }
@@ -1765,6 +1793,7 @@ impl GameState {
 
     fn advance_viewing(&mut self) {
         let viewing_occupancy = self.viewing_occupancy();
+        let attending = self.education.attending();
         let conditions: Vec<(usize, Option<ViewingSpot>)> = self
             .guests
             .iter()
@@ -1794,7 +1823,10 @@ impl GameState {
                 }
             }
 
-            guest.viewing_minutes = guest.viewing_minutes.saturating_sub(1);
+            // A guest holding a place at a keeper talk stays until it ends (#116).
+            if !attending.contains(&guest.id) {
+                guest.viewing_minutes = guest.viewing_minutes.saturating_sub(1);
+            }
         }
     }
 
@@ -3419,6 +3451,7 @@ impl GameState {
                     service_state: self.concession_service_state(stand).to_owned(),
                     maintenance_status: self.concession_maintenance_status(stand),
                     utility: self.utility_facility_view(index),
+                    sign: (stand.kind == ConcessionKind::Sign).then(|| self.sign_view(stand)),
                 },
             )
             .collect();
@@ -3461,6 +3494,8 @@ impl GameState {
                     .get(&(guest.x, guest.y))
                     .is_some_and(|count| *count > visit::PATH_COMFORT_GUESTS),
                 exit: guest.exit.clone(),
+                learning: education::learning(&guest.lessons),
+                lessons: guest.lessons.clone(),
             })
             .collect();
 
@@ -3564,6 +3599,7 @@ impl GameState {
             land: self.land_view(),
             visits: self.visits_view(),
             pricing: self.pricing_view(),
+            education: self.education_view(),
         }
     }
 }
@@ -3606,6 +3642,9 @@ struct ConcessionView {
     stand: Option<stand::StandView>,
     /// Capacity, allocation and failure state of a utility plant (#113).
     utility: Option<utility::UtilityFacilityView>,
+    /// What an education sign teaches, or why it teaches nothing (#116); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sign: Option<education::SignView>,
 }
 
 #[derive(Serialize)]
@@ -3852,6 +3891,9 @@ struct GuestView {
     crowded: bool,
     /// Why the guest is leaving, once decided (#103).
     exit: Option<visit::ExitCause>,
+    /// Learning points this visit and what they were learned about (#116).
+    learning: u32,
+    lessons: Vec<education::Lesson>,
 }
 
 #[derive(Serialize)]
@@ -3928,6 +3970,8 @@ struct Snapshot {
     visits: visit::VisitsView,
     /// Prices, the gate, demand and marketing (#106).
     pricing: pricing::PricingView,
+    /// Signs, talks, learning, donations, conservation milestones and grants (#116).
+    education: education::EducationView,
 }
 
 #[derive(Serialize)]
@@ -4160,6 +4204,13 @@ impl ZooGame {
                 self.set_habitat_quarantine(number("habitat_id")?, flag("enabled")?)
             }
             "quarantine_animal" => self.quarantine_animal(number("animal_id")?),
+            "schedule_talk" => self.schedule_talk(
+                number("habitat_id")?,
+                number("start_minute_of_day")?,
+                number("duration_minutes")?,
+                number("places")?,
+            ),
+            "cancel_talk" => self.cancel_talk(number("habitat_id")?),
             "set_keeper_schedule" => self.set_keeper_schedule(
                 number("keeper_id")?,
                 text("categories")?,
@@ -4767,6 +4818,32 @@ impl ZooGame {
     pub fn evaluate_quarantine(&self, animal_id: u32) -> String {
         serde_json::to_string(&self.state.evaluate_quarantine(animal_id))
             .expect("quarantine preview serialization is infallible")
+    }
+
+    /// Schedules a habitat's daily keeper talk: start minute of the day (quarter hours), length
+    /// and places (#116). Replaces an earlier schedule of the habitat.
+    pub fn schedule_talk(
+        &mut self,
+        habitat_id: u32,
+        start_minute_of_day: u32,
+        duration_minutes: u32,
+        places: u32,
+    ) -> String {
+        let args = serde_json::json!({
+            "habitat_id": habitat_id,
+            "start_minute_of_day": start_minute_of_day,
+            "duration_minutes": duration_minutes,
+            "places": places,
+        });
+        self.command("schedule_talk", args, |state| {
+            state.schedule_talk(habitat_id, start_minute_of_day, duration_minutes, places)
+        })
+    }
+
+    /// Cancels a habitat's keeper talk and any talk of it still open (#116).
+    pub fn cancel_talk(&mut self, habitat_id: u32) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id });
+        self.command("cancel_talk", args, |state| state.cancel_talk(habitat_id))
     }
 
     /// Moves an ill animal into quarantine; it returns home once recovered (#109).
@@ -5402,6 +5479,7 @@ mod tests {
             group_id: 1,
             crowd_minutes: 0,
             exit: None,
+            lessons: Vec::new(),
         };
         state.guests.push(guest.clone());
         guest.id = 2;

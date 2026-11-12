@@ -532,6 +532,21 @@
       }
     },
     {
+      "key": "sign",
+      "label": "Education sign",
+      "service": "sign",
+      "asset_ref": "education_sign",
+      "unlock_ref": "available",
+      "build_cost_cents": 2500,
+      "price_cents": 0,
+      "hourly_upkeep_cents": 5,
+      "capacity": 0,
+      "footprint": {
+        "width": 1,
+        "height": 1
+      }
+    },
+    {
       "key": "entrance",
       "label": "Entrance",
       "service": "entrance",
@@ -560,6 +575,44 @@
         "width": 1,
         "height": 1
       }
+    }
+  ],
+  "facts": [
+    {
+      "species": "capybara",
+      "fact": "The capybara is the largest living rodent. It is a superb swimmer and can stay underwater for several minutes.",
+      "source_title": "Wikipedia: Capybara",
+      "source_url": "https://en.wikipedia.org/wiki/Capybara"
+    },
+    {
+      "species": "flamingo",
+      "fact": "A flamingo's pink colour comes from carotenoid pigments in the plankton it eats.",
+      "source_title": "Wikipedia: Flamingo",
+      "source_url": "https://en.wikipedia.org/wiki/Flamingo"
+    },
+    {
+      "species": "zebra",
+      "fact": "Every zebra's stripe pattern is unique to that individual.",
+      "source_title": "Wikipedia: Zebra",
+      "source_url": "https://en.wikipedia.org/wiki/Zebra"
+    },
+    {
+      "species": "giraffe",
+      "fact": "Giraffes are the tallest living land animals and the largest ruminants.",
+      "source_title": "Wikipedia: Giraffe",
+      "source_url": "https://en.wikipedia.org/wiki/Giraffe"
+    },
+    {
+      "species": "elephant",
+      "fact": "Elephants are the largest living land animals.",
+      "source_title": "Wikipedia: Elephant",
+      "source_url": "https://en.wikipedia.org/wiki/Elephant"
+    },
+    {
+      "species": "penguin",
+      "fact": "Penguins cannot fly: their wings evolved into flippers for swimming.",
+      "source_title": "Wikipedia: Penguin",
+      "source_url": "https://en.wikipedia.org/wiki/Penguin"
     }
   ]
 }

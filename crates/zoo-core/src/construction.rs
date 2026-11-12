@@ -1369,6 +1369,7 @@ impl GameState {
 
     fn remove_habitat(&mut self, id: u32) -> Habitat {
         self.release_habitat_keepers(id);
+        self.forget_habitat_education(id);
         let index = self
             .habitats
             .iter()
