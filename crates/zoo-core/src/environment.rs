@@ -718,6 +718,10 @@ impl Habitat {
                 parts.push(part(key, kind.label(), 2, score, detail));
             }
         }
+        // A hot day without shade for everyone (#118); fair days have no heat part.
+        if let Some((score, detail)) = self.heat_part() {
+            parts.push(part("heat", "Heat", 1, score, detail));
+        }
         parts
     }
 

@@ -24,6 +24,7 @@
 use super::{
     ActionResult, GameState, Position, TileKind,
     care::CareJobState,
+    conditions,
     content::{self, CareCategory, Catalog},
     education, finance, land,
     session::{DomainEvent, fnv1a64},
@@ -86,6 +87,9 @@ pub(crate) struct Scenario {
     /// Grants promised for education and conservation goals (#116): scenario hooks paid once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     grants: Vec<education::GrantDefinition>,
+    /// The weather stream and announced events (#118); none keeps every day fair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conditions: Option<conditions::ConditionsDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -638,6 +642,11 @@ impl Scenario {
             }
         }
         land::validate_parcels(self.land.iter(), width, height, [self.entrance, self.depot])?;
+        if let Some(conditions) = &self.conditions {
+            conditions
+                .validate()
+                .map_err(|error| format!("conditions/{error}"))?;
+        }
         Ok(())
     }
 
@@ -773,6 +782,8 @@ impl Scenario {
             .iter()
             .map(education::GrantDefinition::progress)
             .collect();
+        state.conditions = conditions::Conditions::new(self.conditions.clone());
+        state.sync_conditions();
         state.tutorial = match self.tutorial {
             TutorialMode::Guided => Tutorial::active(),
             TutorialMode::None => Tutorial::off(),

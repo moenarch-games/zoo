@@ -24,6 +24,7 @@ const FIXTURE_V18: &str = "tests/fixtures/save-v18.json";
 const FIXTURE_V19: &str = "tests/fixtures/save-v19.json";
 const FIXTURE_V20: &str = "tests/fixtures/save-v20.json";
 const FIXTURE_V21: &str = "tests/fixtures/save-v21.json";
+const FIXTURE_V22: &str = "tests/fixtures/save-v22.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -94,11 +95,33 @@ fn content_without_education(content: &mut Value) {
     content.as_object_mut().unwrap().remove("facts");
 }
 
+/// Undoes the schema 21 → 22 migration (#118) on a document saved straight after loading: the
+/// park loses its fair-weather calendar, with both rules on, nothing announced and every day up
+/// to the one after the saved one considered.
+fn conditions_removed(value: &mut Value) {
+    let park = value["park"].as_object_mut().unwrap();
+    let day = park["day"].as_u64().unwrap();
+    let conditions = park.remove("conditions").unwrap();
+    assert_eq!(
+        conditions,
+        serde_json::json!({
+            "definition": null,
+            "rules": { "weather_effects": true, "events": true },
+            "scheduled": null,
+            "planned_through_day": day + 1,
+            "next_event_day": day,
+            "history": [],
+        })
+    );
+    value["schema_version"] = 21.into();
+}
+
 /// Undoes the schema 20 → 21 migration (#116) on a document saved straight after loading: the
 /// catalog loses the appended education sign and the sourced facts, no guest has learned
 /// anything, the ledgers lose their zero donation and grant lines, and the park its untouched
 /// education record.
 fn education_removed(value: &mut Value) {
+    conditions_removed(value);
     content_without_education(&mut value["content"]);
     let park = value["park"].as_object_mut().unwrap();
     let education = park.remove("education").unwrap();
@@ -1578,18 +1601,54 @@ fn educated() -> ZooGame {
     game
 }
 
+/// Schema 21 parks always had fair weather (#118): they gain a calendar without a weather
+/// stream, both rules on and nothing announced, and stay fair however long they run.
+#[test]
+fn the_schema_v21_fixture_migrates_to_parks_with_fair_weather() {
+    let fixture = std::fs::read_to_string(FIXTURE_V21).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    conditions_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    game.tick(240);
+    let view = json(&game.snapshot_json());
+    let conditions = &view["conditions"];
+    assert_eq!(conditions["weather_stream"], false);
+    assert!(conditions["scheduled"].is_null());
+    assert!(
+        conditions["forecast"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|day| day["weather"] == "fair")
+    );
+}
+
+/// The educated park with park events switched off (#118).
+fn current_fixture_park() -> ZooGame {
+    let mut game = educated();
+    ok(game.set_condition_rule("events".to_owned(), false));
+    game
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&educated().save_json());
+        let value = json(&current_fixture_park().save_json());
         std::fs::write(
-            FIXTURE_V21,
+            FIXTURE_V22,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V21).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V22).unwrap();
     let saved = json(&fixture);
+    assert_eq!(
+        saved["park"]["conditions"]["rules"]["events"], false,
+        "the fixture switched park events off"
+    );
     assert!(
         !saved["park"]["education"]["talks"]
             .as_array()

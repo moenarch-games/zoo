@@ -640,7 +640,7 @@ export type Guest = Point & {
   lessons: Lesson[]
 }
 
-export type VisitorProfile = "family" | "enthusiast" | "stroller"
+export type VisitorProfile = "family" | "enthusiast" | "stroller" | "school"
 
 export type GuestGroup = {
   id: number
@@ -1022,6 +1022,62 @@ export type Snapshot = {
   pricing: PricingState
   /** Signs, talks, learning, donations, conservation milestones and grants (#116). */
   education: EducationState
+  /** Season, weather, forecast, daylight, rules and announced events (#118). */
+  conditions: ConditionsState
+}
+
+export type Season = "spring" | "summer" | "autumn" | "winter"
+export type Weather = "fair" | "heat"
+
+/** Where the sun is, from the simulation clock; the renderer maps it to lighting (#118). */
+export type DaylightState = {
+  phase: "night" | "dawn" | "day" | "dusk"
+  /** 0 at night, rising through dawn to 100 at noon. */
+  daylight_percent: number
+  /** 0 at sunrise, 1000 at sunset. */
+  sun_arc_permille: number
+  sunrise_minute: number
+  sunset_minute: number
+}
+
+export type ConditionRule = "weather_effects" | "events"
+
+/** The Rust-owned calendar, weather stream and bounded park events (#118). */
+export type ConditionsState = {
+  season: Season
+  season_label: string
+  season_day: number
+  season_days: number
+  weather_stream: boolean
+  weather: Weather
+  effects_active: boolean
+  summary: string
+  forecast: {
+    day: number
+    season: Season
+    season_label: string
+    weather: Weather
+    label: string
+  }[]
+  light: DaylightState
+  rules: Record<ConditionRule, boolean>
+  events_defined: boolean
+  scheduled: {
+    kind: "school_visit"
+    label: string
+    day: number
+    minute: number
+    guests: number
+    message: string
+  } | null
+  history: {
+    kind: "school_visit"
+    label: string
+    day: number
+    outcome: "arrived" | "park_closed" | "turned_away" | "nothing_to_see" | "cancelled"
+    guests: number
+    message: string
+  }[]
 }
 
 export type ParcelStatus = "owned" | "available" | "unaffordable" | "locked"
@@ -1160,6 +1216,7 @@ export type AlertAction =
   | "build_water_pump"
   | "build_climate_plant"
   | "open_finances"
+  | "add_shelter"
 
 /**
  * A Rust-owned park alert (#94): one condition on one object, kept while it lasts and

@@ -2,6 +2,7 @@ mod alerts;
 mod animal;
 mod care;
 mod comfort;
+mod conditions;
 mod construction;
 mod content;
 mod education;
@@ -650,6 +651,10 @@ struct Habitat {
     quarantine: bool,
     /// Utility priority and the latest pool-water and climate allocation (#113).
     utilities: utility::HabitatUtilities,
+    /// Today's weather as it affects the habitat (#118): derived from the park calendar after
+    /// every command and minute, never saved.
+    #[serde(skip)]
+    weather: conditions::Weather,
 }
 
 impl Habitat {
@@ -970,6 +975,8 @@ struct GameState {
     finance: finance::Finances,
     /// Talks, learning, donations, conservation milestones and grants (#116).
     education: education::Education,
+    /// The scenario's weather stream, the player's rules and announced events (#118).
+    conditions: conditions::Conditions,
     /// Simulated minutes since this park session started (the diagnostics clock).
     elapsed_minutes: u64,
     /// Domain events produced by the latest command or advance, drained by the recorder.
@@ -1087,6 +1094,7 @@ impl GameState {
                 ..finance::Finances::default()
             },
             education: education::Education::default(),
+            conditions: conditions::Conditions::new(None),
             elapsed_minutes: 0,
             pending_events: Vec::new(),
             care_jobs: Vec::new(),
@@ -1365,6 +1373,9 @@ impl GameState {
                     }
                 }
             }
+            // Today's weather and the next announcement, then any event due this minute (#118).
+            self.sync_conditions();
+            self.advance_events();
 
             self.advance_campaign();
             self.spawn_accumulator += 1;
@@ -1588,6 +1599,8 @@ impl GameState {
             .saturating_sub(park_cleanliness)
             .div_ceil(20)
             .max(1);
+        // A hot day makes guests thirsty faster (#118): more drink demand, bounded at 100.
+        let heat = self.heat_today();
 
         for guest in &mut self.guests {
             guest.minutes_in_park += 1;
@@ -1599,6 +1612,13 @@ impl GameState {
                 guest.hunger = guest.hunger.saturating_add(1).min(100);
             }
             if guest.minutes_in_park % 2 == 0 {
+                guest.thirst = guest.thirst.saturating_add(1).min(100);
+            }
+            if heat
+                && guest
+                    .minutes_in_park
+                    .is_multiple_of(conditions::HEAT_THIRST_INTERVAL_MINUTES)
+            {
                 guest.thirst = guest.thirst.saturating_add(1).min(100);
             }
             // The toilet need grows one point a minute (#101).
@@ -3600,6 +3620,7 @@ impl GameState {
             visits: self.visits_view(),
             pricing: self.pricing_view(),
             education: self.education_view(),
+            conditions: self.conditions_view(),
         }
     }
 }
@@ -3972,6 +3993,8 @@ struct Snapshot {
     pricing: pricing::PricingView,
     /// Signs, talks, learning, donations, conservation milestones and grants (#116).
     education: education::EducationView,
+    /// Season, weather, forecast, daylight, rules and announced events (#118).
+    conditions: conditions::ConditionsView,
 }
 
 #[derive(Serialize)]
@@ -4015,6 +4038,7 @@ pub struct ZooGame {
 
 impl ZooGame {
     fn with_state(mut state: GameState) -> Self {
+        state.sync_conditions();
         state.update_alerts();
         let content = serde_json::to_string(state.catalog.as_ref())
             .expect("validated catalog serialization is infallible");
@@ -4043,6 +4067,7 @@ impl ZooGame {
             ActionResult::error(session::FROZEN_MESSAGE)
         } else {
             let result = run(&mut self.state);
+            self.state.sync_conditions();
             self.state.update_alerts();
             self.state.update_objectives();
             self.state.update_tutorial();
@@ -4170,6 +4195,7 @@ impl ZooGame {
                 self.set_admission_price(args["cents"].as_f64().unwrap_or(f64::NAN))
             }
             "set_park_open" => self.set_park_open(flag("open")?),
+            "set_condition_rule" => self.set_condition_rule(text("rule")?, flag("enabled")?),
             "start_marketing_campaign" => self.start_marketing_campaign(),
             // A refused non-finite amount was recorded as null; it replays as the same refusal.
             "borrow_loan" => self.borrow_loan(args["cents"].as_f64().unwrap_or(f64::NAN)),
@@ -4591,6 +4617,14 @@ impl ZooGame {
     pub fn set_park_open(&mut self, open: bool) -> String {
         let args = serde_json::json!({ "open": open });
         self.command("set_park_open", args, |state| state.set_park_open(open))
+    }
+
+    /// Switches a park rule (#118): `weather_effects` or `events`.
+    pub fn set_condition_rule(&mut self, rule: String, enabled: bool) -> String {
+        let args = serde_json::json!({ "rule": rule, "enabled": enabled });
+        self.command("set_condition_rule", args, |state| {
+            state.set_condition_rule(&rule, enabled)
+        })
     }
 
     /// Pays for a one-day marketing campaign that brings groups more often (#106).
@@ -5163,6 +5197,7 @@ mod tests {
             },
             quarantine: false,
             utilities: utility::HabitatUtilities::default(),
+            weather: conditions::Weather::Fair,
         }
     }
 

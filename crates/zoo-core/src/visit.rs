@@ -53,6 +53,8 @@ pub(crate) enum Profile {
     Enthusiast,
     /// A pair who wander through a few habitats at an easy pace.
     Stroller,
+    /// A school class on an announced park event (#118); never drawn from the arrival sequence.
+    School,
 }
 
 pub(crate) struct ProfileRules {
@@ -113,6 +115,18 @@ impl Profile {
                 crowd_weight: 20,
                 price_tolerance: 110,
             },
+            // A class's size comes from its event; it tours several habitats together.
+            Self::School => ProfileRules {
+                min_size: 2,
+                max_size: crate::conditions::MAX_SCHOOL_STUDENTS,
+                visit_goal: 3,
+                walking_tolerance: 40,
+                patience: 30,
+                favorite_weight: 10,
+                walk_weight: 2,
+                crowd_weight: 20,
+                price_tolerance: 120,
+            },
         }
     }
 
@@ -121,6 +135,7 @@ impl Profile {
             Self::Family => "Family",
             Self::Enthusiast => "Animal enthusiast",
             Self::Stroller => "Strollers",
+            Self::School => "School class",
         }
     }
 }
@@ -157,6 +172,19 @@ impl VisitRecord {
             ..Self::default()
         }
     }
+}
+
+/// What became of a group that came to the gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GroupArrival {
+    /// Admitted as this group ID.
+    Admitted(u32),
+    /// The gate turned it away: closed, too expensive or over budget.
+    Refused(GateOutcome),
+    /// No stocked, engaging habitat could be reached, so nobody came.
+    NoAttraction,
+    /// The park ran out of IDs or could not book the admission.
+    NoRoom,
 }
 
 /// Guests who arrived and decide together.
@@ -474,12 +502,20 @@ impl GameState {
     /// guest record walking from the entrance; a group turned away pays nothing and nobody
     /// enters. Either way it takes its place in the arrival sequence.
     pub(crate) fn try_spawn_group(&mut self) {
+        let arrival = self.visits.groups_arrived.saturating_add(1);
+        let (profile, size) = group_plan(arrival);
+        let _ = self.arrive_group(profile, size);
+    }
+
+    /// The next arrival comes to the gate as a group of `profile` and `size`: the ordinary
+    /// sequence draws both, an announced event (#118) names them. Either way it takes the next
+    /// place in the arrival sequence once it reaches the gate.
+    pub(crate) fn arrive_group(&mut self, profile: Profile, size: u32) -> GroupArrival {
         let start = self.entrance;
         let group_id = self.next_group_id;
         let arrival = self.visits.groups_arrived.saturating_add(1);
-        let (profile, size) = group_plan(arrival);
         if group_id == u32::MAX || self.next_guest_id.checked_add(size).is_none() {
-            return;
+            return GroupArrival::NoRoom;
         }
         let species = self.exhibited_species();
         let favorite =
@@ -489,7 +525,7 @@ impl GameState {
         let Some(choice) =
             self.choose_attraction(profile, favorite.as_deref(), &[], &field, &occupancy)
         else {
-            return;
+            return GroupArrival::NoAttraction;
         };
         // The gate (#106): the group decides once, before anyone enters or pays.
         let (value, _) = self.experience_value(&field, &occupancy);
@@ -499,14 +535,14 @@ impl GameState {
             self.visits.groups_arrived = arrival;
             self.record_gate(arrival, profile, size, &decision, 0);
             self.emit("group_turned_away", None);
-            return;
+            return GroupArrival::Refused(decision.outcome);
         }
         let Some(admission) = price.checked_mul(i64::from(size)) else {
-            return;
+            return GroupArrival::NoRoom;
         };
         // One ledger line for the whole group; a free park records none.
         if admission > 0 && !self.earn(admission, super::IncomeCategory::Admissions) {
-            return;
+            return GroupArrival::NoRoom;
         }
         self.record_gate(arrival, profile, size, &decision, admission);
         let arrival_value = pricing::arrival_value(price, value);
@@ -548,6 +584,7 @@ impl GameState {
         });
         self.visits.groups_arrived = arrival;
         self.emit("group_arrived", Some(group_id));
+        GroupArrival::Admitted(group_id)
     }
 
     /// A guest's own reason to stop, if any: needs first, then crowding, then value.

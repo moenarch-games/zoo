@@ -941,6 +941,17 @@
     ],
     "cash_cents": 4782824,
     "concessions": [],
+    "conditions": {
+      "definition": null,
+      "history": [],
+      "next_event_day": 1,
+      "planned_through_day": 3,
+      "rules": {
+        "events": true,
+        "weather_effects": true
+      },
+      "scheduled": null
+    },
     "day": 2,
     "depot": {
       "x": 2,
@@ -2507,5 +2518,5 @@
       }
     ]
   },
-  "schema_version": 21
+  "schema_version": 22
 }
