@@ -18,6 +18,7 @@ mod session;
 mod shape;
 mod stand;
 mod tutorial;
+mod utility;
 mod visit;
 mod zone;
 
@@ -171,6 +172,9 @@ enum ConcessionKind {
     Toilet,
     Bench,
     Bin,
+    /// Utility plants (#113): they serve habitats, not guests.
+    WaterPump,
+    ClimatePlant,
 }
 
 impl ConcessionKind {
@@ -181,6 +185,8 @@ impl ConcessionKind {
             "toilet" => Some(Self::Toilet),
             "bench" => Some(Self::Bench),
             "bin" => Some(Self::Bin),
+            "water_pump" => Some(Self::WaterPump),
+            "climate_plant" => Some(Self::ClimatePlant),
             _ => None,
         }
     }
@@ -192,6 +198,22 @@ impl ConcessionKind {
             Self::Toilet => "toilet",
             Self::Bench => "bench",
             Self::Bin => "bin",
+            Self::WaterPump => "water_pump",
+            Self::ClimatePlant => "climate_plant",
+        }
+    }
+
+    /// Utility plants, which need only a staff path and never serve guests (#113).
+    fn is_utility(self) -> bool {
+        matches!(self, Self::WaterPump | Self::ClimatePlant)
+    }
+
+    /// Condition lost every maintenance interval.
+    fn wear_per_interval(self) -> u32 {
+        if self.is_utility() {
+            utility::UTILITY_WEAR_PER_INTERVAL
+        } else {
+            MAINTENANCE_WEAR_PER_INTERVAL
         }
     }
 
@@ -202,7 +224,10 @@ impl ConcessionKind {
 
     /// Facilities that wear with time and use and are repaired by mechanics.
     fn wears(self) -> bool {
-        matches!(self, Self::Food | Self::Drink | Self::Toilet)
+        matches!(
+            self,
+            Self::Food | Self::Drink | Self::Toilet | Self::WaterPump | Self::ClimatePlant
+        )
     }
 }
 
@@ -337,6 +362,9 @@ enum ExpenseCategory {
     VetHiring,
     VetWages,
     Medicine,
+    /// Running working utility plants, hourly, and buying replacements (#113).
+    UtilityOperation,
+    UtilityReplacement,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +395,9 @@ struct FinanceLedger {
     vet_hiring_expense_cents: i64,
     vet_wages_expense_cents: i64,
     medicine_expense_cents: i64,
+    /// Utility plants (#113; save schema 19).
+    utility_operation_expense_cents: i64,
+    utility_replacement_expense_cents: i64,
 }
 
 impl FinanceLedger {
@@ -415,6 +446,10 @@ impl FinanceLedger {
             ExpenseCategory::VetHiring => self.vet_hiring_expense_cents += cents,
             ExpenseCategory::VetWages => self.vet_wages_expense_cents += cents,
             ExpenseCategory::Medicine => self.medicine_expense_cents += cents,
+            ExpenseCategory::UtilityOperation => self.utility_operation_expense_cents += cents,
+            ExpenseCategory::UtilityReplacement => {
+                self.utility_replacement_expense_cents += cents;
+            }
         }
         true
     }
@@ -443,6 +478,8 @@ impl FinanceLedger {
             + self.vet_hiring_expense_cents
             + self.vet_wages_expense_cents
             + self.medicine_expense_cents
+            + self.utility_operation_expense_cents
+            + self.utility_replacement_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -584,6 +621,8 @@ struct Habitat {
     /// Set aside for quarantine (#109): it takes only unwell animals, each remembering its
     /// home habitat.
     quarantine: bool,
+    /// Utility priority and the latest pool-water and climate allocation (#113).
+    utilities: utility::HabitatUtilities,
 }
 
 impl Habitat {
@@ -751,6 +790,18 @@ impl Habitat {
         }
         if self.cleanliness < 50 {
             return "Habitat needs cleaning".to_owned();
+        }
+        if let Some(kind) = utility::UtilityKind::ALL
+            .into_iter()
+            .find(|kind| self.utilities.supply(*kind).short())
+        {
+            let supply = self.utilities.supply(kind);
+            return format!(
+                "{} is short: {} of {} units",
+                kind.label(),
+                supply.supplied,
+                supply.demand
+            );
         }
         if let Some(problem) = self.environment_problem() {
             return problem;
@@ -1317,6 +1368,7 @@ impl GameState {
             {
                 self.advance_animals();
             }
+            self.advance_utilities();
             self.advance_animal_welfare();
             self.advance_guest_needs();
             self.advance_crowding();
@@ -1361,6 +1413,9 @@ impl GameState {
             return Some(violation);
         }
         if let Some(violation) = self.pricing_violation() {
+            return Some(violation);
+        }
+        if let Some(violation) = self.utility_violation() {
             return Some(violation);
         }
         if let Some(violation) = self.health_violation() {
@@ -2060,7 +2115,7 @@ impl GameState {
         {
             stand.condition = stand
                 .condition
-                .saturating_sub(MAINTENANCE_WEAR_PER_INTERVAL);
+                .saturating_sub(stand.kind.wear_per_interval());
             if stand.condition <= MAINTENANCE_SERVICE_THRESHOLD {
                 due.push(stand.id);
             }
@@ -2258,7 +2313,18 @@ impl GameState {
         let park_upkeep = self
             .concessions
             .iter()
+            .filter(|stand| !stand.kind.is_utility())
             .fold(habitat_upkeep, |total, stand| {
+                total.saturating_add(stand.definition.hourly_upkeep_cents)
+            });
+        // Utility plants cost their operating rate only while working (#113).
+        let utility_operation = self
+            .concessions
+            .iter()
+            .filter(|stand| {
+                stand.kind.is_utility() && stand.condition > MAINTENANCE_FAILURE_THRESHOLD
+            })
+            .fold(0_i64, |total, stand| {
                 total.saturating_add(stand.definition.hourly_upkeep_cents)
             });
         let vets = self.vet_count();
@@ -2283,6 +2349,7 @@ impl GameState {
             (ExpenseCategory::MechanicWages, mechanic_wages),
             (ExpenseCategory::VendorWages, vendor_wages),
             (ExpenseCategory::VetWages, vet_wages),
+            (ExpenseCategory::UtilityOperation, utility_operation),
         ];
         let mut ledger = self.finance_today;
         let mut cash = self.cash_cents;
@@ -3292,6 +3359,7 @@ impl GameState {
                     care_status: habitat.care_status(staffing.as_deref(), gate_reachable),
                     appeal: habitat.appeal(),
                     quarantine: habitat.quarantine,
+                    utilities: self.habitat_utilities_view(habitat),
                 }
             })
             .collect();
@@ -3327,6 +3395,7 @@ impl GameState {
                     condition: stand.condition,
                     service_state: self.concession_service_state(stand).to_owned(),
                     maintenance_status: self.concession_maintenance_status(stand),
+                    utility: self.utility_facility_view(index),
                 },
             )
             .collect();
@@ -3517,6 +3586,8 @@ struct ConcessionView {
     comfort: Option<comfort::ComfortView>,
     /// Vendors, queue, stock and operating figures of a food or drink stand (#102).
     stand: Option<stand::StandView>,
+    /// Capacity, allocation and failure state of a utility plant (#113).
+    utility: Option<utility::UtilityFacilityView>,
 }
 
 #[derive(Serialize)]
@@ -3696,6 +3767,8 @@ struct HabitatView {
     appeal: u32,
     /// Set aside for quarantine (#109).
     quarantine: bool,
+    /// Utility priority, demand, supply and why it is short (#113).
+    utilities: utility::HabitatUtilitiesView,
 }
 
 #[derive(Serialize)]
@@ -4116,6 +4189,10 @@ impl ZooGame {
             "hire_mechanic" => self.hire_mechanic(),
             "hire_vet" => self.hire_vet(),
             "buy_medicine" => self.buy_medicine(),
+            "set_habitat_utility_priority" => {
+                self.set_habitat_utility_priority(number("habitat_id")?, text("priority")?)
+            }
+            "replace_utility" => self.replace_utility(number("concession_id")?),
             "set_habitat_quarantine" => {
                 self.set_habitat_quarantine(number("habitat_id")?, flag("enabled")?)
             }
@@ -4677,6 +4754,22 @@ impl ZooGame {
         )
     }
 
+    /// Sets which habitats a short utility serves first: `high`, `normal` or `low` (#113).
+    pub fn set_habitat_utility_priority(&mut self, habitat_id: u32, priority: String) -> String {
+        let args = serde_json::json!({ "habitat_id": habitat_id, "priority": priority });
+        self.command("set_habitat_utility_priority", args, |state| {
+            state.set_habitat_utility_priority(habitat_id, &priority)
+        })
+    }
+
+    /// Buys a new utility plant in place of a worn or failed one (#113).
+    pub fn replace_utility(&mut self, concession_id: u32) -> String {
+        let args = serde_json::json!({ "concession_id": concession_id });
+        self.command("replace_utility", args, |state| {
+            state.replace_utility(concession_id)
+        })
+    }
+
     /// Sets an empty habitat aside for quarantine, or returns it to ordinary use (#109).
     pub fn set_habitat_quarantine(&mut self, habitat_id: u32, enabled: bool) -> String {
         let args = serde_json::json!({ "habitat_id": habitat_id, "enabled": enabled });
@@ -5007,6 +5100,7 @@ mod tests {
                 side: FenceSide::North,
             },
             quarantine: false,
+            utilities: utility::HabitatUtilities::default(),
         }
     }
 

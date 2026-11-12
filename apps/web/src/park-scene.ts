@@ -1222,6 +1222,13 @@ function concessionNodes(snapshot: Snapshot): RendererSceneNode[] {
       )
       continue
     }
+    if (stand.utility) {
+      nodes.push(
+        blobShadow(`concession:${stand.id}:shadow`, x, z, 0.48, 0.15),
+        ...utilityPlantNodes(m, stand.utility, stand.service_state),
+      )
+      continue
+    }
     const accent: Hex = stand.kind === "food" ? "#e0913f" : "#4fa9c7"
     let awning: Hex = accent
     if (stand.service_state === "failed") {
@@ -1310,6 +1317,43 @@ function comfortFacilityNodes(
       return nodes
     }
   }
+}
+
+/** Water pumps and climate plants (#113), composed from primitives like the stands. A failed
+ * plant goes dark and an overloaded one shows an amber lamp; the state itself is zoo-core's. */
+function utilityPlantNodes(
+  m: ReturnType<typeof model>,
+  utility: NonNullable<Snapshot["concessions"][number]["utility"]>,
+  state: Snapshot["concessions"][number]["service_state"],
+): RendererSceneNode[] {
+  let lamp: Hex = "#6fd38a"
+  if (!utility.working) {
+    lamp = "#c9483b"
+  } else if (utility.overloaded || state === "degraded") {
+    lamp = "#e0b03f"
+  }
+  const nodes =
+    utility.kind === "water"
+      ? [
+          m.box("plinth", [0, 0.05, 0], [0.7, 0.1, 0.6], "#9aa3a6"),
+          m.cylinder("tank", [-0.12, 0.38, -0.05], 0.2, 0.56, "#4f8fbf"),
+          m.cylinder("tank-cap", [-0.12, 0.68, -0.05], 0.21, 0.04, "#3c6f96"),
+          m.box("pump", [0.2, 0.22, 0.08], [0.2, 0.24, 0.22], "#5d6b70"),
+          m.cylinder("pipe", [0.05, 0.2, 0.08], 0.035, 0.3, "#3c6f96", {
+            rotation: axisQuaternion("z", Math.PI / 2),
+          }),
+        ]
+      : [
+          m.box("plinth", [0, 0.05, 0], [0.74, 0.1, 0.64], "#9aa3a6"),
+          m.box("cabinet", [0, 0.36, -0.04], [0.62, 0.52, 0.5], "#d9e4ea"),
+          m.cylinder("fan", [0, 0.64, -0.04], 0.2, 0.05, "#5f8fb0"),
+          m.box("grille", [0, 0.36, 0.215], [0.46, 0.34, 0.02], "#7d98a8"),
+        ]
+  nodes.push(m.sphere("lamp", [0.26, 0.6, 0.2], 0.05, lamp))
+  if (!utility.working) {
+    nodes.push(m.box("out-of-order", [0, 0.2, 0.3], [0.5, 0.1, 0.02], "#6b4e32"))
+  }
+  return nodes
 }
 
 function facingNearestPath(snapshot: Snapshot, x: number, y: number) {

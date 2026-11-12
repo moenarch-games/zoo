@@ -137,6 +137,46 @@
         "unlock_ref": "available"
       },
       {
+        "asset_ref": "water_pump",
+        "build_cost_cents": 9000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 40,
+        "key": "water_pump",
+        "label": "Water pump",
+        "price_cents": 0,
+        "service": "water_pump",
+        "unlock_ref": "available",
+        "utility": {
+          "capacity": 12,
+          "coverage_tiles": 24,
+          "kind": "water"
+        }
+      },
+      {
+        "asset_ref": "climate_plant",
+        "build_cost_cents": 16000,
+        "capacity": 0,
+        "footprint": {
+          "height": 1,
+          "width": 1
+        },
+        "hourly_upkeep_cents": 90,
+        "key": "climate_plant",
+        "label": "Climate plant",
+        "price_cents": 0,
+        "service": "climate_plant",
+        "unlock_ref": "available",
+        "utility": {
+          "capacity": 8,
+          "coverage_tiles": 24,
+          "kind": "climate"
+        }
+      },
+      {
         "asset_ref": "entrance",
         "build_cost_cents": 0,
         "capacity": 0,
@@ -512,7 +552,11 @@
         "minimum_social_group": 4,
         "purchase_cost_cents": 30000,
         "space_per_animal": 3,
-        "unlock_ref": "available"
+        "unlock_ref": "available",
+        "utilities": {
+          "climate": 1,
+          "water": 1
+        }
       }
     ],
     "species_compatibility": [
@@ -999,6 +1043,8 @@
       "medicine_expense_cents": 0,
       "park_upkeep_expense_cents": 3362,
       "stand_stock_expense_cents": 0,
+      "utility_operation_expense_cents": 0,
+      "utility_replacement_expense_cents": 0,
       "vendor_wages_expense_cents": 2400,
       "vet_hiring_expense_cents": 0,
       "vet_wages_expense_cents": 0
@@ -1490,6 +1536,27 @@
             "y": 10
           }
         ],
+        "utilities": {
+          "climate": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          },
+          "priority": "normal",
+          "water": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          }
+        },
         "water": 92
       },
       {
@@ -1664,6 +1731,27 @@
             "y": 10
           }
         ],
+        "utilities": {
+          "climate": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          },
+          "priority": "normal",
+          "water": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          }
+        },
         "water": 92
       },
       {
@@ -1854,6 +1942,27 @@
             "y": 6
           }
         ],
+        "utilities": {
+          "climate": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          },
+          "priority": "normal",
+          "water": {
+            "demand": 0,
+            "draws": [],
+            "rank": 0,
+            "reachable": [],
+            "reason": null,
+            "shortage_minutes": 0,
+            "supplied": 0
+          }
+        },
         "water": 92
       }
     ],
@@ -2651,5 +2760,5 @@
       }
     ]
   },
-  "schema_version": 18
+  "schema_version": 19
 }

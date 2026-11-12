@@ -19,6 +19,7 @@ use super::{
     ActionResult, ExpenseCategory, GameState, Habitat, Position,
     content::{CareCategory, HabitatObjectType, HabitatRequirements, ObjectRole, Species, Surface},
     shape,
+    utility::UtilityKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -707,6 +708,15 @@ impl Habitat {
                 score,
                 format!("{ill} of {} unwell or recovering", group.len()),
             ));
+        }
+        // A utility shortage past its warning hour (#113); supplied habitats have no such part.
+        for (kind, key) in [
+            (UtilityKind::Water, "water_supply"),
+            (UtilityKind::Climate, "climate_control"),
+        ] {
+            if let Some((score, detail)) = self.utility_part(species, kind) {
+                parts.push(part(key, kind.label(), 2, score, detail));
+            }
         }
         parts
     }

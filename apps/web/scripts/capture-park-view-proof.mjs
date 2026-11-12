@@ -13,6 +13,7 @@ import {runKeeperCareAcceptance} from "./keeper-care-proof.mjs"
 import {runPricingAcceptance} from "./pricing-proof.mjs"
 import {runMixedSpeciesAcceptance} from "./mixed-species-proof.mjs"
 import {runAnimalHealthAcceptance} from "./animal-health-proof.mjs"
+import {runUtilitiesAcceptance} from "./utilities-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -577,6 +578,10 @@ try {
   // #109: one capybara is followed from a health warning through illness, quarantine and a
   // vet's treatment to recovery and its homecoming.
   await runAnimalHealthAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame, mouse})
+
+  // #113: a penguin habitat's climate plant fails; the shortage alert leads to the habitat,
+  // which explains the outage, and replacing the plant restores service.
+  await runUtilitiesAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()

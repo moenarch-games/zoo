@@ -21,6 +21,7 @@ const FIXTURE_V15: &str = "tests/fixtures/save-v15.json";
 const FIXTURE_V16: &str = "tests/fixtures/save-v16.json";
 const FIXTURE_V17: &str = "tests/fixtures/save-v17.json";
 const FIXTURE_V18: &str = "tests/fixtures/save-v18.json";
+const FIXTURE_V19: &str = "tests/fixtures/save-v19.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -71,11 +72,68 @@ fn content_without_health(content: &mut Value) {
         .unwrap();
 }
 
+/// The catalog without utility plants or species utility demand (#113).
+fn content_without_utilities(content: &mut Value) {
+    content["facilities"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|facility| facility.get("utility").is_none());
+    for species in content["species"].as_array_mut().unwrap() {
+        species.as_object_mut().unwrap().remove("utilities");
+    }
+}
+
+/// Undoes the schema 18 → 19 migration (#113) on a document saved straight after loading: the
+/// catalog loses the appended water pump and climate plant, every habitat its utilities (normal
+/// priority, nothing needed, since older species draw none), and the ledgers their utility
+/// lines.
+fn utilities_removed(value: &mut Value) {
+    // The migration appends the plants. Parks from before schema 6 took the then-current
+    // built-in catalog when migrated, which already lists them in place.
+    let facilities = value["content"]["facilities"].as_array_mut().unwrap();
+    let keys: Vec<&str> = facilities
+        .iter()
+        .map(|facility| facility["key"].as_str().unwrap())
+        .collect();
+    if keys.ends_with(&["water_pump", "climate_plant"]) {
+        facilities.truncate(facilities.len() - 2);
+    } else {
+        assert!(keys.contains(&"water_pump") && keys.contains(&"climate_plant"));
+    }
+    let park = value["park"].as_object_mut().unwrap();
+    let empty = serde_json::json!({
+        "demand": 0, "supplied": 0, "shortage_minutes": 0, "rank": 0,
+        "reason": null, "draws": [], "reachable": []
+    });
+    for habitat in park["habitats"].as_array_mut().unwrap() {
+        assert_eq!(
+            habitat
+                .as_object_mut()
+                .unwrap()
+                .remove("utilities")
+                .unwrap(),
+            serde_json::json!({ "priority": "normal", "water": empty, "climate": empty })
+        );
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park[key].as_object_mut() {
+            for field in [
+                "utility_operation_expense_cents",
+                "utility_replacement_expense_cents",
+            ] {
+                assert_eq!(ledger.remove(field).unwrap(), 0);
+            }
+        }
+    }
+    value["schema_version"] = 18.into();
+}
+
 /// Undoes the schema 17 → 18 migration (#109) on a document saved straight after loading:
 /// every animal was healthy with no risk, no habitat was a quarantine, every worker a keeper
 /// with no kit in hand, the depot held no medicine, no job had a patient, no ledger had
 /// veterinary costs, and the catalog no vet or medicine prices.
 fn health_removed(value: &mut Value) {
+    utilities_removed(value);
     content_without_health(&mut value["content"]);
     let park = value["park"].as_object_mut().unwrap();
     assert_eq!(park.remove("medicine_kits").unwrap(), 0);
@@ -475,6 +533,7 @@ fn fences_from_content(value: &mut Value) {
     content_without_comfort(&mut built_in);
     content_without_compatibility(&mut built_in);
     content_without_health(&mut built_in);
+    content_without_utilities(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -1251,17 +1310,78 @@ fn vetted() -> ZooGame {
     game
 }
 
+/// Schema 18 parks knew nothing of utilities (#113): every habitat gets normal priority and
+/// nothing to supply, the catalog gains the two plants, and the park runs on and can build one.
+#[test]
+fn the_schema_v18_fixture_migrates_to_parks_without_utility_demand() {
+    let fixture = std::fs::read_to_string(FIXTURE_V18).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    utilities_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    assert!(view["habitats"].as_array().unwrap().iter().all(
+        |habitat| habitat["utilities"]["water"]["status"] == "not_needed"
+            && habitat["utilities"]["climate"]["status"] == "not_needed"
+    ));
+    game.tick(120);
+    assert_eq!(game.session_status(), "running");
+    let (x, y) = beside_path(&game);
+    ok(game.place_concession(x, y, "water_pump".to_owned()));
+}
+
+/// The first grass tile beside a path, row by row.
+fn beside_path(game: &ZooGame) -> (u32, u32) {
+    let view = json(&game.snapshot_json());
+    let tiles = view["tiles"].as_array().unwrap();
+    let width = view["width"].as_u64().unwrap() as i64;
+    let height = view["height"].as_u64().unwrap() as i64;
+    let kind = |x: i64, y: i64| {
+        if x < 0 || y < 0 || x >= width || y >= height {
+            return "";
+        }
+        tiles[(y * width + x) as usize]["kind"].as_str().unwrap()
+    };
+    for y in 0..height {
+        for x in 0..width {
+            if kind(x, y) == "grass"
+                && [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .iter()
+                    .any(|(dx, dy)| kind(x + dx, y + dy) == "path")
+                && parse_ok(&game.evaluate_concession(x as u32, y as u32, "water_pump".to_owned()))
+            {
+                return (x as u32, y as u32);
+            }
+        }
+    }
+    panic!("no grass beside a path");
+}
+
+fn parse_ok(preview: &str) -> bool {
+    json(preview)["ok"] == true
+}
+
+/// The vetted park with an idle water pump (#113).
+fn utilized() -> ZooGame {
+    let mut game = vetted();
+    let (x, y) = beside_path(&game);
+    ok(game.place_concession(x, y, "water_pump".to_owned()));
+    game
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&vetted().save_json());
+        let value = json(&utilized().save_json());
         std::fs::write(
-            FIXTURE_V18,
+            FIXTURE_V19,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V18).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V19).unwrap();
     let saved = json(&fixture);
     assert!(
         saved["park"]["keepers"]

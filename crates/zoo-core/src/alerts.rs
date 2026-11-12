@@ -58,6 +58,11 @@ pub(crate) enum AlertCode {
     AnimalUnwell,
     /// A recovered quarantine patient that cannot return home (#109).
     QuarantineReleaseBlocked,
+    /// A habitat getting less pool water or climate control than its animals need (#113).
+    WaterShortage,
+    ClimateShortage,
+    /// A working utility plant whose capacity ran out before every habitat it reaches (#113).
+    UtilityOverloaded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -102,6 +107,9 @@ pub(crate) enum AlertAction {
     HireVet,
     BuyMedicine,
     InspectAnimal,
+    /// Utility fixes (#113).
+    BuildWaterPump,
+    BuildClimatePlant,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,6 +561,8 @@ impl GameState {
             let unserviced = self.facility_unserviced(stand.id, &staff);
             let broken = if stand.kind.sells() {
                 "has broken down and makes no sales"
+            } else if stand.kind.is_utility() {
+                "has failed and supplies nothing"
             } else {
                 "has broken down and is closed"
             };
@@ -593,10 +603,11 @@ impl GameState {
                     action,
                 );
             }
-            if !self
-                .concession_customer_tiles(stand.id)
-                .into_iter()
-                .any(|tile| guests.contains(self, tile))
+            if !stand.kind.is_utility()
+                && !self
+                    .concession_customer_tiles(stand.id)
+                    .into_iter()
+                    .any(|tile| guests.contains(self, tile))
             {
                 raise(
                     AlertCode::DestinationIsolated,
@@ -715,6 +726,7 @@ impl GameState {
         }
 
         self.detect_health_alerts(&mut raise);
+        self.detect_utility_alerts(&mut raise);
 
         for keeper in self.keepers.iter().filter(|keeper| {
             keeper.zone_id.is_none() && keeper.role == super::care::CareRole::Keeper
@@ -831,7 +843,10 @@ impl GameState {
     }
 
     /// Re-reads every alert condition, keeping each still-present alert's first occurrence.
+    /// Utility allocation (#113) is refreshed first, so a command that builds, removes,
+    /// repairs or disconnects a plant shows its effect at once, even while paused.
     pub(crate) fn update_alerts(&mut self) {
+        self.refresh_utilities();
         let now = self.absolute_minute();
         let previous = std::mem::take(&mut self.alerts);
         let mut alerts = self.detect_alerts(now);

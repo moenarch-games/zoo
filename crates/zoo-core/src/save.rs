@@ -62,6 +62,7 @@ const MIGRATIONS: &[Migration] = &[
     v15_add_pricing,
     v16_add_residents,
     v17_add_animal_health,
+    v18_add_utilities,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -262,6 +263,68 @@ fn v17_add_animal_health(mut value: Value) -> Result<Value, SaveError> {
             "vet_hiring_expense_cents",
             "vet_wages_expense_cents",
             "medicine_expense_cents",
+        ] {
+            ledger.insert(field.to_owned(), json!(0));
+        }
+    }
+    Ok(value)
+}
+
+/// Schema 19 (#113) adds utility plants, habitat utility supply and their ledger lines. Every
+/// habitat has normal priority and nothing allocated yet (the first refresh after loading
+/// computes it), the ledgers have spent nothing on utilities, and the embedded catalog gains
+/// the built-in water pump and climate plant so older parks can build them. Species saved
+/// before utilities existed keep drawing none, so no older park gains a new requirement.
+fn v18_add_utilities(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let facilities = value
+        .pointer_mut("/content/facilities")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/facilities: missing or not an array"))?;
+    let defined: HashSet<String> = facilities
+        .iter()
+        .filter_map(|facility| facility.get("key").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for plant in built_in
+        .facilities
+        .iter()
+        .filter(|facility| facility.utility.is_some() && !defined.contains(&facility.key))
+    {
+        facilities.push(serde_json::to_value(plant).expect("facility serialization"));
+    }
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    for habitat in park
+        .get_mut("habitats")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?
+    {
+        habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?
+            .insert(
+                "utilities".to_owned(),
+                serde_json::to_value(crate::utility::HabitatUtilities::default())
+                    .expect("utility serialization"),
+            );
+    }
+    for key in ["finance_today", "finance_previous"] {
+        let Some(ledger) = park.get_mut(key) else {
+            return Err(invalid(&format!("park/{key}: missing")));
+        };
+        if ledger.is_null() && key == "finance_previous" {
+            continue;
+        }
+        let ledger = ledger
+            .as_object_mut()
+            .ok_or_else(|| invalid(&format!("park/{key}: not an object")))?;
+        for field in [
+            "utility_operation_expense_cents",
+            "utility_replacement_expense_cents",
         ] {
             ledger.insert(field.to_owned(), json!(0));
         }

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+use super::utility::{MAX_UTILITY_CAPACITY, MAX_UTILITY_COVERAGE, MAX_UTILITY_DEMAND};
+pub(crate) use super::utility::{UtilityDemand, UtilityKind, UtilityService};
+
 const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
 const MAX_ENTRIES: usize = 128;
 const MAX_STRING_BYTES: usize = 256;
@@ -15,7 +18,13 @@ const MAX_RULE_VALUE: u32 = u32::MAX / (super::scenario::MAX_MAP_TILES * 12);
 pub(crate) const MAX_FACILITY_CAPACITY: u32 = 32;
 /// Facility looks the park view composes from primitives itself, as it does for stands, rather
 /// than from the deprecated placeholder model catalog (Atlas 5.1.3) (#101).
-const SCENE_COMPOSED_PRESENTATIONS: &[&str] = &["toilet_block", "bench", "litter_bin"];
+const SCENE_COMPOSED_PRESENTATIONS: &[&str] = &[
+    "toilet_block",
+    "bench",
+    "litter_bin",
+    "water_pump",
+    "climate_plant",
+];
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -76,6 +85,9 @@ pub(crate) struct Species {
     pub care: CareProfile,
     /// What a habitat must offer these animals (#97): authored game simplifications.
     pub habitat: HabitatRequirements,
+    /// Utility units each animal draws from connected plants (#113); absent means none.
+    #[serde(default, skip_serializing_if = "UtilityDemand::is_zero")]
+    pub utilities: UtilityDemand,
 }
 
 /// The ground a habitat tile is made of (#97). Land is walkable; shallow water is walkable
@@ -282,6 +294,10 @@ pub(crate) struct Facility {
     /// How a food or drink stand serves guests (#102); required for stands, absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stand: Option<StandService>,
+    /// What a utility plant supplies, how much and how far (#113); required for utility
+    /// plants, absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utility: Option<UtilityService>,
 }
 
 /// A food or drink stand's service model (#102): bounded service time, a finite queue, a few
@@ -833,6 +849,8 @@ impl Catalog {
                 "toilet" => "toilet_block",
                 "bench" => "bench",
                 "bin" => "litter_bin",
+                "water_pump" => "water_pump",
+                "climate_plant" => "climate_plant",
                 "entrance" => "entrance",
                 "animal_care_depot" => "animal_care_depot",
                 _ => return Err(format!("{prefix}/service: unsupported existing service")),
@@ -893,6 +911,73 @@ impl Catalog {
                     )?;
                 }
                 (None, false) => {}
+            }
+            let supplies = match facility.service.as_str() {
+                "water_pump" => Some(UtilityKind::Water),
+                "climate_plant" => Some(UtilityKind::Climate),
+                _ => None,
+            };
+            match (&facility.utility, supplies) {
+                (None, Some(_)) => {
+                    return Err(format!(
+                        "{prefix}/utility: a {} needs its utility service",
+                        facility.service
+                    ));
+                }
+                (Some(_), None) => {
+                    return Err(format!(
+                        "{prefix}/utility: only water pumps and climate plants supply utilities"
+                    ));
+                }
+                (Some(utility), Some(kind)) => {
+                    if utility.kind != kind {
+                        return Err(format!(
+                            "{prefix}/utility/kind: a {} supplies {}",
+                            facility.service,
+                            kind.key()
+                        ));
+                    }
+                    for (field, value, max) in [
+                        ("capacity", utility.capacity, MAX_UTILITY_CAPACITY),
+                        (
+                            "coverage_tiles",
+                            utility.coverage_tiles,
+                            MAX_UTILITY_COVERAGE,
+                        ),
+                    ] {
+                        if !(1..=max).contains(&value) {
+                            return Err(format!("{prefix}/utility/{field}: expected 1..={max}"));
+                        }
+                    }
+                    if facility.price_cents != 0 {
+                        return Err(format!(
+                            "{prefix}/price_cents: utility plants do not sell to guests"
+                        ));
+                    }
+                }
+                (None, None) => {}
+            }
+        }
+        // A species that needs a utility must be keepable with this catalog's plants (#113).
+        for (i, species) in self.species.iter().enumerate() {
+            for kind in UtilityKind::ALL {
+                let per_animal = species.utilities.of(kind);
+                if per_animal > MAX_UTILITY_DEMAND {
+                    return Err(format!(
+                        "species/{i}/utilities/{}: expected 0..={MAX_UTILITY_DEMAND}",
+                        kind.key()
+                    ));
+                }
+                if per_animal > 0
+                    && !self.facilities.iter().any(|facility| {
+                        facility.utility.is_some_and(|utility| utility.kind == kind)
+                    })
+                {
+                    return Err(format!(
+                        "species/{i}/utilities/{}: no facility supplies it",
+                        kind.key()
+                    ));
+                }
             }
         }
         for fixed in ["entrance", "animal_care_depot"] {

@@ -21,6 +21,8 @@ pub(crate) enum OverlayKind {
     Cleanliness,
     Facilities,
     Viewing,
+    /// Utility coverage, plant capacity and habitat supply (#113).
+    Utilities,
 }
 
 impl OverlayKind {
@@ -32,6 +34,7 @@ impl OverlayKind {
             "cleanliness" => Self::Cleanliness,
             "facilities" => Self::Facilities,
             "viewing" => Self::Viewing,
+            "utilities" => Self::Utilities,
             _ => return None,
         })
     }
@@ -251,6 +254,17 @@ impl GameState {
                     ]),
                 )
             }
+            OverlayKind::Utilities => {
+                self.utilities_overlay(&mut out);
+                (
+                    "Utilities",
+                    legend([
+                        "Supplied, or path a working plant covers",
+                        "Short (warning hour) or plant worn or overloaded",
+                        "Degraded habitat or failed plant",
+                    ]),
+                )
+            }
         };
         out.items.sort_by_key(|item| std::cmp::Reverse(item.level));
         let count = |level| {
@@ -362,7 +376,11 @@ impl GameState {
                 );
             }
         }
-        for stand in &self.concessions {
+        for stand in self
+            .concessions
+            .iter()
+            .filter(|stand| !stand.kind.is_utility())
+        {
             let position = Position {
                 x: stand.x,
                 y: stand.y,
@@ -523,6 +541,95 @@ impl GameState {
             self.depot,
             format!("Depot feed stock {} crate(s)", self.feed_crates),
         );
+    }
+
+    /// Utility coverage, plant capacity and habitat supply (#113).
+    fn utilities_overlay(&self, out: &mut Builder) {
+        // Path tiles within a plant's coverage: covered by a working plant is good, only by a
+        // failed one warns.
+        let mut covered: BTreeMap<(u32, u32), Level> = BTreeMap::new();
+        for stand in &self.concessions {
+            let Some(service) = stand.definition.utility else {
+                continue;
+            };
+            let level = if stand.condition > super::MAINTENANCE_FAILURE_THRESHOLD {
+                Level::Good
+            } else {
+                Level::Warn
+            };
+            let distances = self.utility_distances(stand.id, service.coverage_tiles);
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if self.index(x, y).is_some_and(|i| distances[i].is_some()) {
+                        let entry = covered.entry((y, x)).or_insert(level);
+                        *entry = (*entry).min(level);
+                    }
+                }
+            }
+        }
+        for ((y, x), level) in covered {
+            out.cell(Position { x, y }, level, None);
+        }
+        for (index, stand) in self.concessions.iter().enumerate() {
+            let Some(view) = self.utility_facility_view(index) else {
+                continue;
+            };
+            let position = Position {
+                x: stand.x,
+                y: stand.y,
+            };
+            let level = if !view.working {
+                Level::Bad
+            } else if view.overloaded || self.concession_service_state(stand) == "degraded" {
+                Level::Warn
+            } else {
+                Level::Good
+            };
+            out.cell(position, level, Some(view.allocated));
+            out.item(
+                level,
+                Subject::Concession(stand.id),
+                position,
+                format!("{} #{} · {}", stand.definition.label, stand.id, view.status),
+            );
+        }
+        for habitat in &self.habitats {
+            let mut level = Level::Good;
+            let mut worst: Option<(super::utility::UtilityKind, &super::utility::Supply)> = None;
+            for kind in super::utility::UtilityKind::ALL {
+                let supply = habitat.utilities.supply(kind);
+                if supply.demand == 0 {
+                    continue;
+                }
+                let this = if supply.degraded() {
+                    Level::Bad
+                } else if supply.short() {
+                    Level::Warn
+                } else {
+                    Level::Good
+                };
+                if worst.is_none() || this > level {
+                    level = this;
+                    worst = Some((kind, supply));
+                }
+            }
+            let Some((kind, supply)) = worst else {
+                continue;
+            };
+            out.footprint(habitat, level, Some(supply.supplied));
+            out.item(
+                level,
+                Subject::Habitat(habitat.id),
+                Self::habitat_center(habitat),
+                format!(
+                    "Habitat #{} · {} {}/{}",
+                    habitat.id,
+                    kind.label().to_lowercase(),
+                    supply.supplied,
+                    supply.demand
+                ),
+            );
+        }
     }
 
     fn viewing_overlay(&self, out: &mut Builder) {

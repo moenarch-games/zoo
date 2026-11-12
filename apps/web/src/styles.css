@@ -771,6 +771,46 @@ dd {
   line-height: 1.3;
 }
 
+/* Utilities (#113): each supply with its reason and fix, the plants it draws on, priority. */
+.utility-supply {
+  margin: 0 0 8px;
+}
+
+.utility-supply small {
+  display: block;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.utility-supply .utility-fix {
+  font-weight: 800;
+}
+
+.utility-draws {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.utility-draws button {
+  min-height: 28px;
+  font-size: 10px;
+}
+
+.utility-priority {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.utility-priority select {
+  min-height: 32px;
+}
+
 .message-stack {
   min-width: 0;
   align-self: center;

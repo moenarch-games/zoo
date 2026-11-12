@@ -39,6 +39,7 @@ export const OVERLAY_KINDS: { kind: OverlayKind; label: string }[] = [
   { kind: "cleanliness", label: "Cleanliness" },
   { kind: "facilities", label: "Facilities" },
   { kind: "viewing", label: "Guest viewing" },
+  { kind: "utilities", label: "Utilities" },
 ]
 
 const TABS: { tab: WorkspaceTab; label: string }[] = [
@@ -216,6 +217,8 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["vet_hiring_expense_cents", "Vet hiring"],
   ["vet_wages_expense_cents", "Vet wages"],
   ["medicine_expense_cents", "Medicine"],
+  ["utility_operation_expense_cents", "Utility operation"],
+  ["utility_replacement_expense_cents", "Utility replacements"],
 ]
 
 export function DailySummaryView({
