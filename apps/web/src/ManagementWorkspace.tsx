@@ -25,6 +25,7 @@ export type WorkspaceTab =
   | "guests"
   | "staff"
   | "facilities"
+  | "prices"
   | "finances"
 
 /** Something a row or alert can focus: the alert subjects, plus guests and work zones. */
@@ -46,6 +47,7 @@ const TABS: { tab: WorkspaceTab; label: string }[] = [
   { tab: "guests", label: "Guests" },
   { tab: "staff", label: "Staff" },
   { tab: "facilities", label: "Facilities" },
+  { tab: "prices", label: "Prices" },
   { tab: "finances", label: "Finances" },
 ]
 
@@ -201,6 +203,7 @@ const EXPENSE_LINES: [keyof FinanceBreakdown, string][] = [
   ["land_expense_cents", "Land purchases"],
   ["vendor_wages_expense_cents", "Vendor wages"],
   ["stand_stock_expense_cents", "Stand stock"],
+  ["marketing_expense_cents", "Marketing"],
 ]
 
 export function DailySummaryView({
@@ -527,6 +530,7 @@ export function ManagementWorkspace({
   onJump,
   onAction,
   actionLabel,
+  prices,
 }: {
   snapshot: Snapshot
   tab: WorkspaceTab
@@ -535,6 +539,8 @@ export function ManagementWorkspace({
   onJump: (target: JumpTarget, focus: Point) => void
   onAction: (alert: Alert) => void
   actionLabel: (alert: Alert) => string | null
+  /** The pricing panel (#106), composed by the app with its commands. */
+  prices: ReactNode
 }) {
   const label = (key: string | null) =>
     key === null
@@ -851,6 +857,7 @@ export function ManagementWorkspace({
             ]}
           />
         )}
+        {tab === "prices" && prices}
         {tab === "finances" && (
           <DataTable
             label="Ledger"

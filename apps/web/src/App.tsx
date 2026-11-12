@@ -11,6 +11,7 @@ import type {
   ActionResult,
   ComfortFacility,
   ComfortOperations,
+  AdmissionEvaluation,
   Alert,
   Animal,
   CareCategory,
@@ -69,6 +70,7 @@ import {
 } from "./park-storage"
 import { ParkLibraryPanel, type PanelPrompt } from "./ParkLibraryPanel"
 import type { CameraRequest, ParkPick } from "./ParkView"
+import { PricingPanel, type PricingCommands } from "./PricingPanel"
 import {
   loadSceneryManifest,
   SCENERY_PIECES,
@@ -1911,7 +1913,26 @@ export default function App() {
       setOpen: (open: boolean) => send((game) => game.set_stand_open(standId, open)),
       restock: () => send((game) => game.restock_stand(standId)),
       setAutoRestock: (auto: boolean) => send((game) => game.set_stand_auto_restock(standId, auto)),
+      setPrice: (cents: number) => send((game) => game.set_stand_price(standId, cents)),
     }
+  }
+
+  /** The pricing panel's commands (#106); zoo-core validates each one. */
+  const sendPricing = (command: (game: ZooGame) => string) => {
+    const game = gameRef.current
+    if (game) {
+      perform(() => command(game))
+    }
+  }
+  const pricingCommands: PricingCommands = {
+    setAdmission: (cents) => sendPricing((game) => game.set_admission_price(cents)),
+    setParkOpen: (open) => sendPricing((game) => game.set_park_open(open)),
+    setStandPrice: (standId, cents) => sendPricing((game) => game.set_stand_price(standId, cents)),
+    startCampaign: () => sendPricing((game) => game.start_marketing_campaign()),
+    evaluateAdmission: (cents) => {
+      const text = callGame((game) => game.evaluate_admission_price(cents))
+      return text === undefined ? null : (JSON.parse(text) as AdmissionEvaluation)
+    },
   }
 
   const storageFailure = (action: string, error: unknown, text: string) => {
@@ -2384,6 +2405,7 @@ export default function App() {
             onJump={jumpTo}
             onAction={runAlertAction}
             actionLabel={alertActionLabel}
+            prices={<PricingPanel pricing={snapshot.pricing} commands={pricingCommands} />}
           />
         )}
 

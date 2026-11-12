@@ -10,6 +10,7 @@ import {runGuestComfortAcceptance} from "./guest-comfort-proof.mjs"
 import {runStaffedStandsAcceptance} from "./staffed-stands-proof.mjs"
 import {runVisitorItinerariesAcceptance} from "./visitor-itineraries-proof.mjs"
 import {runKeeperCareAcceptance} from "./keeper-care-proof.mjs"
+import {runPricingAcceptance} from "./pricing-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -562,6 +563,10 @@ try {
   // #104: physical keeper care falls behind in an understaffed zone; moving keepers into the
   // zone measurably recovers it.
   await runKeeperCareAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
+
+  // #106: a dear ticket and an overpriced stand show their effect in the pricing report, which
+  // the player then uses to correct both.
+  await runPricingAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
   }
 } finally {
   cdp?.close()
