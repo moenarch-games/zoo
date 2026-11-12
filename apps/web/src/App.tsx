@@ -74,6 +74,7 @@ import {
   type SceneryManifest,
   type SceneryPiece,
 } from "./scenery-manifest"
+import { StandActions, StandRows } from "./StandPanel"
 import { type LoadCheck, useParkLibrary } from "./use-park-library"
 import init, { scenario_catalog_json, ZooGame } from "./wasm/zoo_core"
 import { NO_ZONE_COLOR, zoneColor } from "./zone-colors"
@@ -1896,6 +1897,22 @@ export default function App() {
     perform(() => game.hire_mechanic())
   }
 
+  /** The stand inspector's commands (#102); zoo-core validates each one. */
+  const standCommands = (standId: number) => {
+    const send = (command: (game: ZooGame) => string) => {
+      const game = gameRef.current
+      if (game) {
+        perform(() => command(game))
+      }
+    }
+    return {
+      setVendors: (vendors: number) => send((game) => game.set_stand_vendors(standId, vendors)),
+      setOpen: (open: boolean) => send((game) => game.set_stand_open(standId, open)),
+      restock: () => send((game) => game.restock_stand(standId)),
+      setAutoRestock: (auto: boolean) => send((game) => game.set_stand_auto_restock(standId, auto)),
+    }
+  }
+
   const storageFailure = (action: string, error: unknown, text: string) => {
     diagnostics.record("storage", `${action} diagnostics failed: ${String(error)}`, "manual_export")
     setManualExport(text)
@@ -3289,17 +3306,25 @@ export default function App() {
                           <dt>Price</dt>
                           <dd>{money(selectedConcession.price_cents)}</dd>
                         </div>
-                        <div>
-                          <dt>Sales today</dt>
-                          <dd>{selectedConcession.sales_today}</dd>
-                        </div>
+                        {selectedConcession.stand && (
+                          <StandRows
+                            stand={selectedConcession.stand}
+                            commands={standCommands(selectedConcession.id)}
+                          />
+                        )}
                         <div>
                           <dt>Revenue</dt>
-                          <dd>{money(selectedConcession.total_revenue_cents)}</dd>
+                          <dd>{money(selectedConcession.total_revenue_cents)} all time</dd>
                         </div>
                       </>
                     )}
                   </dl>
+                  {selectedConcession.stand && (
+                    <StandActions
+                      stand={selectedConcession.stand}
+                      commands={standCommands(selectedConcession.id)}
+                    />
+                  )}
                   {selectedConcession.comfort?.janitor_status &&
                     snapshot.animal_care_depot.janitors.length === 0 && (
                       <button className="shop-row" onClick={hireJanitor}>

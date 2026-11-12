@@ -85,10 +85,12 @@ fn assert_slots_consistent(game: &ZooGame) {
     let mut held = std::collections::HashSet::new();
     for stand in save["park"]["concessions"].as_array().unwrap() {
         let slots = stand["slots"].as_array().unwrap();
-        assert!(
-            slots.len() as u64 <= stand["definition"]["capacity"].as_u64().unwrap(),
-            "{stand}"
-        );
+        // A food or drink stand's slots are its vendor windows (#102).
+        let capacity = stand["definition"]["stand"]["max_vendors"]
+            .as_u64()
+            .or_else(|| stand["definition"]["capacity"].as_u64())
+            .unwrap();
+        assert!(slots.len() as u64 <= capacity, "{stand}");
         for holder in slots {
             assert!(
                 held.insert(holder.as_u64().unwrap()),

@@ -15,6 +15,7 @@ const FIXTURE_V9: &str = "tests/fixtures/save-v9.json";
 const FIXTURE_V10: &str = "tests/fixtures/save-v10.json";
 const FIXTURE_V11: &str = "tests/fixtures/save-v11.json";
 const FIXTURE_V12: &str = "tests/fixtures/save-v12.json";
+const FIXTURE_V13: &str = "tests/fixtures/save-v13.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -45,8 +46,72 @@ fn content_without_environment(content: &mut Value) {
 /// park its (empty) facility service queue.
 const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
 
+/// Undoes the schema 13 catalog change (#102) on a catalog document: stands lose their service
+/// model and staff costs the vendor wage.
+fn content_without_stands(content: &mut Value) {
+    for facility in content["facilities"].as_array_mut().unwrap() {
+        let facility = facility.as_object_mut().unwrap();
+        let sells = matches!(facility["service"].as_str(), Some("food" | "drink"));
+        assert_eq!(facility.remove("stand").is_some(), sells, "{facility:?}");
+    }
+    content["balance"]["staff"]
+        .as_object_mut()
+        .unwrap()
+        .remove("vendor")
+        .unwrap();
+}
+
+/// Undoes the schema 12 → 13 migration (#102) on a document saved straight after loading: the
+/// catalog and every built stand's definition lose the service model, stands their operating
+/// state (one vendor, full stock, no queue, a ledger carried over from their sales), guests
+/// their spending money and ledgers the vendor-wage and stock lines.
+fn staffed_stands_removed(value: &mut Value) {
+    content_without_stands(&mut value["content"]);
+    let park = value["park"].as_object_mut().unwrap();
+    for stand in park["concessions"].as_array_mut().unwrap() {
+        let stand = stand.as_object_mut().unwrap();
+        let sells = stand["definition"].as_object_mut().unwrap().remove("stand");
+        let state = stand.remove("stand").unwrap();
+        match sells {
+            None => assert_eq!(state, Value::Null),
+            Some(service) => {
+                assert_eq!(state["open"], true);
+                assert_eq!(state["vendors"], 1);
+                assert_eq!(state["stock"], service["stock_capacity"]);
+                assert_eq!(state["queue"], serde_json::json!([]));
+                assert_eq!(state["delivery_due"], Value::Null);
+                assert_eq!(state["total"]["served"], stand["total_sales"]);
+                assert_eq!(
+                    state["total"]["revenue_cents"],
+                    stand["total_revenue_cents"]
+                );
+                assert_eq!(state["today"]["served"], stand["sales_today"]);
+            }
+        }
+    }
+    for guest in park["guests"].as_array_mut().unwrap() {
+        let guest = guest.as_object_mut().unwrap();
+        let id = guest["id"].as_i64().unwrap();
+        assert_eq!(
+            guest.remove("cash_cents").unwrap(),
+            serde_json::json!(1_000 + (id % 5) * 300)
+        );
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            for line in ["vendor_wages_expense_cents", "stand_stock_expense_cents"] {
+                assert_eq!(ledger.remove(line), Some(0.into()));
+            }
+        }
+    }
+    value["schema_version"] = 12.into();
+}
+
 /// Undoes the schema 12 catalog change (#101) on a catalog document.
 fn content_without_comfort(content: &mut Value) {
+    if content["balance"]["staff"].get("vendor").is_some() {
+        content_without_stands(content);
+    }
     let facilities = content["facilities"].as_array_mut().unwrap();
     facilities.retain(|facility| !COMFORT_FACILITIES.contains(&facility["key"].as_str().unwrap()));
     for facility in facilities {
@@ -59,6 +124,7 @@ fn content_without_comfort(content: &mut Value) {
 
 fn comfort_removed(value: &mut Value) {
     const ADDED: [&str; 3] = COMFORT_FACILITIES;
+    staffed_stands_removed(value);
     content_without_comfort(&mut value["content"]);
     let park = value["park"].as_object_mut().unwrap();
     if let Some(allowed) = park["unlocks"]
@@ -669,32 +735,107 @@ fn comforted() -> ZooGame {
     panic!("no guest used the toilets while a facility awaited service");
 }
 
+/// Schema 12 parks keep every errand, slot and service task (#101); their stands open with one
+/// vendor and full stock, guests gain their spending money, and the park runs on and sells.
+#[test]
+fn the_schema_v12_fixture_migrates_to_staffed_stands() {
+    let fixture = std::fs::read_to_string(FIXTURE_V12).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    staffed_stands_removed(&mut saved);
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    let food = view["concessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|stand| stand["kind"] == "food")
+        .unwrap()
+        .clone();
+    assert_eq!(food["stand"]["vendors"], 1);
+    assert_eq!(food["stand"]["stock"], food["stand"]["stock_capacity"]);
+    let sold = food["total_sales"].as_u64().unwrap();
+    // The worn stand needs a mechanic to keep selling.
+    ok(game.hire_mechanic());
+    for _ in 0..4 {
+        game.tick(60);
+    }
+    assert_eq!(game.session_status(), "running");
+    let view = json(&game.snapshot_json());
+    let food = view["concessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|stand| stand["kind"] == "food")
+        .unwrap();
+    assert!(food["total_sales"].as_u64().unwrap() > sold, "{food}");
+}
+
+/// `comforted` with a drink stand beside the food stand and two vendors at the food stand, run
+/// until both a guest is being served and another queues at a stand, with a delivery on order
+/// (#102).
+fn staffed() -> ZooGame {
+    let mut game = comforted();
+    ok(game.place_concession(7, 9, "drink".to_owned()));
+    ok(game.set_stand_vendors(1, 2));
+    for _ in 0..600 {
+        game.tick(1);
+        let save = json(&game.save_json());
+        let stands = save["park"]["concessions"].as_array().unwrap().clone();
+        let serving = stands.iter().any(|stand| {
+            stand["stand"].is_object() && !stand["slots"].as_array().unwrap().is_empty()
+        });
+        let queueing = stands.iter().any(|stand| {
+            stand["stand"]["queue"]
+                .as_array()
+                .is_some_and(|queue| !queue.is_empty())
+        });
+        if serving && queueing {
+            ok(game.restock_stand(1));
+            return game;
+        }
+    }
+    panic!("no stand served one guest while another queued");
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&comforted().save_json());
+        let value = json(&staffed().save_json());
         std::fs::write(
-            FIXTURE_V12,
+            FIXTURE_V13,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V12).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V13).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));
-    // Saved reservations, errands and service work restore (#101) and run on like an
-    // uninterrupted park.
+    // Saved reservations, errands, queues, stand windows, deliveries and service work restore
+    // (#101, #102) and run on like an uninterrupted park.
     let mut uninterrupted = ZooGame::new();
     ok(uninterrupted.load_save(&fixture));
     let park = json(&fixture)["park"].clone();
-    let slots: usize = park["concessions"]
-        .as_array()
-        .unwrap()
+    let stands = park["concessions"].as_array().unwrap();
+    let slots: usize = stands
         .iter()
         .map(|stand| stand["slots"].as_array().unwrap().len())
         .sum();
     assert!(slots > 0, "the fixture holds a reserved or used slot");
+    assert!(
+        stands.iter().any(|stand| stand["stand"]["queue"]
+            .as_array()
+            .is_some_and(|q| !q.is_empty())),
+        "the fixture holds a stand queue"
+    );
+    assert!(
+        stands
+            .iter()
+            .any(|stand| stand["stand"]["delivery_due"].is_u64()),
+        "the fixture holds a delivery on order"
+    );
     assert!(!park["facility_service"].as_array().unwrap().is_empty());
     ok(game.load_save(&game.save_json()));
     game.tick(90);

@@ -70,6 +70,15 @@ fn protected_six_species_facility_command_tick_oracle() {
     )
     .collect();
     let actual = json!(rows);
+    // #102 deliberately changes stand behaviour (queues, service time, vendor wages, stock), so
+    // the oracle was re-recorded with ZOO_WRITE_CONTENT_BASELINE=1 at that change.
+    if std::env::var_os("ZOO_WRITE_CONTENT_BASELINE").is_some() {
+        std::fs::write(
+            "tests/fixtures/content-command-baseline.json",
+            serde_json::to_string(&actual).unwrap(),
+        )
+        .unwrap();
+    }
     let expected: Value =
         serde_json::from_str(include_str!("fixtures/content-command-baseline.json")).unwrap();
     assert_eq!(actual, expected);

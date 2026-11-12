@@ -20,7 +20,16 @@ older catalog embedded in a save) fails with the offending field path; save
 migrations rewrite embedded catalogs when the shape changes (schema 6 adds fences,
 schema 8 drops the catalog's old version number, schema 9 adds habitat
 environment prices, furnishings and species requirements), and saves keep the
-catalog they were made with. Food/drink service behavior retains the existing core implementation.
+catalog they were made with.
+
+Food and drink stands (#102) each declare a `stand` service model, which no other facility
+may have: `service_minutes` one vendor needs per sale (`1..=10`), the `queue_capacity` of
+guests who may wait at the counter (`1..=12`), `max_vendors` windows (`1..=4`), the
+`stock_capacity` of portions a full stand holds (`1..=200`) and the `stock_unit_cost_cents`
+one delivered portion costs. `balance/staff/vendor/hourly_wage_cents` is what each posted
+vendor costs per hour; vendors are posted at a stand rather than hired, so they have no hire
+cost. Save schema 13 gives older embedded catalogs, and every built stand's definition, the
+built-in model of its service and the vendor wage.
 
 Guest-comfort facilities (#101) use the services `toilet`, `bench` and `bin` (looks
 `toilet_block`, `bench` and `litter_bin`, which the park view composes itself like the

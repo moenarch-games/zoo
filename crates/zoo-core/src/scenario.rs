@@ -233,6 +233,12 @@ enum SetupStep {
         concession: u32,
         condition: u32,
     },
+    /// Posts a number of vendors at a food or drink stand (#102), such as none to author an
+    /// unstaffed stand.
+    StandVendors {
+        concession: u32,
+        vendors: u32,
+    },
 }
 
 impl SetupStep {
@@ -252,6 +258,7 @@ impl SetupStep {
             Self::FeedCrates { .. } => "feed_crates",
             Self::HabitatCondition { .. } => "habitat_condition",
             Self::ConcessionCondition { .. } => "concession_condition",
+            Self::StandVendors { .. } => "stand_vendors",
         }
     }
 }
@@ -786,6 +793,10 @@ impl GameState {
                 stand.condition = *condition;
                 ActionResult::ok("Concession condition set")
             }
+            SetupStep::StandVendors {
+                concession,
+                vendors,
+            } => self.set_stand_vendors(*concession, *vendors),
         }
     }
 
