@@ -11,6 +11,11 @@ pub(crate) const MAX_CENTS: i64 = 9_007_199_254_740_991;
 // A park has at most MAX_MAP_TILES tiles and habitat capacity is twelve. Bound even
 // a conservative whole-park appeal sum before any arithmetic is performed.
 const MAX_RULE_VALUE: u32 = u32::MAX / (super::scenario::MAX_MAP_TILES * 12);
+/// Upper bound on a guest-comfort facility's slots or bin size (#101).
+pub(crate) const MAX_FACILITY_CAPACITY: u32 = 32;
+/// Facility looks the park view composes from primitives itself, as it does for stands, rather
+/// than from the deprecated placeholder model catalog (Atlas 5.1.3) (#101).
+const SCENE_COMPOSED_PRESENTATIONS: &[&str] = &["toilet_block", "bench", "litter_bin"];
 pub(crate) const DEFAULT_DOCUMENT: &str = include_str!("../content/catalog.json");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,6 +242,9 @@ pub(crate) struct Facility {
     /// Operating cost charged every in-game hour for each built stand. Fixed facilities are
     /// not built stands and keep this at zero.
     pub hourly_upkeep_cents: i64,
+    /// What a guest-comfort facility holds at once (#101): toilet cubicles or bench seats, or
+    /// the litter a bin takes before it must be emptied. Stands and landmarks declare 0.
+    pub capacity: u32,
     pub footprint: Footprint,
 }
 
@@ -443,6 +451,7 @@ impl Catalog {
             .expect("asset manifest entries")
             .iter()
             .filter_map(|entry| entry["id"].as_str())
+            .chain(SCENE_COMPOSED_PRESENTATIONS.iter().copied())
             .collect();
         let mut unlocks = HashSet::new();
         for (i, unlock) in self.unlocks.iter().enumerate() {
@@ -681,6 +690,9 @@ impl Catalog {
             let expected_asset = match facility.service.as_str() {
                 "food" => "food_stand",
                 "drink" => "drink_stand",
+                "toilet" => "toilet_block",
+                "bench" => "bench",
+                "bin" => "litter_bin",
                 "entrance" => "entrance",
                 "animal_care_depot" => "animal_care_depot",
                 _ => return Err(format!("{prefix}/service: unsupported existing service")),
@@ -688,6 +700,23 @@ impl Catalog {
             if facility.asset_ref != expected_asset {
                 return Err(format!(
                     "{prefix}/asset_ref: unsupported service presentation"
+                ));
+            }
+            let comfort = matches!(facility.service.as_str(), "toilet" | "bench" | "bin");
+            if comfort && !(1..=MAX_FACILITY_CAPACITY).contains(&facility.capacity) {
+                return Err(format!(
+                    "{prefix}/capacity: a {} holds 1..={MAX_FACILITY_CAPACITY}",
+                    facility.service
+                ));
+            }
+            if !comfort && facility.capacity != 0 {
+                return Err(format!(
+                    "{prefix}/capacity: only toilets, benches and bins have a capacity"
+                ));
+            }
+            if comfort && facility.price_cents != 0 {
+                return Err(format!(
+                    "{prefix}/price_cents: guest-comfort facilities are free to use"
                 ));
             }
         }

@@ -1,6 +1,7 @@
 mod alerts;
 mod animal;
 mod care;
+mod comfort;
 mod construction;
 mod content;
 mod enclosure;
@@ -163,6 +164,10 @@ struct Position {
 enum ConcessionKind {
     Food,
     Drink,
+    /// Guest-comfort facilities (#101): free to use, with slots or a litter capacity.
+    Toilet,
+    Bench,
+    Bin,
 }
 
 impl ConcessionKind {
@@ -170,8 +175,31 @@ impl ConcessionKind {
         match value {
             "food" => Some(Self::Food),
             "drink" => Some(Self::Drink),
+            "toilet" => Some(Self::Toilet),
+            "bench" => Some(Self::Bench),
+            "bin" => Some(Self::Bin),
             _ => None,
         }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Food => "food",
+            Self::Drink => "drink",
+            Self::Toilet => "toilet",
+            Self::Bench => "bench",
+            Self::Bin => "bin",
+        }
+    }
+
+    /// Stands that sell to guests.
+    fn sells(self) -> bool {
+        matches!(self, Self::Food | Self::Drink)
+    }
+
+    /// Facilities that wear with time and use and are repaired by mechanics.
+    fn wears(self) -> bool {
+        matches!(self, Self::Food | Self::Drink | Self::Toilet)
     }
 }
 
@@ -187,6 +215,15 @@ struct Concession {
     total_sales: u32,
     total_revenue_cents: i64,
     condition: u32,
+    /// Guests holding one of a toilet's or bench's slots, walking there or using it (#101), in
+    /// the order they took it. Never longer than the definition's capacity.
+    slots: Vec<u32>,
+    /// A toilet's cleanliness, 0..=100; other facilities stay at 100.
+    cleanliness: u32,
+    /// Litter in a bin; at its capacity the bin is full until a janitor empties it.
+    fill: u32,
+    /// Completed toilet visits, bench rests and bin deposits.
+    total_uses: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -212,8 +249,17 @@ struct Janitor {
     id: u32,
     x: u32,
     y: u32,
-    target_litter_id: Option<u32>,
+    target: Option<JanitorTarget>,
     tasks_completed: u32,
+}
+
+/// The one cleanup job a janitor is walking to (#101).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum JanitorTarget {
+    Litter(u32),
+    /// A facility service task: cleaning a toilet or emptying a bin.
+    Facility(u32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -635,6 +681,10 @@ enum GuestState {
     WalkingToHabitat,
     Viewing,
     WalkingToExit,
+    /// Errands to a guest-comfort facility (#101); the guest's `visit` says which.
+    WalkingToFacility,
+    WaitingForFacility,
+    UsingFacility,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -659,6 +709,14 @@ struct Guest {
     bought_drink: bool,
     visited_habitats: Vec<u32>,
     cleanliness_concern: bool,
+    /// The need for a toilet, 0..=100 (#101).
+    bladder: u32,
+    /// The comfort facility this guest is walking to, waiting at or using.
+    visit: Option<comfort::Visit>,
+    /// The need the park failed to meet on the guest's last try; cleared once it is met.
+    unmet_need: Option<comfort::Need>,
+    /// The first absolute minute the guest looks for a facility again after failing.
+    next_need_check: u64,
 }
 
 impl Guest {
@@ -669,6 +727,16 @@ impl Guest {
             && self.hunger <= GUEST_CONTINUE_MAX_HUNGER
             && self.thirst <= GUEST_CONTINUE_MAX_THIRST
             && self.value_perception >= GUEST_CONTINUE_MIN_VALUE
+            && self.bladder < comfort::BLADDER_DESPERATE
+    }
+
+    fn on_errand(&self) -> bool {
+        matches!(
+            self.state,
+            GuestState::WalkingToFacility
+                | GuestState::WaitingForFacility
+                | GuestState::UsingFacility
+        )
     }
 }
 
@@ -702,6 +770,8 @@ struct GameState {
     litter: Vec<LitterTask>,
     mechanics: Vec<Mechanic>,
     maintenance: Vec<MaintenanceTask>,
+    /// Janitor work at toilets and bins (#101): at most one open task per facility.
+    facility_service: Vec<comfort::ServiceTask>,
     guests: Vec<Guest>,
     cash_cents: i64,
     feed_crates: u32,
@@ -714,6 +784,7 @@ struct GameState {
     next_litter_id: u32,
     next_mechanic_id: u32,
     next_maintenance_id: u32,
+    next_facility_service_id: u32,
     next_guest_id: u32,
     /// Animal IDs are park-wide and never reused (#96).
     next_animal_id: u32,
@@ -805,6 +876,7 @@ impl GameState {
             litter: Vec::new(),
             mechanics: Vec::new(),
             maintenance: Vec::new(),
+            facility_service: Vec::new(),
             guests: Vec::new(),
             cash_cents: 5_000_000,
             feed_crates: 0,
@@ -817,6 +889,7 @@ impl GameState {
             next_litter_id: 1,
             next_mechanic_id: 1,
             next_maintenance_id: 1,
+            next_facility_service_id: 1,
             next_guest_id: 1,
             next_animal_id: 1,
             next_habitat_object_id: 1,
@@ -1037,7 +1110,7 @@ impl GameState {
             id,
             x: spawn.x,
             y: spawn.y,
-            target_litter_id: None,
+            target: None,
             tasks_completed: 0,
         });
         ActionResult::ok(format!(
@@ -1193,6 +1266,7 @@ impl GameState {
             }
             self.advance_animal_welfare();
             self.advance_guest_needs();
+            self.advance_comfort_visits();
 
             if self.movement_accumulator >= 3 {
                 self.movement_accumulator = 0;
@@ -1297,6 +1371,7 @@ impl GameState {
             )
         })
         .or_else(|| self.work_zone_violation())
+        .or_else(|| self.comfort_violation())
     }
 
     fn advance_habitat_care(&mut self) {
@@ -1376,6 +1451,10 @@ impl GameState {
             bought_drink: false,
             visited_habitats: Vec::new(),
             cleanliness_concern: false,
+            bladder: comfort::ARRIVAL_BLADDER,
+            visit: None,
+            unmet_need: None,
+            next_need_check: 0,
         });
         self.emit("guest_arrived", Some(self.next_guest_id));
         self.next_guest_id += 1;
@@ -1402,6 +1481,8 @@ impl GameState {
             if guest.minutes_in_park % 2 == 0 {
                 guest.thirst = guest.thirst.saturating_add(1).min(100);
             }
+            // The toilet need grows one point a minute (#101).
+            guest.bladder = guest.bladder.saturating_add(1).min(100);
             if guest.minutes_in_park % 10 == 0 {
                 guest.value_perception = guest.value_perception.saturating_sub(1);
                 if cleanliness_concern {
@@ -1410,7 +1491,10 @@ impl GameState {
                 }
             }
             if guest.minutes_in_park % 5 == 0
-                && (guest.hunger >= 60 || guest.thirst >= 60 || guest.energy <= 35)
+                && (guest.hunger >= 60
+                    || guest.thirst >= 60
+                    || guest.energy <= 35
+                    || guest.bladder >= comfort::BLADDER_DESPERATE)
             {
                 guest.happiness = guest.happiness.saturating_sub(1);
             }
@@ -1477,7 +1561,10 @@ impl GameState {
         let viewing_occupancy = self.viewing_occupancy();
         for index in 0..self.guests.len() {
             let guest = &self.guests[index];
-            if guest.state == GuestState::Viewing {
+            if matches!(
+                guest.state,
+                GuestState::Viewing | GuestState::WaitingForFacility | GuestState::UsingFacility
+            ) {
                 continue;
             }
             let remaining = guest.route.get(guest.route_index..).unwrap_or_default();
@@ -1496,6 +1583,10 @@ impl GameState {
                 x: guest.x,
                 y: guest.y,
             };
+            if guest.state == GuestState::WalkingToFacility {
+                self.reroute_facility_visit(index);
+                continue;
+            }
             let route = match guest.state {
                 GuestState::Arriving | GuestState::WalkingToHabitat => self
                     .habitats
@@ -1512,7 +1603,12 @@ impl GameState {
                         y: self.entrance.y,
                     },
                 ),
-                GuestState::Viewing => unreachable!("viewing guests have no active walking route"),
+                GuestState::Viewing
+                | GuestState::WalkingToFacility
+                | GuestState::WaitingForFacility
+                | GuestState::UsingFacility => {
+                    unreachable!("handled before re-planning a walking route")
+                }
             };
             let guest = &mut self.guests[index];
             // An empty route means waiting in place, never having arrived.
@@ -1523,10 +1619,14 @@ impl GameState {
 
     fn advance_guest_movement(&mut self) {
         let mut leave_ids = Vec::new();
+        self.choose_comfort_visits();
 
         for index in 0..self.guests.len() {
             let state = self.guests[index].state;
-            if matches!(state, GuestState::Viewing) {
+            if matches!(
+                state,
+                GuestState::Viewing | GuestState::WaitingForFacility | GuestState::UsingFacility
+            ) {
                 continue;
             }
             if matches!(state, GuestState::Arriving) {
@@ -1572,12 +1672,17 @@ impl GameState {
                         .min(100);
                 }
                 GuestState::WalkingToExit => leave_ids.push(self.guests[index].id),
-                GuestState::Arriving | GuestState::Viewing => {}
+                GuestState::WalkingToFacility => self.arrive_at_facility(index),
+                GuestState::Arriving
+                | GuestState::Viewing
+                | GuestState::WaitingForFacility
+                | GuestState::UsingFacility => {}
             }
         }
 
         if !leave_ids.is_empty() {
             for id in &leave_ids {
+                self.release_facility_slot(*id);
                 self.emit("guest_left", Some(*id));
             }
             self.guests.retain(|guest| !leave_ids.contains(&guest.id));
@@ -1685,13 +1790,18 @@ impl GameState {
                     ConcessionKind::Drink => {
                         guest.thirst = guest.thirst.saturating_sub(restore);
                         guest.bought_drink = true;
+                        guest.bladder = guest
+                            .bladder
+                            .saturating_add(comfort::DRINK_BLADDER)
+                            .min(100);
                     }
+                    ConcessionKind::Toilet | ConcessionKind::Bench | ConcessionKind::Bin => {}
                 }
                 let happiness = if degraded { 1 } else { 3 };
                 guest.happiness = guest.happiness.saturating_add(happiness).min(100);
                 guest.value_perception = guest.value_perception.saturating_add(2).min(100);
             }
-            self.add_litter(position);
+            self.dispose_litter(position);
         }
     }
 
@@ -1808,90 +1918,150 @@ impl GameState {
         100_u32.saturating_sub(backlog_penalty.saturating_add(age_penalty).min(90))
     }
 
-    fn release_unreachable_janitor_assignments(&mut self) {
-        let assignments: Vec<(usize, u32, Position)> = self
-            .janitors
-            .iter()
-            .enumerate()
-            .filter_map(|(index, janitor)| {
-                Some((
-                    index,
-                    janitor.target_litter_id?,
-                    Position {
-                        x: janitor.x,
-                        y: janitor.y,
-                    },
-                ))
-            })
-            .collect();
-
-        for (janitor_index, litter_id, janitor_position) in assignments {
-            let target = self
-                .litter
-                .iter()
-                .find(|task| task.id == litter_id)
-                .map(|task| Position {
-                    x: task.x,
-                    y: task.y,
-                });
-            let reachable = target.is_some_and(|target| {
-                self.path_between(Mover::Staff, janitor_position, target)
-                    .is_some()
-            });
-            if reachable {
-                continue;
+    /// The tile a janitor job is worked from (#101): the litter's own tile, or the facility's
+    /// service point nearest `from` by staff route. `None` once the job is gone, and for a
+    /// facility with no service point staff can reach from `from`.
+    fn janitor_goal(&self, target: JanitorTarget, from: Position) -> Option<Position> {
+        match target {
+            JanitorTarget::Litter(id) => {
+                self.litter
+                    .iter()
+                    .find(|task| task.id == id)
+                    .map(|task| Position {
+                        x: task.x,
+                        y: task.y,
+                    })
             }
-            self.note_route_invalidated();
-            let janitor_id = self.janitors[janitor_index].id;
-            self.janitors[janitor_index].target_litter_id = None;
-            if let Some(task) = self.litter.iter_mut().find(|task| task.id == litter_id)
-                && task.assigned_janitor_id == Some(janitor_id)
-            {
-                task.assigned_janitor_id = None;
+            JanitorTarget::Facility(id) => {
+                let task = self.facility_service.iter().find(|task| task.id == id)?;
+                self.concession_service_tile_from(task.concession_id, from)
             }
         }
     }
 
+    fn janitor_job_reachable(&self, target: JanitorTarget, from: Position) -> bool {
+        match (target, self.janitor_goal(target, from)) {
+            (_, None) => false,
+            (JanitorTarget::Litter(_), Some(goal)) => {
+                self.path_between(Mover::Staff, from, goal).is_some()
+            }
+            // The service point was already chosen by a staff route search.
+            (JanitorTarget::Facility(_), Some(_)) => true,
+        }
+    }
+
+    /// Clears a janitor's job and the job's claim on that janitor.
+    fn drop_janitor_target(&mut self, janitor_index: usize) {
+        let janitor_id = self.janitors[janitor_index].id;
+        let Some(target) = self.janitors[janitor_index].target.take() else {
+            return;
+        };
+        let assignee = match target {
+            JanitorTarget::Litter(id) => self
+                .litter
+                .iter_mut()
+                .find(|task| task.id == id)
+                .map(|task| &mut task.assigned_janitor_id),
+            JanitorTarget::Facility(id) => self
+                .facility_service
+                .iter_mut()
+                .find(|task| task.id == id)
+                .map(|task| &mut task.assigned_janitor_id),
+        };
+        if let Some(assignee) = assignee
+            && *assignee == Some(janitor_id)
+        {
+            *assignee = None;
+        }
+    }
+
+    fn release_unreachable_janitor_assignments(&mut self) {
+        for janitor_index in 0..self.janitors.len() {
+            let janitor = &self.janitors[janitor_index];
+            let Some(target) = janitor.target else {
+                continue;
+            };
+            let position = Position {
+                x: janitor.x,
+                y: janitor.y,
+            };
+            if self.janitor_job_reachable(target, position) {
+                continue;
+            }
+            self.note_route_invalidated();
+            self.drop_janitor_target(janitor_index);
+        }
+    }
+
+    /// Gives every free janitor the oldest unclaimed job it can reach: litter and facility
+    /// service share one queue, litter first within a minute, then by ID.
     fn assign_janitor_tasks(&mut self) {
         for janitor_index in 0..self.janitors.len() {
-            if self.janitors[janitor_index].target_litter_id.is_some() {
+            if self.janitors[janitor_index].target.is_some() {
                 continue;
             }
             let janitor_position = Position {
                 x: self.janitors[janitor_index].x,
                 y: self.janitors[janitor_index].y,
             };
-            let target_id = self
+            let mut queue: Vec<(u64, u8, u32, JanitorTarget)> = self
                 .litter
                 .iter()
                 .filter(|task| task.assigned_janitor_id.is_none())
-                .filter(|task| {
-                    self.path_between(
-                        Mover::Staff,
-                        janitor_position,
-                        Position {
-                            x: task.x,
-                            y: task.y,
-                        },
+                .map(|task| {
+                    (
+                        task.created_minute,
+                        0,
+                        task.id,
+                        JanitorTarget::Litter(task.id),
                     )
-                    .is_some()
                 })
-                .min_by_key(|task| task.id)
-                .map(|task| task.id);
-            let Some(target_id) = target_id else {
+                .chain(
+                    self.facility_service
+                        .iter()
+                        .filter(|task| task.assigned_janitor_id.is_none())
+                        .map(|task| {
+                            (
+                                task.created_minute,
+                                1,
+                                task.id,
+                                JanitorTarget::Facility(task.id),
+                            )
+                        }),
+                )
+                .collect();
+            queue.sort_by_key(|(minute, rank, id, _)| (*minute, *rank, *id));
+            let Some(target) = queue
+                .into_iter()
+                .map(|(.., target)| target)
+                .find(|target| self.janitor_job_reachable(*target, janitor_position))
+            else {
                 continue;
             };
             let janitor_id = self.janitors[janitor_index].id;
-            self.janitors[janitor_index].target_litter_id = Some(target_id);
-            if let Some(task) = self.litter.iter_mut().find(|task| task.id == target_id) {
-                task.assigned_janitor_id = Some(janitor_id);
+            self.janitors[janitor_index].target = Some(target);
+            match target {
+                JanitorTarget::Litter(id) => {
+                    if let Some(task) = self.litter.iter_mut().find(|task| task.id == id) {
+                        task.assigned_janitor_id = Some(janitor_id);
+                    }
+                }
+                JanitorTarget::Facility(id) => {
+                    if let Some(task) = self.facility_service.iter_mut().find(|task| task.id == id)
+                    {
+                        task.assigned_janitor_id = Some(janitor_id);
+                    }
+                }
             }
         }
     }
 
-    fn complete_litter_task(&mut self, janitor_index: usize, litter_id: u32) {
-        self.litter.retain(|task| task.id != litter_id);
-        self.janitors[janitor_index].target_litter_id = None;
+    fn complete_janitor_task(&mut self, janitor_index: usize, target: JanitorTarget) {
+        match target {
+            JanitorTarget::Litter(id) => self.litter.retain(|task| task.id != id),
+            JanitorTarget::Facility(id) => self.complete_facility_service(id),
+        }
+        self.janitors[janitor_index].target = None;
         self.janitors[janitor_index].tasks_completed = self.janitors[janitor_index]
             .tasks_completed
             .saturating_add(1);
@@ -1902,37 +2072,29 @@ impl GameState {
         self.assign_janitor_tasks();
 
         for janitor_index in 0..self.janitors.len() {
-            let Some(litter_id) = self.janitors[janitor_index].target_litter_id else {
-                continue;
-            };
-            let Some(target) = self
-                .litter
-                .iter()
-                .find(|task| task.id == litter_id)
-                .map(|task| Position {
-                    x: task.x,
-                    y: task.y,
-                })
-            else {
-                self.janitors[janitor_index].target_litter_id = None;
+            let Some(target) = self.janitors[janitor_index].target else {
                 continue;
             };
             let current = Position {
                 x: self.janitors[janitor_index].x,
                 y: self.janitors[janitor_index].y,
             };
-            let Some(route) = self.path_between(Mover::Staff, current, target) else {
+            let Some(goal) = self.janitor_goal(target, current) else {
+                self.drop_janitor_target(janitor_index);
+                continue;
+            };
+            let Some(route) = self.path_between(Mover::Staff, current, goal) else {
                 continue;
             };
             if route.len() <= 1 {
-                self.complete_litter_task(janitor_index, litter_id);
+                self.complete_janitor_task(janitor_index, target);
                 continue;
             }
             let next = route[1];
             self.janitors[janitor_index].x = next.x;
             self.janitors[janitor_index].y = next.y;
-            if next == target {
-                self.complete_litter_task(janitor_index, litter_id);
+            if next == goal {
+                self.complete_janitor_task(janitor_index, target);
             }
         }
 
@@ -2045,7 +2207,11 @@ impl GameState {
 
     fn advance_concession_maintenance(&mut self) {
         let mut due = Vec::new();
-        for stand in &mut self.concessions {
+        for stand in self
+            .concessions
+            .iter_mut()
+            .filter(|stand| stand.kind.wears())
+        {
             stand.condition = stand
                 .condition
                 .saturating_sub(MAINTENANCE_WEAR_PER_INTERVAL);
@@ -2573,6 +2739,25 @@ impl GameState {
         {
             return "The path to the exit is blocked.";
         }
+        if let Some(visit) = guest.visit {
+            return match (guest.state, visit.need) {
+                (GuestState::UsingFacility, comfort::Need::Toilet) => "Much better.",
+                (GuestState::UsingFacility, comfort::Need::Rest) => "A sit-down is just right.",
+                (GuestState::WaitingForFacility, comfort::Need::Toilet) => {
+                    "The toilets are busy; I'll wait a moment."
+                }
+                (GuestState::WaitingForFacility, comfort::Need::Rest) => {
+                    "Every seat is taken; I'll wait a moment."
+                }
+                (_, comfort::Need::Toilet) => "I'm heading to the toilets.",
+                (_, comfort::Need::Rest) => "I'll rest on that bench.",
+            };
+        }
+        match guest.unmet_need {
+            Some(comfort::Need::Toilet) => return "I really need a toilet!",
+            Some(comfort::Need::Rest) => return "I wish there were somewhere to sit.",
+            None => {}
+        }
         if guest.thirst >= 60 {
             return "I'm getting thirsty.";
         }
@@ -2610,6 +2795,9 @@ impl GameState {
             }
             GuestState::Viewing => "The animals are wonderful.",
             GuestState::WalkingToExit => "I'm ready to head home.",
+            GuestState::WalkingToFacility
+            | GuestState::WaitingForFacility
+            | GuestState::UsingFacility => "I'm taking a short break.",
         }
     }
 
@@ -2747,6 +2935,8 @@ impl GameState {
                 .iter()
                 .filter(|guest| guest.value_perception <= 40)
                 .count() as u32,
+            needs_toilet: self.unmet_guests(comfort::Need::Toilet).count() as u32,
+            needs_rest: self.unmet_guests(comfort::Need::Rest).count() as u32,
         }
     }
 
@@ -2822,50 +3012,62 @@ impl GameState {
     }
 
     fn janitor_status(&self, janitor: &Janitor) -> String {
-        if let Some(litter_id) = janitor.target_litter_id
-            && let Some(task) = self.litter.iter().find(|task| task.id == litter_id)
-        {
-            let age = self.absolute_minute().saturating_sub(task.created_minute);
-            return format!("Cleaning litter #{litter_id} · {age} min old");
+        let now = self.absolute_minute();
+        match janitor.target {
+            Some(JanitorTarget::Litter(litter_id)) => {
+                if let Some(task) = self.litter.iter().find(|task| task.id == litter_id) {
+                    let age = now.saturating_sub(task.created_minute);
+                    return format!("Cleaning litter #{litter_id} · {age} min old");
+                }
+            }
+            Some(JanitorTarget::Facility(task_id)) => {
+                if let Some(task) = self.facility_service.iter().find(|task| task.id == task_id) {
+                    let age = now.saturating_sub(task.created_minute);
+                    let label = self
+                        .concessions
+                        .iter()
+                        .find(|stand| stand.id == task.concession_id)
+                        .map_or("facility", |stand| stand.definition.label.as_str());
+                    return format!("Servicing {label} #{} · {age} min old", task.concession_id);
+                }
+            }
+            None => {}
         }
-        if self.litter.is_empty() {
+        if self.litter.is_empty() && self.facility_service.is_empty() {
             return "Idle · park paths are clean".to_owned();
         }
         let position = Position {
             x: janitor.x,
             y: janitor.y,
         };
-        let reachable_unassigned = self.litter.iter().any(|task| {
-            task.assigned_janitor_id.is_none()
-                && self
-                    .path_between(
-                        Mover::Staff,
-                        position,
-                        Position {
-                            x: task.x,
-                            y: task.y,
-                        },
-                    )
-                    .is_some()
-        });
-        if reachable_unassigned {
+        let jobs: Vec<(JanitorTarget, bool)> = self
+            .litter
+            .iter()
+            .map(|task| {
+                (
+                    JanitorTarget::Litter(task.id),
+                    task.assigned_janitor_id.is_none(),
+                )
+            })
+            .chain(self.facility_service.iter().map(|task| {
+                (
+                    JanitorTarget::Facility(task.id),
+                    task.assigned_janitor_id.is_none(),
+                )
+            }))
+            .collect();
+        if jobs.iter().any(|(target, unassigned)| {
+            *unassigned && self.janitor_job_reachable(*target, position)
+        }) {
             return "Available for cleanup".to_owned();
         }
-        let reachable = self.litter.iter().any(|task| {
-            self.path_between(
-                Mover::Staff,
-                position,
-                Position {
-                    x: task.x,
-                    y: task.y,
-                },
-            )
-            .is_some()
-        });
-        if reachable {
+        if jobs
+            .iter()
+            .any(|(target, _)| self.janitor_job_reachable(*target, position))
+        {
             "Idle · cleanup work is already assigned".to_owned()
         } else {
-            "Blocked · no reachable litter task".to_owned()
+            "Blocked · no reachable cleanup task".to_owned()
         }
     }
 
@@ -3036,7 +3238,7 @@ impl GameState {
                     id: janitor.id,
                     x: janitor.x,
                     y: janitor.y,
-                    target_litter_id: janitor.target_litter_id,
+                    target: janitor.target,
                     tasks_completed: janitor.tasks_completed,
                     status: self.janitor_status(janitor),
                 })
@@ -3184,12 +3386,14 @@ impl GameState {
         let concessions = self
             .concessions
             .iter()
-            .map(|stand| {
+            .enumerate()
+            .map(|(index, stand)| {
                 let (service_points, active_service_point) = self.concession_service_view(stand.id);
-                (stand, service_points, active_service_point)
+                (index, stand, service_points, active_service_point)
             })
             .map(
-                |(stand, service_points, active_service_point)| ConcessionView {
+                |(index, stand, service_points, active_service_point)| ConcessionView {
+                    comfort: self.comfort_view(index),
                     customer_tiles: self.concession_customer_tiles(stand.id),
                     service_points,
                     active_service_point,
@@ -3227,6 +3431,11 @@ impl GameState {
                 thought: self
                     .guest_thought_with_occupancy(guest, &viewing_occupancy)
                     .to_owned(),
+                comfort: comfort::GuestComfortView {
+                    bladder: guest.bladder,
+                    facility_id: guest.visit.map(|visit| visit.facility_id),
+                    unmet_need: guest.unmet_need,
+                },
             })
             .collect();
 
@@ -3309,7 +3518,14 @@ impl GameState {
                     .iter()
                     .filter(|stand| self.concession_service_state(stand) == "failed")
                     .count() as u32,
+                comfort: comfort::ComfortOperationsView {
+                    facility_service_backlog: self.facility_service.len() as u32,
+                    oldest_facility_service_age_minutes: self.oldest_facility_service_age_minutes(),
+                    toilet_demand_unmet: self.unmet_guests(comfort::Need::Toilet).count() as u32,
+                    rest_demand_unmet: self.unmet_guests(comfort::Need::Rest).count() as u32,
+                },
             },
+            facility_service: self.facility_service_views(),
             species_catalog: self.species_catalog(),
             fence_catalog: self.catalog.fences.clone(),
             habitat_environment: environment::EnvironmentCatalogView::new(&self.catalog),
@@ -3362,6 +3578,8 @@ struct ConcessionView {
     /// The service point a mechanic leaving the depot actually uses: the nearest reachable
     /// one by staff route, ties broken by row then column. `None` when none is reachable.
     active_service_point: Option<Position>,
+    /// Occupancy, cleanliness, fill and janitor service of a toilet, bench or bin (#101).
+    comfort: Option<comfort::ComfortView>,
 }
 
 #[derive(Serialize)]
@@ -3412,7 +3630,7 @@ struct JanitorView {
     id: u32,
     x: u32,
     y: u32,
-    target_litter_id: Option<u32>,
+    target: Option<JanitorTarget>,
     tasks_completed: u32,
     status: String,
 }
@@ -3476,6 +3694,8 @@ struct OperationsView {
     oldest_maintenance_age_minutes: u64,
     degraded_concessions: u32,
     failed_concessions: u32,
+    /// Janitor backlog at toilets and bins and unmet guest demand (#101).
+    comfort: comfort::ComfortOperationsView,
 }
 
 #[derive(Serialize)]
@@ -3570,6 +3790,8 @@ struct GuestView {
     habitats_viewed: u32,
     state: GuestState,
     thought: String,
+    /// Toilet need, current facility and unmet need (#101).
+    comfort: comfort::GuestComfortView,
 }
 
 #[derive(Serialize)]
@@ -3599,6 +3821,9 @@ struct ComplaintSummary {
     thirsty: u32,
     tired: u32,
     poor_value: u32,
+    /// Guests who found no usable toilet or bench on their last try (#101).
+    needs_toilet: u32,
+    needs_rest: u32,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -3679,6 +3904,8 @@ struct Snapshot {
     guests: Vec<GuestView>,
     litter: Vec<LitterView>,
     maintenance: Vec<MaintenanceView>,
+    /// Open janitor work at toilets and bins (#101).
+    facility_service: Vec<comfort::ServiceTaskView>,
     work_zones: Vec<zone::WorkZoneView>,
     operations: OperationsView,
     species_catalog: Vec<SpeciesOfferView>,
@@ -4929,6 +5156,10 @@ mod tests {
             bought_drink: false,
             visited_habitats: vec![1],
             cleanliness_concern: false,
+            bladder: comfort::ARRIVAL_BLADDER,
+            visit: None,
+            unmet_need: None,
+            next_need_check: 0,
         };
         state.guests.push(guest.clone());
         guest.id = 2;
@@ -5228,7 +5459,10 @@ mod tests {
 
         state.advance_janitor_work();
 
-        assert_eq!(state.janitors[0].target_litter_id, Some(older_id));
+        assert_eq!(
+            state.janitors[0].target,
+            Some(JanitorTarget::Litter(older_id))
+        );
         assert!(state.litter.iter().any(|task| task.id == older_id));
         assert_ne!(
             (state.janitors[0].x, state.janitors[0].y),
@@ -5253,7 +5487,7 @@ mod tests {
         state.advance_janitor_work();
 
         assert_eq!(state.litter.len(), 1);
-        assert_eq!(state.janitors[0].target_litter_id, None);
+        assert_eq!(state.janitors[0].target, None);
         assert!(state.litter_status(&state.litter[0]).contains("Blocked"));
         assert!(state.janitor_status(&state.janitors[0]).contains("Blocked"));
     }
@@ -5269,14 +5503,14 @@ mod tests {
             y: ENTRANCE_Y,
         }));
         state.assign_janitor_tasks();
-        assert!(state.janitors[0].target_litter_id.is_some());
+        assert!(state.janitors[0].target.is_some());
 
         let occupied = state.bulldoze(state.janitors[0].x, state.janitors[0].y);
         assert!(!occupied.ok);
 
         assert!(state.bulldoze(5, ENTRANCE_Y).ok);
         state.advance_janitor_work();
-        assert_eq!(state.janitors[0].target_litter_id, None);
+        assert_eq!(state.janitors[0].target, None);
         assert_eq!(state.litter.len(), 1);
     }
 

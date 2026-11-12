@@ -6,6 +6,7 @@ import {runAnimalIdentityAcceptance} from "./animal-identity-proof.mjs"
 import {runHabitatDesignAcceptance} from "./habitat-design-proof.mjs"
 import {runCirculationAcceptance} from "./circulation-proof.mjs"
 import {runLandExpansionAcceptance} from "./land-expansion-proof.mjs"
+import {runGuestComfortAcceptance} from "./guest-comfort-proof.mjs"
 import {runHabitatShapesAcceptance} from "./habitat-shapes-proof.mjs"
 import {enterNewPark, runParkLibraryAcceptance} from "./park-library-proof.mjs"
 import {runRendererLifetimeAcceptance} from "./renderer-lifetime-proof.mjs"
@@ -544,6 +545,9 @@ try {
 
   // #94: alerts lead to and fix park problems; overlays and the management workspace.
   await runManagementAcceptance({cdp, evaluate, assert, sleep, screenshot, clickButton, frame})
+
+  // #101: an unmet toilet need is alerted, toilets are built and used, the complaint resolves.
+  await runGuestComfortAcceptance({cdp, evaluate, assert, sleep, previewUrl, tile, clickButton, mouse, key, frame, screenshot})
   }
 } finally {
   cdp?.close()

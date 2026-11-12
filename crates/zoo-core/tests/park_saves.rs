@@ -14,6 +14,7 @@ const FIXTURE_V8: &str = "tests/fixtures/save-v8.json";
 const FIXTURE_V9: &str = "tests/fixtures/save-v9.json";
 const FIXTURE_V10: &str = "tests/fixtures/save-v10.json";
 const FIXTURE_V11: &str = "tests/fixtures/save-v11.json";
+const FIXTURE_V12: &str = "tests/fixtures/save-v12.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -38,9 +39,67 @@ fn content_without_environment(content: &mut Value) {
     }
 }
 
+/// Undoes the schema 11 → 12 migration (#101) on a document saved straight after loading: the
+/// catalog loses facility capacities and the added toilets, bench and bin, stands lose their
+/// comfort state, guests their toilet need and errands, janitors their tagged targets, and the
+/// park its (empty) facility service queue.
+const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
+
+/// Undoes the schema 12 catalog change (#101) on a catalog document.
+fn content_without_comfort(content: &mut Value) {
+    let facilities = content["facilities"].as_array_mut().unwrap();
+    facilities.retain(|facility| !COMFORT_FACILITIES.contains(&facility["key"].as_str().unwrap()));
+    for facility in facilities {
+        assert_eq!(
+            facility.as_object_mut().unwrap().remove("capacity"),
+            Some(0.into())
+        );
+    }
+}
+
+fn comfort_removed(value: &mut Value) {
+    const ADDED: [&str; 3] = COMFORT_FACILITIES;
+    content_without_comfort(&mut value["content"]);
+    let park = value["park"].as_object_mut().unwrap();
+    if let Some(allowed) = park["unlocks"]
+        .get_mut("facilities")
+        .and_then(Value::as_array_mut)
+    {
+        allowed.retain(|key| !ADDED.contains(&key.as_str().unwrap()));
+    }
+    for stand in park["concessions"].as_array_mut().unwrap() {
+        let stand = stand.as_object_mut().unwrap();
+        stand["definition"]
+            .as_object_mut()
+            .unwrap()
+            .remove("capacity")
+            .unwrap();
+        assert_eq!(stand.remove("slots"), Some(serde_json::json!([])));
+        assert_eq!(stand.remove("cleanliness"), Some(100.into()));
+        assert_eq!(stand.remove("fill"), Some(0.into()));
+        assert_eq!(stand.remove("total_uses"), Some(0.into()));
+    }
+    for guest in park["guests"].as_array_mut().unwrap() {
+        let guest = guest.as_object_mut().unwrap();
+        assert_eq!(guest.remove("bladder"), Some(10.into()));
+        assert_eq!(guest.remove("visit"), Some(Value::Null));
+        assert_eq!(guest.remove("unmet_need"), Some(Value::Null));
+        assert_eq!(guest.remove("next_need_check"), Some(0.into()));
+    }
+    for janitor in park["janitors"].as_array_mut().unwrap() {
+        let janitor = janitor.as_object_mut().unwrap();
+        let target = janitor.remove("target").unwrap();
+        janitor.insert("target_litter_id".to_owned(), target["litter"].clone());
+    }
+    assert_eq!(park.remove("facility_service"), Some(serde_json::json!([])));
+    assert_eq!(park.remove("next_facility_service_id"), Some(1.into()));
+    value["schema_version"] = 11.into();
+}
+
 /// Undoes the schema 10 → 11 migration (#99) on a document whose park owns its whole map: the
 /// park forgets its (empty) land and its ledgers lose the land-purchase line.
 fn land_removed(value: &mut Value) {
+    comfort_removed(value);
     let park = value["park"].as_object_mut().unwrap();
     assert_eq!(park.remove("land").unwrap(), serde_json::json!([]));
     for key in ["finance_today", "finance_previous"] {
@@ -136,6 +195,7 @@ fn rectangles_as_tiles(value: &mut Value) {
 fn fences_from_content(value: &mut Value) {
     let mut built_in = json(&ZooGame::new().content_json());
     content_without_environment(&mut built_in);
+    content_without_comfort(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -547,19 +607,25 @@ fn expanded() -> ZooGame {
 }
 
 #[test]
-fn the_current_schema_fixture_still_loads_unchanged() {
-    if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&expanded().save_json());
-        std::fs::write(
-            FIXTURE_V11,
-            serde_json::to_string_pretty(&value).unwrap() + "\n",
-        )
-        .unwrap();
-    }
+fn the_schema_v11_fixture_migrates_to_a_park_that_can_build_comfort_facilities() {
     let fixture = std::fs::read_to_string(FIXTURE_V11).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
-    assert_eq!(json(&game.save_json()), json(&fixture));
+    let mut saved = json(&game.save_json());
+    comfort_removed(&mut saved);
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
+    // The migrated catalog offers the comfort facilities, so its guests' new need can be met.
+    let view = json(&game.snapshot_json());
+    let offered: Vec<&str> = view["facility_catalog"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|facility| facility["key"].as_str())
+        .collect();
+    for key in COMFORT_FACILITIES {
+        assert!(offered.contains(&key), "{offered:?}");
+    }
+    ok(game.place_concession(8, 7, "toilet".to_owned()));
     // Saved land restores (#99): the bought paddock stays owned and the rest stays for sale.
     let view = json(&game.snapshot_json());
     let status = |id: &str| {
@@ -578,6 +644,62 @@ fn the_current_schema_fixture_still_loads_unchanged() {
     assert_eq!(built["ok"], false);
     assert_eq!(built["land_parcels"], serde_json::json!(["lakeshore"]));
     game.tick(60);
+}
+
+/// `expanded` with toilets, a bench and a litter bin by the main path and a janitor, run until
+/// guests hold toilet slots and a facility has asked for a janitor (#101).
+fn comforted() -> ZooGame {
+    let mut game = expanded();
+    ok(game.place_concession(8, 7, "toilet".to_owned()));
+    ok(game.place_concession(10, 9, "bench".to_owned()));
+    ok(game.place_concession(6, 9, "bin".to_owned()));
+    ok(game.hire_janitor());
+    for _ in 0..400 {
+        game.tick(1);
+        let view = json(&game.snapshot_json());
+        let errand = view["guests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|guest| guest["state"] == "using_facility");
+        if errand && !view["facility_service"].as_array().unwrap().is_empty() {
+            return game;
+        }
+    }
+    panic!("no guest used the toilets while a facility awaited service");
+}
+
+#[test]
+fn the_current_schema_fixture_still_loads_unchanged() {
+    if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
+        let value = json(&comforted().save_json());
+        std::fs::write(
+            FIXTURE_V12,
+            serde_json::to_string_pretty(&value).unwrap() + "\n",
+        )
+        .unwrap();
+    }
+    let fixture = std::fs::read_to_string(FIXTURE_V12).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    assert_eq!(json(&game.save_json()), json(&fixture));
+    // Saved reservations, errands and service work restore (#101) and run on like an
+    // uninterrupted park.
+    let mut uninterrupted = ZooGame::new();
+    ok(uninterrupted.load_save(&fixture));
+    let park = json(&fixture)["park"].clone();
+    let slots: usize = park["concessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|stand| stand["slots"].as_array().unwrap().len())
+        .sum();
+    assert!(slots > 0, "the fixture holds a reserved or used slot");
+    assert!(!park["facility_service"].as_array().unwrap().is_empty());
+    ok(game.load_save(&game.save_json()));
+    game.tick(90);
+    uninterrupted.tick(90);
+    assert_eq!(game.save_json(), uninterrupted.save_json());
 }
 
 /// Schema 3 parks gain alerts, re-read from the park as it loads; nothing else changes.

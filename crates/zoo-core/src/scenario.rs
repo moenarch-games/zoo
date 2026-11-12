@@ -273,6 +273,7 @@ pub(crate) enum Goal {
     Keepers {
         at_least: u32,
     },
+    /// Food or drink stands; toilets, benches and bins (#101) do not count.
     Concessions {
         at_least: u32,
     },
@@ -803,7 +804,13 @@ impl GameState {
                 animals >= u64::from(*at_least)
             }
             Goal::Keepers { at_least } => count(self.keepers.len(), *at_least),
-            Goal::Concessions { at_least } => count(self.concessions.len(), *at_least),
+            Goal::Concessions { at_least } => count(
+                self.concessions
+                    .iter()
+                    .filter(|stand| stand.kind.sells())
+                    .count(),
+                *at_least,
+            ),
             Goal::Guests { at_least } => count(self.guests.len(), *at_least),
             Goal::CashCents { at_least } => self.cash_cents >= *at_least,
             Goal::FeedCrates { at_least } => self.feed_crates >= *at_least,

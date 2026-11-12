@@ -1218,6 +1218,13 @@ function concessionNodes(snapshot: Snapshot): RendererSceneNode[] {
     const z = stand.y + 0.5
     const yaw = facingNearestPath(snapshot, stand.x, stand.y)
     const m = model(`concession:${stand.id}`, { x, z }, yaw)
+    if (stand.comfort) {
+      nodes.push(
+        blobShadow(`concession:${stand.id}:shadow`, x, z, 0.45, 0.14),
+        ...comfortFacilityNodes(m, stand.comfort),
+      )
+      continue
+    }
     const accent: Hex = stand.kind === "food" ? "#e0913f" : "#4fa9c7"
     let awning: Hex = accent
     if (stand.service_state === "failed") {
@@ -1265,6 +1272,47 @@ function concessionNodes(snapshot: Snapshot): RendererSceneNode[] {
     }
   }
   return nodes
+}
+
+/** Toilets, benches and bins (#101), composed from primitives like the stands. Closed toilets
+ * and full bins show it; the state itself is zoo-core's. */
+function comfortFacilityNodes(
+  m: ReturnType<typeof model>,
+  comfort: NonNullable<Snapshot["concessions"][number]["comfort"]>,
+): RendererSceneNode[] {
+  switch (comfort.service) {
+    case "toilet": {
+      const door: Hex = comfort.open ? "#4f7fa3" : "#7c4a44"
+      const nodes = [
+        m.box("block", [0, 0.38, -0.05], [0.72, 0.76, 0.56], "#e4edf1"),
+        m.box("roof", [0, 0.8, -0.05], [0.8, 0.08, 0.64], "#5f8fb0"),
+        m.box("door-left", [-0.17, 0.3, 0.235], [0.24, 0.5, 0.02], door),
+        m.box("door-right", [0.17, 0.3, 0.235], [0.24, 0.5, 0.02], door),
+        m.box("sign", [0, 0.66, 0.24], [0.26, 0.12, 0.02], "#fbfbf7"),
+      ]
+      if (!comfort.open) {
+        nodes.push(m.box("closed-board", [0, 0.3, 0.255], [0.6, 0.12, 0.02], "#6b4e32"))
+      }
+      return nodes
+    }
+    case "bench":
+      return [
+        m.box("seat", [0, 0.22, 0.06], [0.72, 0.05, 0.22], "#b07a43"),
+        m.box("back", [0, 0.36, -0.06], [0.72, 0.18, 0.04], "#a06c39"),
+        m.cylinder("leg-left", [-0.3, 0.1, 0.06], 0.025, 0.2, "#4a4a4a"),
+        m.cylinder("leg-right", [0.3, 0.1, 0.06], 0.025, 0.2, "#4a4a4a"),
+      ]
+    case "bin": {
+      const nodes = [
+        m.cylinder("can", [0, 0.2, 0.12], 0.13, 0.4, "#3f7f52"),
+        m.cylinder("lid", [0, 0.415, 0.12], 0.14, 0.03, "#2f5f3e"),
+      ]
+      if (comfort.fill !== null && comfort.fill >= comfort.capacity) {
+        nodes.push(m.sphere("overflow", [0.02, 0.46, 0.12], 0.08, "#e8d9a8"))
+      }
+      return nodes
+    }
+  }
 }
 
 function facingNearestPath(snapshot: Snapshot, x: number, y: number) {
@@ -1570,7 +1618,10 @@ function guestNodes(guests: Guest[], input: SceneFrameInput, presence: Presence[
       guest.x + 0.5 + jitter(guest.id, 1),
       guest.y + 0.5 + jitter(guest.id, 2),
     )
-    const walking = guest.state !== "viewing"
+    const walking =
+      guest.state !== "viewing" &&
+      guest.state !== "waiting_for_facility" &&
+      guest.state !== "using_facility"
     const bob =
       input.animate && walking ? Math.abs(Math.sin(input.timeSeconds * 9 + guest.id)) * 0.03 : 0
     const yaw = hash(guest.id, Math.floor(input.timeSeconds / 3)) * Math.PI * 2

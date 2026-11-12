@@ -9,6 +9,8 @@ import {
 } from "./effects-kit"
 import type {
   ActionResult,
+  ComfortFacility,
+  ComfortOperations,
   Alert,
   Animal,
   CareCategory,
@@ -16,6 +18,7 @@ import type {
   ConstructionPreview,
   ConstructionStep,
   EnvironmentPreview,
+  FacilityOffer,
   GateEvaluation,
   Guest,
   Habitat,
@@ -151,7 +154,22 @@ function guestStateLabel(state: Guest["state"]) {
       return "Viewing animals"
     case "walking_to_exit":
       return "Walking to exit"
+    case "walking_to_facility":
+      return "Heading to a facility"
+    case "waiting_for_facility":
+      return "Waiting for a free spot"
+    case "using_facility":
+      return "Using a facility"
   }
+}
+
+/** Build-tool glyphs for the facility services the park can build (#101). */
+const FACILITY_ICONS: Partial<Record<FacilityOffer["service"], string>> = {
+  food: "▰",
+  drink: "▥",
+  toilet: "WC",
+  bench: "⑃",
+  bin: "♻",
 }
 
 function toolHint(tool: Tool, snapshot: Snapshot | null) {
@@ -1441,7 +1459,13 @@ export default function App() {
       case "inspect_habitat":
         return "Open habitat"
       case "inspect_facility":
-        return "Open stand"
+        return "Open facility"
+      case "build_toilet":
+      case "build_bench": {
+        const service = alert.action === "build_toilet" ? "toilet" : "bench"
+        const offer = snapshot.facility_catalog.find((entry) => entry.service === service)
+        return offer ? `Build ${offer.label} · ${money(offer.build_cost_cents)}` : null
+      }
     }
   }
 
@@ -1489,6 +1513,19 @@ export default function App() {
       case "inspect_habitat":
       case "inspect_facility":
         jumpTo(alert.subject, alert.focus)
+        return
+      case "build_toilet":
+      case "build_bench": {
+        const service = alert.action === "build_toilet" ? "toilet" : "bench"
+        const offer = snapshot.facility_catalog.find((entry) => entry.service === service)
+        if (!offer) {
+          return
+        }
+        jumpTo(alert.subject, alert.focus)
+        setTool(`facility:${offer.key}`)
+        setWorkspaceTab(null)
+        inform(`${offer.label}: place it on grass beside a path where guests walk.`)
+      }
     }
   }
 
@@ -2765,7 +2802,11 @@ export default function App() {
                   </div>
                   <div>
                     <dt>Destination</dt>
-                    <dd>Habitat #{selectedGuest.target_habitat}</dd>
+                    <dd>
+                      {selectedGuest.comfort.facility_id !== null
+                        ? `Facility #${selectedGuest.comfort.facility_id}`
+                        : `Habitat #${selectedGuest.target_habitat}`}
+                    </dd>
                   </div>
                   <div>
                     <dt>Happiness</dt>
@@ -2776,6 +2817,7 @@ export default function App() {
                 <NeedBar label="Energy" value={selectedGuest.energy} />
                 <NeedBar label="Hunger" value={selectedGuest.hunger} badWhenHigh />
                 <NeedBar label="Thirst" value={selectedGuest.thirst} badWhenHigh />
+                <NeedBar label="Toilet" value={selectedGuest.comfort.bladder} badWhenHigh />
                 <NeedBar label="Value" value={selectedGuest.value_perception} />
               </div>
             </>
@@ -3236,28 +3278,51 @@ export default function App() {
                           : "No service point reachable from the depot"}
                       </dd>
                     </div>
-                    <div>
-                      <dt>Price</dt>
-                      <dd>{money(selectedConcession.price_cents)}</dd>
-                    </div>
-                    <div>
-                      <dt>Sales today</dt>
-                      <dd>{selectedConcession.sales_today}</dd>
-                    </div>
-                    <div>
-                      <dt>Revenue</dt>
-                      <dd>{money(selectedConcession.total_revenue_cents)}</dd>
-                    </div>
+                    {selectedConcession.comfort ? (
+                      <ComfortRows
+                        comfort={selectedConcession.comfort}
+                        demand={snapshot.operations.comfort}
+                      />
+                    ) : (
+                      <>
+                        <div>
+                          <dt>Price</dt>
+                          <dd>{money(selectedConcession.price_cents)}</dd>
+                        </div>
+                        <div>
+                          <dt>Sales today</dt>
+                          <dd>{selectedConcession.sales_today}</dd>
+                        </div>
+                        <div>
+                          <dt>Revenue</dt>
+                          <dd>{money(selectedConcession.total_revenue_cents)}</dd>
+                        </div>
+                      </>
+                    )}
                   </dl>
-                  {snapshot.animal_care_depot.mechanics.length === 0 && (
-                    <button className="shop-row" onClick={hireMechanic}>
-                      <span>
-                        <b>Hire mechanic</b>
-                        <small>Mechanics repair worn stands before they break down</small>
-                      </span>
-                      <strong>{money(snapshot.animal_care_depot.mechanic_hire_cost_cents)}</strong>
-                    </button>
-                  )}
+                  {selectedConcession.comfort?.janitor_status &&
+                    snapshot.animal_care_depot.janitors.length === 0 && (
+                      <button className="shop-row" onClick={hireJanitor}>
+                        <span>
+                          <b>Hire janitor</b>
+                          <small>Janitors clean toilets and empty bins as well as paths</small>
+                        </span>
+                        <strong>{money(snapshot.animal_care_depot.janitor_hire_cost_cents)}</strong>
+                      </button>
+                    )}
+                  {(selectedConcession.comfort === null ||
+                    selectedConcession.comfort.service === "toilet") &&
+                    snapshot.animal_care_depot.mechanics.length === 0 && (
+                      <button className="shop-row" onClick={hireMechanic}>
+                        <span>
+                          <b>Hire mechanic</b>
+                          <small>Mechanics repair worn stands before they break down</small>
+                        </span>
+                        <strong>
+                          {money(snapshot.animal_care_depot.mechanic_hire_cost_cents)}
+                        </strong>
+                      </button>
+                    )}
                 </div>
               </>
             )}
@@ -3460,12 +3525,12 @@ export default function App() {
             onClick={() => setTool("zone")}
           />
           {snapshot?.facility_catalog
-            .filter((offer) => offer.service === "food" || offer.service === "drink")
+            .filter((offer) => offer.service in FACILITY_ICONS)
             .map((offer) => (
               <ToolButton
                 key={offer.key}
                 active={tool === `facility:${offer.key}`}
-                icon={offer.service === "food" ? "▰" : "▥"}
+                icon={FACILITY_ICONS[offer.service] ?? "▥"}
                 label={`${offer.label} · ${money(offer.build_cost_cents)}`}
                 onClick={() => setTool(`facility:${offer.key}`)}
               />
@@ -3694,6 +3759,50 @@ function HistoryButton({
       <span>{icon}</span>
       <small>{label}</small>
     </button>
+  )
+}
+
+/** Inspector rows for a toilet, bench or bin: Rust's occupancy, upkeep and service state (#101). */
+function ComfortRows({ comfort, demand }: { comfort: ComfortFacility; demand: ComfortOperations }) {
+  let unmet: number | null = null
+  if (comfort.service === "toilet") {
+    unmet = demand.toilet_demand_unmet
+  } else if (comfort.service === "bench") {
+    unmet = demand.rest_demand_unmet
+  }
+  return (
+    <>
+      <div className={comfort.open ? "" : "zone-warning"}>
+        <dt>{comfort.service === "bin" ? "Fill" : "Occupancy"}</dt>
+        <dd data-comfort-status>{comfort.status}</dd>
+      </div>
+      {comfort.cleanliness !== null && (
+        <div className={comfort.cleanliness > 55 ? "" : "zone-warning"}>
+          <dt>Cleanliness</dt>
+          <dd>{comfort.cleanliness}%</dd>
+        </div>
+      )}
+      {comfort.janitor_status !== null && (
+        <div>
+          <dt>Janitor</dt>
+          <dd data-comfort-janitor>{comfort.janitor_status}</dd>
+        </div>
+      )}
+      <div>
+        <dt>{comfort.service === "bin" ? "Wrappers taken" : "Guests served"}</dt>
+        <dd data-comfort-uses>{comfort.total_uses}</dd>
+      </div>
+      {unmet !== null && (
+        <div className={unmet > 0 ? "zone-warning" : ""}>
+          <dt>Unmet demand</dt>
+          <dd data-comfort-unmet>
+            {unmet === 0
+              ? "None"
+              : `${unmet} guest${unmet === 1 ? "" : "s"} found no ${comfort.service === "toilet" ? "toilet" : "seat"}`}
+          </dd>
+        </div>
+      )}
+    </>
   )
 }
 
