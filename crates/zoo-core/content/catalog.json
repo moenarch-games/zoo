@@ -23,7 +23,8 @@
     "staff": {
       "keeper": { "hire_cents": 25000, "hourly_wage_cents": 1200 },
       "janitor": { "hire_cents": 18000, "hourly_wage_cents": 900 },
-      "mechanic": { "hire_cents": 22000, "hourly_wage_cents": 1000 }
+      "mechanic": { "hire_cents": 22000, "hourly_wage_cents": 1000 },
+      "vendor": { "hourly_wage_cents": 600 }
     },
     "upkeep": {
       "habitat_hourly_cents": 250
@@ -396,6 +397,13 @@
       "footprint": {
         "width": 1,
         "height": 1
+      },
+      "stand": {
+        "service_minutes": 4,
+        "queue_capacity": 6,
+        "max_vendors": 3,
+        "stock_capacity": 40,
+        "stock_unit_cost_cents": 150
       }
     },
     {
@@ -411,6 +419,13 @@
       "footprint": {
         "width": 1,
         "height": 1
+      },
+      "stand": {
+        "service_minutes": 3,
+        "queue_capacity": 6,
+        "max_vendors": 3,
+        "stock_capacity": 50,
+        "stock_unit_cost_cents": 100
       }
     },
     {

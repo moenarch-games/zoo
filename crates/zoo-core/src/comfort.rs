@@ -60,6 +60,10 @@ pub(crate) const TOILET_CLOSED_CLEANLINESS: u32 = 10;
 pub(crate) enum Need {
     Toilet,
     Rest,
+    /// Met by a food stand (#102).
+    Food,
+    /// Met by a drink stand (#102).
+    Drink,
 }
 
 impl Need {
@@ -67,6 +71,8 @@ impl Need {
         match self {
             Self::Toilet => ConcessionKind::Toilet,
             Self::Rest => ConcessionKind::Bench,
+            Self::Food => ConcessionKind::Food,
+            Self::Drink => ConcessionKind::Drink,
         }
     }
 }
@@ -166,6 +172,12 @@ fn needs(guest: &Guest) -> Vec<Need> {
     if guest.bladder >= TOILET_SEEK_BLADDER {
         needs.push(Need::Toilet);
     }
+    if guest.thirst >= super::stand::DRINK_SEEK_THIRST {
+        needs.push(Need::Drink);
+    }
+    if guest.hunger >= super::stand::FOOD_SEEK_HUNGER {
+        needs.push(Need::Food);
+    }
     if guest.energy <= REST_SEEK_ENERGY {
         needs.push(Need::Rest);
     }
@@ -220,9 +232,12 @@ impl GameState {
         best.map(|((full, ..), index, route)| (index, route, !full))
     }
 
-    /// Walking guests whose need crossed its threshold set off for a facility (#101).
+    /// Walking guests whose need crossed its threshold set off for a facility (#101) or a
+    /// stand (#102), most urgent need first. A need no stand could meet is a lost sale for the
+    /// nearest stand that turned the guest away.
     pub(crate) fn choose_comfort_visits(&mut self) {
         let now = self.absolute_minute();
+        let mut heading: Option<Vec<u32>> = None;
         for index in 0..self.guests.len() {
             let guest = &self.guests[index];
             let resume = match guest.state {
@@ -238,14 +253,33 @@ impl GameState {
                 continue;
             };
             let start = guest_position(guest);
-            let choice = wanted.iter().find_map(|need| {
-                self.pick_facility(*need, start)
-                    .map(|(facility, route, free)| (*need, facility, route, free))
-            });
-            let Some((need, facility, route, free)) = choice else {
+            let cash = guest.cash_cents;
+            let mut choice = None;
+            for need in wanted.iter().copied() {
+                if need.stand().is_some() {
+                    let counts = heading.get_or_insert_with(|| self.stand_heading_counts());
+                    match self.pick_stand(need, start, cash, counts) {
+                        Ok((stand, route)) => {
+                            counts[stand] += 1;
+                            self.start_stand_visit(index, stand, need, route, resume);
+                            choice = Some(None);
+                            break;
+                        }
+                        Err(refused) => self.refuse_stand(refused),
+                    }
+                } else if let Some((facility, route, free)) = self.pick_facility(need, start) {
+                    choice = Some(Some((need, facility, route, free)));
+                    break;
+                }
+            }
+            let Some(choice) = choice else {
                 let guest = &mut self.guests[index];
                 guest.unmet_need = Some(first);
                 guest.next_need_check = now + NEED_RETRY_MINUTES;
+                continue;
+            };
+            // A stand visit has already begun.
+            let Some((need, facility, route, free)) = choice else {
                 continue;
             };
             let guest_id = self.guests[index].id;
@@ -272,6 +306,10 @@ impl GameState {
             self.resume_walk(index, Resume::Exit);
             return;
         };
+        if visit.need.stand().is_some() {
+            self.arrive_at_stand(index);
+            return;
+        }
         let Some(facility) = self.facility_index(visit.facility_id) else {
             self.end_visit(index, true);
             return;
@@ -310,7 +348,8 @@ impl GameState {
     pub(crate) fn advance_comfort_visits(&mut self) {
         for index in 0..self.guests.len() {
             let guest = &self.guests[index];
-            let Some(visit) = guest.visit else {
+            // Stands run their own queues and windows (#102).
+            let Some(visit) = guest.visit.filter(|visit| visit.need.stand().is_none()) else {
                 continue;
             };
             match guest.state {
@@ -355,6 +394,7 @@ impl GameState {
                                 .min(100);
                             guest.energy >= RESTED_ENERGY || minutes >= BENCH_MAX_MINUTES
                         }
+                        Need::Food | Need::Drink => false,
                     };
                     if done {
                         self.finish_use(index);
@@ -389,6 +429,8 @@ impl GameState {
                 guest.happiness = guest.happiness.saturating_add(3).min(100);
             }
             Need::Rest => guest.happiness = guest.happiness.saturating_add(2).min(100),
+            // Stand sales complete in `stand::complete_sale`.
+            Need::Food | Need::Drink => {}
         }
         if guest.unmet_need == Some(visit.need) {
             guest.unmet_need = None;
@@ -419,7 +461,7 @@ impl GameState {
     }
 
     /// Sends a guest back to its habitat plan, another habitat, or the exit.
-    fn resume_walk(&mut self, index: usize, resume: Resume) {
+    pub(crate) fn resume_walk(&mut self, index: usize, resume: Resume) {
         let occupancy = self.viewing_occupancy();
         let guest = &self.guests[index];
         let start = guest_position(guest);
@@ -467,7 +509,13 @@ impl GameState {
         let route = guest
             .visit
             .and_then(|visit| self.facility_index(visit.facility_id))
-            .filter(|facility| self.facility_accepting(*facility))
+            .filter(|facility| {
+                if self.concessions[*facility].stand.is_some() {
+                    self.stand_availability(*facility).takes_guests()
+                } else {
+                    self.facility_accepting(*facility)
+                }
+            })
             .and_then(|facility| {
                 let goals = self.concession_customer_tiles(self.concessions[facility].id);
                 self.path_to_any(Mover::Guest, start, &goals)
@@ -482,11 +530,12 @@ impl GameState {
         }
     }
 
-    /// Frees whatever slot a guest holds.
+    /// Frees whatever slot or stand queue place a guest holds.
     pub(crate) fn release_facility_slot(&mut self, guest_id: u32) {
         for stand in &mut self.concessions {
             stand.slots.retain(|holder| *holder != guest_id);
         }
+        self.release_stand_queue(guest_id);
     }
 
     /// Whether any guest is walking to, queueing at or using a facility.
@@ -755,6 +804,10 @@ impl GameState {
         let guests: HashSet<u32> = self.guests.iter().map(|guest| guest.id).collect();
         let mut held = HashSet::new();
         for stand in &self.concessions {
+            // A stand's windows are checked with its queue (#102, `stand_violation`).
+            if stand.kind.sells() {
+                continue;
+            }
             let comfort = matches!(stand.kind, ConcessionKind::Toilet | ConcessionKind::Bench);
             if !comfort && !stand.slots.is_empty() {
                 return Some(format!("facility {} has slots it cannot offer", stand.id));

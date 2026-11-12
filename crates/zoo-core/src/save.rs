@@ -56,6 +56,7 @@ const MIGRATIONS: &[Migration] = &[
     v9_classify_paths,
     v10_add_land,
     v11_add_guest_comfort,
+    v12_add_staffed_stands,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -166,6 +167,142 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 13 (#102) staffs the food and drink stands. Every stand definition in the embedded
+/// catalog (and every built stand's owned copy) gains the built-in service model of its
+/// service, and the catalog's staff costs gain the vendor wage. Built stands open with one
+/// vendor, full stock, automatic restocking, no queue and a ledger that starts from their
+/// recorded sales and revenue; guests arrive at their spending budget; ledgers gain the vendor
+/// wage and stock lines.
+fn v12_add_staffed_stands(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let service_of = |service: &str| {
+        built_in
+            .facilities
+            .iter()
+            .find(|facility| facility.service == service)
+            .and_then(|facility| facility.stand)
+    };
+    let add_service = |facility: &mut Value| -> Result<Option<content::StandService>, SaveError> {
+        let facility = facility
+            .as_object_mut()
+            .ok_or_else(|| invalid("facility definition is not an object"))?;
+        let service = facility
+            .get("service")
+            .and_then(Value::as_str)
+            .and_then(service_of);
+        if let Some(service) = service {
+            facility.insert(
+                "stand".to_owned(),
+                serde_json::to_value(service).expect("stand service serialization"),
+            );
+        }
+        Ok(service)
+    };
+    let content = value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content: missing or not an object"))?;
+    for facility in content
+        .get_mut("facilities")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("content/facilities: missing or not an array"))?
+    {
+        add_service(facility)?;
+    }
+    content
+        .get_mut("balance")
+        .and_then(|balance| balance.get_mut("staff"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content/balance/staff: missing or not an object"))?
+        .insert(
+            "vendor".to_owned(),
+            serde_json::to_value(built_in.balance.staff.vendor).expect("vendor serialization"),
+        );
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    for stand in park
+        .get_mut("concessions")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/concessions: missing or not an array"))?
+    {
+        let service = add_service(
+            stand
+                .get_mut("definition")
+                .ok_or_else(|| invalid("park/concessions: entry has no definition"))?,
+        )?;
+        let stand = stand
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/concessions: entry is not an object"))?;
+        let state = match service {
+            None => Value::Null,
+            Some(service) => {
+                let number = |key: &str| stand.get(key).and_then(Value::as_i64).unwrap_or(0);
+                let price = stand["definition"]["price_cents"].as_i64().unwrap_or(0);
+                let ledger = |served: i64, revenue: i64| {
+                    json!({
+                        "served": served,
+                        "revenue_cents": revenue,
+                        "wait_minutes": 0,
+                        "stock_cost_cents": 0,
+                        "wage_cents": 0,
+                        "upkeep_cents": 0,
+                        "repair_cents": 0,
+                        "lost": {
+                            "queue_full": 0,
+                            "gave_up": 0,
+                            "unaffordable": 0,
+                            "closed": 0,
+                            "unstaffed": 0,
+                            "out_of_stock": 0,
+                            "broken_down": 0,
+                        },
+                    })
+                };
+                let today = number("sales_today");
+                json!({
+                    "open": true,
+                    "vendors": 1,
+                    "stock": service.stock_capacity,
+                    "auto_restock": true,
+                    "delivery_due": null,
+                    "queue": [],
+                    "today": ledger(today, today.saturating_mul(price)),
+                    "total": ledger(number("total_sales"), number("total_revenue_cents")),
+                })
+            }
+        };
+        stand.insert("stand".to_owned(), state);
+    }
+    for guest in park
+        .get_mut("guests")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/guests: missing or not an array"))?
+    {
+        let guest = guest
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/guests: entry is not an object"))?;
+        let id = guest
+            .get("id")
+            .and_then(Value::as_u64)
+            .and_then(|id| u32::try_from(id).ok())
+            .ok_or_else(|| invalid("park/guests: entry has no id"))?;
+        guest.insert(
+            "cash_cents".to_owned(),
+            json!(super::stand::guest_budget(id)),
+        );
+    }
+    for key in ["finance_today", "finance_previous"] {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            ledger.insert("vendor_wages_expense_cents".to_owned(), json!(0));
+            ledger.insert("stand_stock_expense_cents".to_owned(), json!(0));
+        }
+    }
     Ok(value)
 }
 

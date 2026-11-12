@@ -2,7 +2,7 @@
   "format": "zoo-scenario",
   "id": "recovery",
   "title": "Neglected corner zoo",
-  "summary": "A tiny zoo in trouble: the capybaras are thirsty in a dirty habitat, the feed store is empty and the food stand is breaking down. Cash is tight.",
+  "summary": "A tiny zoo in trouble: the capybaras are thirsty in a dirty habitat, the feed store is empty and the food stand is breaking down with nobody behind the counter. Cash is tight.",
   "seed": 4,
   "map": { "width": 16, "height": 12 },
   "entrance": { "x": 0, "y": 6 },
@@ -27,6 +27,7 @@
       "welfare": 30
     },
     { "kind": "concession_condition", "concession": 1, "condition": 15 },
+    { "kind": "stand_vendors", "concession": 1, "vendors": 0 },
     { "kind": "feed_crates", "crates": 0 }
   ],
   "tutorial": "none",

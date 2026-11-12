@@ -78,7 +78,7 @@ fn failed_sale_does_not_credit_money_restore_guest_or_create_side_effects() {
         guest.x = 1;
         guest.y = ENTRANCE_Y;
         guest.state = GuestState::WalkingToHabitat;
-        guest.thirst = DRINK_BUY_THRESHOLD;
+        guest.thirst = stand::IMPULSE_NEED;
         match boundary {
             0 => state.concessions[0].total_revenue_cents = content::MAX_CENTS,
             1 => state.concessions[0].sales_today = u32::MAX,
@@ -86,24 +86,42 @@ fn failed_sale_does_not_credit_money_restore_guest_or_create_side_effects() {
             3 => state.cash_cents = content::MAX_CENTS,
             _ => state.finance_today.admissions_income_cents = content::MAX_CENTS / 2,
         }
+        // The guest joins the queue and is served; the sale is due at the end of service.
+        let serve = |state: &mut GameState| {
+            state.join_passing_stands();
+            for _ in 0..8 {
+                state.advance_stands();
+            }
+        };
         let mut positive = state.clone();
         positive.cash_cents = 100_000;
         positive.finance_today = FinanceLedger::default();
         positive.concessions[0].total_revenue_cents = 0;
         positive.concessions[0].sales_today = 0;
         positive.concessions[0].total_sales = 0;
-        positive.serve_concessions();
+        serve(&mut positive);
         assert!(positive.guests[0].bought_drink);
         assert_eq!(positive.concessions[0].total_sales, 1);
-        let before = snapshot(&state);
-        state.serve_concessions();
-        assert_eq!(
-            snapshot(&state),
-            before,
-            "Sale boundary {boundary} mutated park"
-        );
+        let money = |state: &GameState| {
+            let stand = &state.concessions[0];
+            format!(
+                "{} {:?} {} {} {} {:?} {} {}",
+                state.cash_cents,
+                state.finance_today,
+                stand.total_revenue_cents,
+                stand.sales_today,
+                stand.total_sales,
+                stand.stand.as_ref().map(|ops| (ops.stock, ops.total.served)),
+                state.guests[0].cash_cents,
+                state.guests[0].thirst,
+            )
+        };
+        let before = money(&state);
+        serve(&mut state);
+        assert_eq!(money(&state), before, "Sale boundary {boundary} mutated park");
         assert!(!state.guests[0].bought_drink);
-        assert_eq!(state.guests[0].thirst, DRINK_BUY_THRESHOLD);
+        assert!(state.guests[0].visit.is_none(), "the lost sale ended the visit");
+        assert!(state.litter.is_empty(), "no wrapper without a sale");
     }
 }
 

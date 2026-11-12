@@ -246,7 +246,33 @@ pub(crate) struct Facility {
     /// the litter a bin takes before it must be emptied. Stands and landmarks declare 0.
     pub capacity: u32,
     pub footprint: Footprint,
+    /// How a food or drink stand serves guests (#102); required for stands, absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stand: Option<StandService>,
 }
+
+/// A food or drink stand's service model (#102): bounded service time, a finite queue, a few
+/// vendor windows and a finite stock that one delivery refills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StandService {
+    /// Minutes one vendor needs to serve one guest at full condition.
+    pub service_minutes: u32,
+    /// Guests who may wait at the counter at once.
+    pub queue_capacity: u32,
+    /// Vendor windows: at most this many guests are served at once.
+    pub max_vendors: u32,
+    /// Portions the stand holds when fully stocked.
+    pub stock_capacity: u32,
+    /// What one delivered portion costs.
+    pub stock_unit_cost_cents: i64,
+}
+
+/// Upper bounds of a stand's service model (#102).
+pub(crate) const MAX_SERVICE_MINUTES: u32 = 10;
+pub(crate) const MAX_QUEUE_CAPACITY: u32 = 12;
+pub(crate) const MAX_VENDORS: u32 = 4;
+pub(crate) const MAX_STOCK_CAPACITY: u32 = 200;
 
 /// Park-wide prices, operating costs and wages. Species and facility costs live on their
 /// own definitions; everything here applies to the whole park.
@@ -307,6 +333,15 @@ pub(crate) struct StaffCosts {
     pub keeper: StaffRole,
     pub janitor: StaffRole,
     pub mechanic: StaffRole,
+    /// Stand vendors (#102) are posted to a stand rather than hired at the depot, so they only
+    /// cost wages.
+    pub vendor: VendorRole,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VendorRole {
+    pub hourly_wage_cents: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -373,6 +408,10 @@ impl Balance {
             (
                 "staff/mechanic/hourly_wage_cents",
                 staff.mechanic.hourly_wage_cents,
+            ),
+            (
+                "staff/vendor/hourly_wage_cents",
+                staff.vendor.hourly_wage_cents,
             ),
             ("upkeep/habitat_hourly_cents", upkeep.habitat_hourly_cents),
         ] {
@@ -718,6 +757,41 @@ impl Catalog {
                 return Err(format!(
                     "{prefix}/price_cents: guest-comfort facilities are free to use"
                 ));
+            }
+            let sells = matches!(facility.service.as_str(), "food" | "drink");
+            match (&facility.stand, sells) {
+                (None, true) => {
+                    return Err(format!(
+                        "{prefix}/stand: a {} stand needs its service model",
+                        facility.service
+                    ));
+                }
+                (Some(_), false) => {
+                    return Err(format!(
+                        "{prefix}/stand: only food and drink stands have a service model"
+                    ));
+                }
+                (Some(stand), true) => {
+                    for (field, value, max) in [
+                        (
+                            "service_minutes",
+                            stand.service_minutes,
+                            MAX_SERVICE_MINUTES,
+                        ),
+                        ("queue_capacity", stand.queue_capacity, MAX_QUEUE_CAPACITY),
+                        ("max_vendors", stand.max_vendors, MAX_VENDORS),
+                        ("stock_capacity", stand.stock_capacity, MAX_STOCK_CAPACITY),
+                    ] {
+                        if !(1..=max).contains(&value) {
+                            return Err(format!("{prefix}/stand/{field}: expected 1..={max}"));
+                        }
+                    }
+                    money(
+                        stand.stock_unit_cost_cents,
+                        &format!("{prefix}/stand/stock_unit_cost_cents"),
+                    )?;
+                }
+                (None, false) => {}
             }
         }
         for fixed in ["entrance", "animal_care_depot"] {

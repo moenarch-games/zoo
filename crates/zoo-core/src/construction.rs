@@ -23,7 +23,7 @@
 use super::{
     ActionResult, Concession, ConcessionKind, ExpenseCategory, FenceSegment, GameState, Habitat,
     HabitatOrientation, JanitorTarget, Mover, PathAccess, PlacementEvaluation, Position, TileKind,
-    content, content::FenceType, gate::gate_access_message, normalized_rect, shape,
+    content, content::FenceType, gate::gate_access_message, normalized_rect, shape, stand,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -797,7 +797,9 @@ impl GameState {
             .expect("planned concession definition");
         let kind = ConcessionKind::parse(&definition.service).expect("planned concession kind");
         let label = definition.label.clone();
+        let stand = definition.stand.as_ref().map(stand::StandState::new);
         self.restore_concession(Concession {
+            stand,
             id,
             x,
             y,
@@ -1431,6 +1433,13 @@ impl GameState {
                 };
                 if stand.total_sales > 0 || stand.total_uses > 0 || self.facility_in_use(*id) {
                     return used(format!("stand #{id} has served guests"));
+                }
+                if stand
+                    .stand
+                    .as_ref()
+                    .is_some_and(|ops| ops.total.stock_cost_cents > 0 || ops.delivery_due.is_some())
+                {
+                    return used(format!("stand #{id} has taken stock deliveries"));
                 }
                 if self
                     .maintenance

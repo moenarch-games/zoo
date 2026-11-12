@@ -36,6 +36,12 @@ pub(crate) enum AlertCode {
     /// Guests who need a toilet or a seat and found none they could use (#101).
     ToiletDemandUnmet,
     RestDemandUnmet,
+    /// An open stand with no vendor posted (#102).
+    StandUnstaffed,
+    /// An open stand sold out with no delivery on order (#102).
+    StandOutOfStock,
+    /// A stand whose queue is full: guests are being turned away (#102).
+    StandQueueFull,
     ViewpointCrowded,
     LitterBacklog,
     KeeperNeedsZone,
@@ -546,6 +552,52 @@ impl GameState {
                     ),
                     AlertAction::BuildPath,
                 );
+            }
+            // Staffed stands (#102): the problems the player fixes at the stand itself.
+            if let (Some(ops), Some(service)) = (&stand.stand, &stand.definition.stand)
+                && ops.open
+                && self.concession_service_state(stand) != "failed"
+            {
+                if ops.vendors == 0 {
+                    raise(
+                        AlertCode::StandUnstaffed,
+                        Severity::Warning,
+                        subject,
+                        focus,
+                        format!(
+                            "{label} #{} is open but has no vendor, so it sells nothing. Post a \
+                             vendor at the stand.",
+                            stand.id
+                        ),
+                        AlertAction::InspectFacility,
+                    );
+                } else if ops.stock == 0 && ops.delivery_due.is_none() {
+                    raise(
+                        AlertCode::StandOutOfStock,
+                        Severity::Warning,
+                        subject,
+                        focus,
+                        format!(
+                            "{label} #{} has sold out and no delivery is on order. Restock it \
+                             or turn automatic restocking on.",
+                            stand.id
+                        ),
+                        AlertAction::InspectFacility,
+                    );
+                } else if ops.queue.len() as u32 >= service.queue_capacity {
+                    raise(
+                        AlertCode::StandQueueFull,
+                        Severity::Notice,
+                        subject,
+                        focus,
+                        format!(
+                            "{label} #{}'s queue is full and guests are turned away. Post \
+                             another vendor or build a second stand.",
+                            stand.id
+                        ),
+                        AlertAction::InspectFacility,
+                    );
+                }
             }
         }
 

@@ -13,6 +13,7 @@ mod save;
 mod scenario;
 mod session;
 mod shape;
+mod stand;
 mod tutorial;
 mod zone;
 
@@ -52,8 +53,6 @@ const FOOD_STAND_BUILD_COST: i64 = 18_000;
 const FOOD_PRICE: i64 = 500;
 #[cfg(test)]
 const DRINK_PRICE: i64 = 350;
-const FOOD_BUY_THRESHOLD: u32 = 20;
-const DRINK_BUY_THRESHOLD: u32 = 20;
 #[cfg(test)]
 const ANIMAL_CARE_DEPOT_X: u32 = 2;
 #[cfg(test)]
@@ -224,6 +223,9 @@ struct Concession {
     fill: u32,
     /// Completed toilet visits, bench rests and bin deposits.
     total_uses: u32,
+    /// A food or drink stand's vendors, stock, queue and ledger (#102); `None` for comfort
+    /// facilities. Its `slots` are the guests being served at its windows.
+    stand: Option<stand::StandState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -313,6 +315,10 @@ enum ExpenseCategory {
     MechanicWages,
     /// Buying park land (#99).
     Land,
+    /// Stand vendors' hourly wages (#102).
+    VendorWages,
+    /// Stock delivered to stands (#102).
+    StandStock,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,6 +340,9 @@ struct FinanceLedger {
     mechanic_wages_expense_cents: i64,
     /// Parcels bought (#99; save schema 11).
     land_expense_cents: i64,
+    /// Stand vendors' wages and stock deliveries (#102; save schema 13).
+    vendor_wages_expense_cents: i64,
+    stand_stock_expense_cents: i64,
 }
 
 impl FinanceLedger {
@@ -376,6 +385,8 @@ impl FinanceLedger {
             ExpenseCategory::JanitorWages => self.janitor_wages_expense_cents += cents,
             ExpenseCategory::MechanicWages => self.mechanic_wages_expense_cents += cents,
             ExpenseCategory::Land => self.land_expense_cents += cents,
+            ExpenseCategory::VendorWages => self.vendor_wages_expense_cents += cents,
+            ExpenseCategory::StandStock => self.stand_stock_expense_cents += cents,
         }
         true
     }
@@ -398,6 +409,8 @@ impl FinanceLedger {
             + self.janitor_wages_expense_cents
             + self.mechanic_wages_expense_cents
             + self.land_expense_cents
+            + self.vendor_wages_expense_cents
+            + self.stand_stock_expense_cents
     }
 
     fn profit_cents(self) -> i64 {
@@ -717,6 +730,8 @@ struct Guest {
     unmet_need: Option<comfort::Need>,
     /// The first absolute minute the guest looks for a facility again after failing.
     next_need_check: u64,
+    /// Spending money left for stands (#102); never negative.
+    cash_cents: i64,
 }
 
 impl Guest {
@@ -1229,6 +1244,9 @@ impl GameState {
                 self.construction.clear();
                 for stand in &mut self.concessions {
                     stand.sales_today = 0;
+                    if let Some(ops) = stand.stand.as_mut() {
+                        ops.today = stand::StandLedger::default();
+                    }
                 }
             }
 
@@ -1267,6 +1285,7 @@ impl GameState {
             self.advance_animal_welfare();
             self.advance_guest_needs();
             self.advance_comfort_visits();
+            self.advance_stands();
 
             if self.movement_accumulator >= 3 {
                 self.movement_accumulator = 0;
@@ -1372,6 +1391,7 @@ impl GameState {
         })
         .or_else(|| self.work_zone_violation())
         .or_else(|| self.comfort_violation())
+        .or_else(|| self.stand_violation())
     }
 
     fn advance_habitat_care(&mut self) {
@@ -1455,6 +1475,7 @@ impl GameState {
             visit: None,
             unmet_need: None,
             next_need_check: 0,
+            cash_cents: stand::guest_budget(self.next_guest_id),
         });
         self.emit("guest_arrived", Some(self.next_guest_id));
         self.next_guest_id += 1;
@@ -1687,122 +1708,7 @@ impl GameState {
             }
             self.guests.retain(|guest| !leave_ids.contains(&guest.id));
         }
-        self.serve_concessions();
-    }
-
-    fn serve_concessions(&mut self) {
-        for guest_index in 0..self.guests.len() {
-            let (position, state, hunger, thirst, bought_food, bought_drink) = {
-                let guest = &self.guests[guest_index];
-                (
-                    Position {
-                        x: guest.x,
-                        y: guest.y,
-                    },
-                    guest.state,
-                    guest.hunger,
-                    guest.thirst,
-                    guest.bought_food,
-                    guest.bought_drink,
-                )
-            };
-
-            if !matches!(
-                state,
-                GuestState::WalkingToHabitat | GuestState::WalkingToExit
-            ) {
-                continue;
-            }
-
-            let adjacent_ids: Vec<u32> = self
-                .neighbors(position)
-                .into_iter()
-                .filter_map(|neighbor| match self.tile(neighbor.x, neighbor.y) {
-                    Some(TileKind::Concession(id)) => Some(id),
-                    _ => None,
-                })
-                .collect();
-            if adjacent_ids.is_empty() {
-                continue;
-            }
-
-            let drink_choice = (!bought_drink && thirst >= DRINK_BUY_THRESHOLD)
-                .then(|| {
-                    adjacent_ids.iter().find_map(|id| {
-                        self.concessions.iter().position(|stand| {
-                            stand.id == *id
-                                && stand.kind == ConcessionKind::Drink
-                                && stand.condition > MAINTENANCE_FAILURE_THRESHOLD
-                        })
-                    })
-                })
-                .flatten();
-            let food_choice = (!bought_food && hunger >= FOOD_BUY_THRESHOLD)
-                .then(|| {
-                    adjacent_ids.iter().find_map(|id| {
-                        self.concessions.iter().position(|stand| {
-                            stand.id == *id
-                                && stand.kind == ConcessionKind::Food
-                                && stand.condition > MAINTENANCE_FAILURE_THRESHOLD
-                        })
-                    })
-                })
-                .flatten();
-            let Some(concession_index) = drink_choice.or(food_choice) else {
-                continue;
-            };
-
-            let kind = self.concessions[concession_index].kind;
-            let degraded =
-                self.concessions[concession_index].condition <= MAINTENANCE_SERVICE_THRESHOLD;
-            let stand_id = self.concessions[concession_index].id;
-            let price = self.concessions[concession_index].definition.price_cents;
-            let stand = &self.concessions[concession_index];
-            let Some(revenue) = stand
-                .total_revenue_cents
-                .checked_add(price)
-                .filter(|total| *total <= content::MAX_CENTS)
-            else {
-                continue;
-            };
-            if stand.sales_today == u32::MAX
-                || stand.total_sales == u32::MAX
-                || !self.earn(price, IncomeCategory::Concessions)
-            {
-                continue;
-            }
-            {
-                let stand = &mut self.concessions[concession_index];
-                stand.sales_today += 1;
-                stand.total_sales += 1;
-                stand.total_revenue_cents = revenue;
-                stand.condition = stand.condition.saturating_sub(MAINTENANCE_WEAR_PER_SALE);
-            }
-            self.ensure_maintenance_task(stand_id);
-            {
-                let guest = &mut self.guests[guest_index];
-                let restore = if degraded { 35 } else { 55 };
-                match kind {
-                    ConcessionKind::Food => {
-                        guest.hunger = guest.hunger.saturating_sub(restore);
-                        guest.bought_food = true;
-                    }
-                    ConcessionKind::Drink => {
-                        guest.thirst = guest.thirst.saturating_sub(restore);
-                        guest.bought_drink = true;
-                        guest.bladder = guest
-                            .bladder
-                            .saturating_add(comfort::DRINK_BLADDER)
-                            .min(100);
-                    }
-                    ConcessionKind::Toilet | ConcessionKind::Bench | ConcessionKind::Bin => {}
-                }
-                let happiness = if degraded { 1 } else { 3 };
-                guest.happiness = guest.happiness.saturating_add(happiness).min(100);
-                guest.value_perception = guest.value_perception.saturating_add(2).min(100);
-            }
-            self.dispose_litter(position);
-        }
+        self.join_passing_stands();
     }
 
     fn advance_viewing(&mut self) {
@@ -2339,6 +2245,10 @@ impl GameState {
             return false;
         }
         self.concessions[concession_index].condition = 100;
+        let repair = self.catalog.balance.maintenance_repair_cents;
+        if let Some(ops) = self.concessions[concession_index].stand.as_mut() {
+            ops.record_expense(stand::StandExpense::Repair, repair);
+        }
         self.maintenance.retain(|task| task.id != task_id);
         self.mechanics[mechanic_index].target_maintenance_id = None;
         self.mechanics[mechanic_index].repairs_completed = self.mechanics[mechanic_index]
@@ -2419,11 +2329,16 @@ impl GameState {
             self.mechanics.len(),
             balance.staff.mechanic.hourly_wage_cents,
         );
+        let stand_wages = self.vendor_wages();
+        let vendor_wages = stand_wages
+            .iter()
+            .fold(0_i64, |total, wages| total.saturating_add(*wages));
         let charges = [
             (ExpenseCategory::ParkUpkeep, park_upkeep),
             (ExpenseCategory::KeeperWages, keeper_wages),
             (ExpenseCategory::JanitorWages, janitor_wages),
             (ExpenseCategory::MechanicWages, mechanic_wages),
+            (ExpenseCategory::VendorWages, vendor_wages),
         ];
         let mut ledger = self.finance_today;
         let mut cash = self.cash_cents;
@@ -2441,6 +2356,14 @@ impl GameState {
         }
         self.cash_cents = cash;
         self.finance_today = ledger;
+        // Each stand's own ledger carries the share of the charge it caused (#102).
+        for (stand, wages) in self.concessions.iter_mut().zip(stand_wages) {
+            let upkeep = stand.definition.hourly_upkeep_cents;
+            if let Some(ops) = stand.stand.as_mut() {
+                ops.record_expense(stand::StandExpense::Wages, wages);
+                ops.record_expense(stand::StandExpense::Upkeep, upkeep);
+            }
+        }
     }
 
     /// Park rating derived from the current state, so every command and tick reports a
@@ -2751,11 +2674,21 @@ impl GameState {
                 }
                 (_, comfort::Need::Toilet) => "I'm heading to the toilets.",
                 (_, comfort::Need::Rest) => "I'll rest on that bench.",
+                (GuestState::UsingFacility, comfort::Need::Food | comfort::Need::Drink) => {
+                    "Being served now."
+                }
+                (GuestState::WaitingForFacility, comfort::Need::Food | comfort::Need::Drink) => {
+                    "Queueing at the stand."
+                }
+                (_, comfort::Need::Food) => "I'm off to get something to eat.",
+                (_, comfort::Need::Drink) => "I'm off to get a drink.",
             };
         }
         match guest.unmet_need {
             Some(comfort::Need::Toilet) => return "I really need a toilet!",
             Some(comfort::Need::Rest) => return "I wish there were somewhere to sit.",
+            Some(comfort::Need::Food) => return "I couldn't get anything to eat.",
+            Some(comfort::Need::Drink) => return "I couldn't get a drink.",
             None => {}
         }
         if guest.thirst >= 60 {
@@ -3383,6 +3316,7 @@ impl GameState {
             })
             .collect();
 
+        let heading = self.stand_heading_counts();
         let concessions = self
             .concessions
             .iter()
@@ -3394,6 +3328,7 @@ impl GameState {
             .map(
                 |(index, stand, service_points, active_service_point)| ConcessionView {
                     comfort: self.comfort_view(index),
+                    stand: self.stand_view(index, &heading),
                     customer_tiles: self.concession_customer_tiles(stand.id),
                     service_points,
                     active_service_point,
@@ -3436,6 +3371,7 @@ impl GameState {
                     facility_id: guest.visit.map(|visit| visit.facility_id),
                     unmet_need: guest.unmet_need,
                 },
+                cash_cents: guest.cash_cents,
             })
             .collect();
 
@@ -3580,6 +3516,8 @@ struct ConcessionView {
     active_service_point: Option<Position>,
     /// Occupancy, cleanliness, fill and janitor service of a toilet, bench or bin (#101).
     comfort: Option<comfort::ComfortView>,
+    /// Vendors, queue, stock and operating figures of a food or drink stand (#102).
+    stand: Option<stand::StandView>,
 }
 
 #[derive(Serialize)]
@@ -3792,6 +3730,8 @@ struct GuestView {
     thought: String,
     /// Toilet need, current facility and unmet need (#101).
     comfort: comfort::GuestComfortView,
+    /// Spending money left for stands (#102).
+    cash_cents: i64,
 }
 
 #[derive(Serialize)]
@@ -4064,6 +4004,11 @@ impl ZooGame {
                 .map(str::to_owned)
                 .ok_or_else(|| format!("{kind}: missing text argument {name}"))
         };
+        let flag = |name: &str| -> Result<bool, String> {
+            args[name]
+                .as_bool()
+                .ok_or_else(|| format!("{kind}: missing boolean argument {name}"))
+        };
         let points = || -> Result<Vec<u32>, String> {
             args["points"]
                 .as_array()
@@ -4100,6 +4045,12 @@ impl ZooGame {
             "undo_construction" => self.undo_construction(),
             "redo_construction" => self.redo_construction(),
             "place_concession" => self.place_concession(number("x")?, number("y")?, text("kind")?),
+            "set_stand_open" => self.set_stand_open(number("stand_id")?, flag("open")?),
+            "set_stand_vendors" => self.set_stand_vendors(number("stand_id")?, number("vendors")?),
+            "restock_stand" => self.restock_stand(number("stand_id")?),
+            "set_stand_auto_restock" => {
+                self.set_stand_auto_restock(number("stand_id")?, flag("auto")?)
+            }
             "place_habitat_rect" => {
                 self.place_habitat_rect(number("ax")?, number("ay")?, number("bx")?, number("by")?)
             }
@@ -4439,6 +4390,36 @@ impl ZooGame {
         let args = serde_json::json!({ "x": x, "y": y, "kind": kind });
         self.command("place_concession", args, |state| {
             state.place_concession(x, y, &kind)
+        })
+    }
+
+    /// Opens or closes a food or drink stand (#102).
+    pub fn set_stand_open(&mut self, stand_id: u32, open: bool) -> String {
+        let args = serde_json::json!({ "stand_id": stand_id, "open": open });
+        self.command("set_stand_open", args, |state| {
+            state.set_stand_open(stand_id, open)
+        })
+    }
+
+    /// Posts 0 to the stand's maximum vendors at a stand (#102).
+    pub fn set_stand_vendors(&mut self, stand_id: u32, vendors: u32) -> String {
+        let args = serde_json::json!({ "stand_id": stand_id, "vendors": vendors });
+        self.command("set_stand_vendors", args, |state| {
+            state.set_stand_vendors(stand_id, vendors)
+        })
+    }
+
+    /// Orders a refill to full for a stand, paid on delivery (#102).
+    pub fn restock_stand(&mut self, stand_id: u32) -> String {
+        let args = serde_json::json!({ "stand_id": stand_id });
+        self.command("restock_stand", args, |state| state.restock_stand(stand_id))
+    }
+
+    /// Turns a stand's automatic restocking on or off (#102).
+    pub fn set_stand_auto_restock(&mut self, stand_id: u32, auto: bool) -> String {
+        let args = serde_json::json!({ "stand_id": stand_id, "auto": auto });
+        self.command("set_stand_auto_restock", args, |state| {
+            state.set_stand_auto_restock(stand_id, auto)
         })
     }
 
@@ -5160,6 +5141,7 @@ mod tests {
             visit: None,
             unmet_need: None,
             next_need_check: 0,
+            cash_cents: 0,
         };
         state.guests.push(guest.clone());
         guest.id = 2;
@@ -5385,7 +5367,7 @@ mod tests {
         assert!(state.place_concession(1, ENTRANCE_Y - 1, "drink").ok);
         assert!(state.place_concession(3, ENTRANCE_Y - 1, "food").ok);
 
-        state.tick(40);
+        state.tick(60);
 
         let drink = state
             .concessions
@@ -5405,8 +5387,8 @@ mod tests {
         );
         assert!(state.guests[0].bought_drink);
         assert!(state.guests[0].bought_food);
-        assert!(state.guests[0].hunger < FOOD_BUY_THRESHOLD);
-        assert!(state.guests[0].thirst < DRINK_BUY_THRESHOLD);
+        assert!(state.guests[0].hunger < stand::IMPULSE_NEED);
+        assert!(state.guests[0].thirst < stand::IMPULSE_NEED);
         assert!(!state.litter.is_empty());
     }
 
@@ -5720,6 +5702,7 @@ mod tests {
                 - MECHANIC_HIRE_COST
                 - MECHANIC_HOURLY_WAGE
                 - state.finance_today.park_upkeep_expense_cents
+                - state.finance_today.vendor_wages_expense_cents
         );
 
         state.concessions[0].condition = 50;
