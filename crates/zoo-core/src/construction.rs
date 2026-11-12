@@ -920,9 +920,8 @@ impl GameState {
             id,
             tiles,
             fence: self.default_fence().clone(),
-            species: None,
+            residents: Vec::new(),
             animals: Vec::new(),
-            welfare: 100,
             food: 100,
             water: 100,
             cleanliness: 100,
@@ -1009,13 +1008,16 @@ impl GameState {
 
     /// Why habitat `habitat`'s animals cannot live behind `fence`, if they cannot.
     fn fence_too_low(habitat: &Habitat, fence: &FenceType) -> Option<String> {
-        let species = habitat.species.as_ref()?;
-        (fence.height_cm < species.minimum_fence_height_cm).then(|| {
-            format!(
-                "{} needs a fence at least {} cm high; {} is {} cm",
-                species.label, species.minimum_fence_height_cm, fence.label, fence.height_cm
-            )
-        })
+        // Every resident species keeps its own minimum (#108).
+        let species = habitat
+            .residents
+            .iter()
+            .map(|resident| &resident.species)
+            .find(|species| fence.height_cm < species.minimum_fence_height_cm)?;
+        Some(format!(
+            "{} needs a fence at least {} cm high; {} is {} cm",
+            species.label, species.minimum_fence_height_cm, fence.label, fence.height_cm
+        ))
     }
 
     /// The price of rebuilding a whole habitat fence as `fence`: every segment at full price.
@@ -1254,8 +1256,10 @@ impl GameState {
                         effect: "scheduled care work cancelled".to_owned(),
                     });
                 }
-                plan.undoable =
-                    habitat.species.is_none() && !habitat.stocked() && departing == 0 && !care_work;
+                plan.undoable = habitat.residents.is_empty()
+                    && !habitat.stocked()
+                    && departing == 0
+                    && !care_work;
                 (plan, Some(Target::Habitat(id)))
             }
         }
@@ -1457,7 +1461,7 @@ impl GameState {
                 let Some(habitat) = self.habitats.iter().find(|habitat| habitat.id == *id) else {
                     return Err(format!("habitat #{id} no longer exists"));
                 };
-                if habitat.species.is_some() || habitat.stocked() {
+                if !habitat.residents.is_empty() || habitat.stocked() {
                     return used(format!("habitat #{id} has animals"));
                 }
                 if !habitat.environment.is_default() {

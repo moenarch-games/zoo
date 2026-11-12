@@ -84,7 +84,7 @@ fn park(keepers: u32, feed: bool) -> ZooGame {
 fn hungry(game: ZooGame) -> ZooGame {
     let mut save = json(&game.save_json());
     for habitat in save["park"]["habitats"].as_array_mut().unwrap() {
-        if !habitat["species"].is_null() {
+        if !habitat["residents"].as_array().unwrap().is_empty() {
             habitat["food"] = 40.into();
         }
     }

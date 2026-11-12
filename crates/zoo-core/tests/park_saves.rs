@@ -19,6 +19,7 @@ const FIXTURE_V13: &str = "tests/fixtures/save-v13.json";
 const FIXTURE_V14: &str = "tests/fixtures/save-v14.json";
 const FIXTURE_V15: &str = "tests/fixtures/save-v15.json";
 const FIXTURE_V16: &str = "tests/fixtures/save-v16.json";
+const FIXTURE_V17: &str = "tests/fixtures/save-v17.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -49,11 +50,41 @@ fn content_without_environment(content: &mut Value) {
 /// park its (empty) facility service queue.
 const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
 
+/// Removes the built-in mixed-exhibit profiles (#108) from a catalog document.
+fn content_without_compatibility(content: &mut Value) {
+    content
+        .as_object_mut()
+        .unwrap()
+        .remove("species_compatibility")
+        .unwrap();
+}
+
+/// Undoes the schema 16 → 17 migration (#108) on a document saved straight after loading:
+/// every habitat had at most one species with its welfare (a habitat without animals kept no
+/// species and the welfare a new habitat starts at), and the catalog no mixed-exhibit
+/// profiles.
+fn residents_removed(value: &mut Value) {
+    content_without_compatibility(&mut value["content"]);
+    for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
+        let habitat = habitat.as_object_mut().unwrap();
+        let residents = habitat.remove("residents").unwrap();
+        let residents = residents.as_array().unwrap();
+        assert!(residents.len() <= 1, "older parks keep one species");
+        let (species, welfare) = residents.first().map_or((Value::Null, 100.into()), |r| {
+            (r["species"].clone(), r["welfare"].clone())
+        });
+        habitat.insert("species".to_owned(), species);
+        habitat.insert("welfare".to_owned(), welfare);
+    }
+    value["schema_version"] = 16.into();
+}
+
 /// Undoes the schema 15 → 16 migration (#106) on a document saved straight after loading: the
 /// park charged its catalog's admission price, was open, had counted nobody at the gate and
 /// run no campaign; stands charged their definition price; a guest at a window had agreed that
 /// price and no other visit any; no ledger had price complaints or marketing.
 fn pricing_removed(value: &mut Value) {
+    residents_removed(value);
     let admission = value["content"]["balance"]["admission_price_cents"].clone();
     let park = value["park"].as_object_mut().unwrap();
     let pricing = park.remove("pricing").unwrap();
@@ -382,6 +413,7 @@ fn fences_from_content(value: &mut Value) {
     let mut built_in = json(&ZooGame::new().content_json());
     content_without_environment(&mut built_in);
     content_without_comfort(&mut built_in);
+    content_without_compatibility(&mut built_in);
     let wooden = built_in["fences"][0].clone();
     assert_eq!(wooden["key"], "wooden_rail");
     for habitat in value["park"]["habitats"].as_array_mut().unwrap() {
@@ -597,7 +629,7 @@ fn rejected_saves_leave_the_current_park_untouched() {
         ),
         (
             "invalid_park",
-            mutate(&|v| v["park"]["habitats"][0]["welfare"] = 101.into()),
+            mutate(&|v| v["park"]["habitats"][0]["residents"][0]["welfare"] = 101.into()),
         ),
         (
             "invalid_park",
@@ -653,7 +685,7 @@ fn the_schema_v6_fixture_migrates_counts_to_individual_animals() {
         assert_eq!(animals.len() as u64, before["animals"].as_u64().unwrap());
         for animal in animals {
             assert_eq!(animal["id"], expected_id);
-            assert_eq!(animal["species"], habitat["species"]["key"]);
+            assert_eq!(animal["species"], habitat["residents"][0]["species"]["key"]);
             assert!(
                 habitat["tiles"]
                     .as_array()
@@ -1077,18 +1109,75 @@ fn priced() -> ZooGame {
     panic!("no guest was ever served at a stand");
 }
 
+/// Schema 16 parks kept one species per habitat (#108): each becomes that habitat's only
+/// resident with exactly its welfare, the catalog gains the built-in mixed-exhibit profiles,
+/// and the park runs on.
+#[test]
+fn the_schema_v16_fixture_migrates_to_single_species_residents() {
+    let fixture = std::fs::read_to_string(FIXTURE_V16).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    assert_eq!(
+        saved["content"]["species_compatibility"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "the built-in profiles join the park's catalog"
+    );
+    residents_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+
+    let view = json(&game.snapshot_json());
+    for (habitat, before) in view["habitats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(original["park"]["habitats"].as_array().unwrap())
+    {
+        assert_eq!(habitat["welfare"], before["welfare"]);
+        let species: Vec<Value> = before["species"].get("key").into_iter().cloned().collect();
+        assert_eq!(habitat["species"], Value::Array(species));
+    }
+    game.tick(120);
+    assert_eq!(game.session_status(), "running");
+}
+
+/// The priced park with a mixed exhibit (#108): three zebras and two giraffes, each group
+/// adopted at once, share habitat #1's steel-mesh yard.
+fn mixed() -> ZooGame {
+    let mut game = priced();
+    ok(game.upgrade_fence(1, "steel_mesh".to_owned()));
+    ok(game.adopt_group(1, "zebra".to_owned(), 3));
+    ok(game.adopt_group(1, "giraffe".to_owned(), 2));
+    game
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&priced().save_json());
+        let value = json(&mixed().save_json());
         std::fs::write(
-            FIXTURE_V16,
+            FIXTURE_V17,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V16).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V17).unwrap();
     let saved = json(&fixture);
+    let residents = saved["park"]["habitats"][0]["residents"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        residents
+            .iter()
+            .map(|resident| resident["species"]["key"].clone())
+            .collect::<Vec<_>>(),
+        ["zebra", "giraffe"],
+        "the fixture holds a mixed exhibit"
+    );
     let pricing = &saved["park"]["pricing"];
     assert_eq!(
         pricing["admission_cents"], 1_500,

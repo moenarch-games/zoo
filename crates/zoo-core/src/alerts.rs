@@ -187,15 +187,22 @@ impl GameState {
 
     /// A stocked habitat whose group is too small for its species or too big for its fence.
     pub(crate) fn group_problem(&self, habitat: &Habitat) -> Option<(String, AlertAction)> {
-        let species = habitat.species.as_ref()?;
-        let minimum = species.welfare_profile().minimum_social_group.max(1);
-        if habitat.animal_count() < minimum {
+        if habitat.residents.is_empty() {
+            return None;
+        }
+        // Each species' group counts only its own kind (#108).
+        let short = habitat.residents.iter().find_map(|resident| {
+            let species = &resident.species;
+            let minimum = species.welfare_profile().minimum_social_group.max(1);
+            let count = habitat.species_count(&species.key);
+            (count < minimum).then_some((species, count, minimum))
+        });
+        if let Some((species, count, minimum)) = short {
             Some((
                 format!(
-                    "Habitat #{} has {} {}; they are social and need at least {minimum} together. \
-                     Adopt more of the same species.",
+                    "Habitat #{} has {count} {}; they are social and need at least {minimum} \
+                     together. Adopt more of the same species.",
                     habitat.id,
-                    habitat.animal_count(),
                     species.label()
                 ),
                 AlertAction::AdoptAnimals,
@@ -207,7 +214,7 @@ impl GameState {
                      larger habitat for this group.",
                     habitat.id,
                     habitat.animal_count(),
-                    species.label(),
+                    habitat.species_labels(),
                     habitat.area()
                 ),
                 AlertAction::InspectHabitat,
@@ -450,11 +457,11 @@ impl GameState {
                     AlertAction::InspectHabitat,
                 );
             }
-            if habitat.welfare < LOW_WELFARE {
+            if habitat.welfare() < LOW_WELFARE {
                 let (part, score) = Self::lowest_welfare_part(habitat);
                 raise(
                     AlertCode::LowWelfare,
-                    if habitat.welfare < CRITICAL_WELFARE {
+                    if habitat.welfare() < CRITICAL_WELFARE {
                         Severity::Critical
                     } else {
                         Severity::Warning
@@ -463,7 +470,8 @@ impl GameState {
                     center,
                     format!(
                         "Habitat #{} welfare is {}; its lowest part is {part} at {score}.",
-                        habitat.id, habitat.welfare
+                        habitat.id,
+                        habitat.welfare()
                     ),
                     AlertAction::InspectHabitat,
                 );

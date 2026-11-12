@@ -27,8 +27,35 @@ pub(crate) struct Catalog {
     /// Shelters and enrichment a habitat can be furnished with (#97).
     pub habitat_objects: Vec<HabitatObjectType>,
     pub species: Vec<Species>,
+    /// Which pairs of species may share one habitat, and why or why not (#108). A pair without
+    /// an entry is not supported: a habitat keeps one species unless a profile says otherwise.
+    #[serde(default)]
+    pub species_compatibility: Vec<SpeciesPairing>,
     pub facilities: Vec<Facility>,
     pub unlocks: Vec<Unlock>,
+}
+
+/// An authored mixed-exhibit verdict for two species (#108): a simplified game profile, not
+/// veterinary guidance. Residents of a compatible pair share the habitat's usable land,
+/// shelter, enrichment, feed, water and cleanliness; each species keeps its own social group,
+/// fence and layout requirements.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SpeciesPairing {
+    /// Two distinct species keys.
+    pub species: [String; 2],
+    pub compatible: bool,
+    /// The player-facing explanation of the verdict.
+    pub reason: String,
+}
+
+/// Whether two species may share a habitat (#108), explained.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct PairingVerdict {
+    /// The two species keys, sorted.
+    pub species: [String; 2],
+    pub compatible: bool,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -452,6 +479,39 @@ fn money(value: i64, path: &str) -> Result<(), String> {
 }
 
 impl Catalog {
+    /// The authored verdict for two distinct species; a pair without a profile is unsupported.
+    pub(crate) fn pairing(&self, a: &str, b: &str) -> PairingVerdict {
+        let label = |key: &str| {
+            self.species
+                .iter()
+                .find(|species| species.key == key)
+                .map_or_else(|| key.to_owned(), |species| species.label.clone())
+        };
+        let mut species = [a.to_owned(), b.to_owned()];
+        species.sort();
+        let authored = self.species_compatibility.iter().find(|pairing| {
+            let mut keys = pairing.species.clone();
+            keys.sort();
+            keys == species
+        });
+        match authored {
+            Some(pairing) => PairingVerdict {
+                species,
+                compatible: pairing.compatible,
+                reason: pairing.reason.clone(),
+            },
+            None => PairingVerdict {
+                reason: format!(
+                    "No mixed-exhibit profile pairs {} with {}; keep them in separate habitats",
+                    label(a),
+                    label(b)
+                ),
+                species,
+                compatible: false,
+            },
+        }
+    }
+
     pub fn parse(document: &str) -> Result<Self, String> {
         if document.len() > MAX_DOCUMENT_BYTES {
             return Err(format!("catalog: exceeds {MAX_DOCUMENT_BYTES} bytes"));
@@ -666,6 +726,29 @@ impl Catalog {
                 return Err(format!(
                     "{prefix}/asset_ref: unsupported animal presentation"
                 ));
+            }
+        }
+        if self.species_compatibility.len() > MAX_ENTRIES {
+            return Err(format!(
+                "species_compatibility: expected at most {MAX_ENTRIES} entries"
+            ));
+        }
+        let mut pairs = HashSet::new();
+        for (i, pairing) in self.species_compatibility.iter().enumerate() {
+            let prefix = format!("species_compatibility/{i}");
+            text(&pairing.reason, &format!("{prefix}/reason"))?;
+            for (s, key) in pairing.species.iter().enumerate() {
+                if !keys.contains(key) {
+                    return Err(format!("{prefix}/species/{s}: unknown species {key}"));
+                }
+            }
+            let mut pair = pairing.species.clone();
+            pair.sort();
+            if pair[0] == pair[1] {
+                return Err(format!("{prefix}/species: expected two distinct species"));
+            }
+            if !pairs.insert(pair) {
+                return Err(format!("{prefix}/species: duplicate species pair"));
             }
         }
         let mut keys = HashSet::new();

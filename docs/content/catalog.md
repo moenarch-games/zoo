@@ -24,6 +24,14 @@ schema 8 drops the catalog's old version number, schema 9 adds habitat
 environment prices, furnishings and species requirements), and saves keep the
 catalog they were made with.
 
+Mixed-species habitats (#108) are opt-in content. `species_compatibility` lists authored
+pairs: two distinct known species keys, a `compatible` verdict and the player-facing
+`reason` (unique per unordered pair). A pair without an entry is unsupported, so a habitat
+keeps one species unless a profile pairs every two of its residents as compatible. The
+built-in catalog pairs giraffes with zebras and refuses elephants with zebras; these are
+simplified game profiles, not veterinary guidance. Save schema 17 gives older embedded
+catalogs the built-in pairs whose species they define.
+
 Food and drink stands (#102) each declare a `stand` service model, which no other facility
 may have: `service_minutes` one vendor needs per sale (`1..=10`), the `queue_capacity` of
 guests who may wait at the counter (`1..=12`), `max_vendors` windows (`1..=4`), the

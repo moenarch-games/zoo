@@ -60,6 +60,7 @@ const MIGRATIONS: &[Migration] = &[
     v13_add_visitor_groups,
     v14_physical_keeper_care,
     v15_add_pricing,
+    v16_add_residents,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -170,6 +171,62 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 17 (#108) lets compatible species share a habitat. A habitat's one species and its
+/// welfare become its single resident (a habitat without animals has none), so every
+/// single-species park keeps exactly its welfare and behaviour. The embedded catalog gains the
+/// built-in mixed-exhibit profiles for the species it defines, so older parks can mix too.
+fn v16_add_residents(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let content = value
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("content: missing or not an object"))?;
+    let defined: HashSet<String> = content
+        .get("species")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("content/species: missing or not an array"))?
+        .iter()
+        .filter_map(|species| species.get("key").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let built_in = Catalog::parse(content::DEFAULT_DOCUMENT).expect("valid built-in catalog");
+    let pairings: Vec<&content::SpeciesPairing> = built_in
+        .species_compatibility
+        .iter()
+        .filter(|pairing| pairing.species.iter().all(|key| defined.contains(key)))
+        .collect();
+    content.insert(
+        "species_compatibility".to_owned(),
+        serde_json::to_value(pairings).expect("pairing serialization"),
+    );
+    for habitat in value
+        .pointer_mut("/park/habitats")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/habitats: missing or not an array"))?
+    {
+        let habitat = habitat
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/habitats: entry is not an object"))?;
+        let species = habitat
+            .remove("species")
+            .ok_or_else(|| invalid("park/habitats: entry has no species"))?;
+        let welfare = habitat
+            .remove("welfare")
+            .ok_or_else(|| invalid("park/habitats: entry has no welfare"))?;
+        let stocked = habitat
+            .get("animals")
+            .and_then(Value::as_array)
+            .is_some_and(|animals| !animals.is_empty());
+        let residents = if species.is_null() || !stocked {
+            json!([])
+        } else {
+            json!([{ "species": species, "welfare": welfare }])
+        };
+        habitat.insert("residents".to_owned(), residents);
+    }
     Ok(value)
 }
 
@@ -1156,27 +1213,11 @@ impl GameState {
                     habitat.fence.key
                 ));
             }
-            match &habitat.species {
-                Some(species) if !self.catalog.species.contains(species) => {
-                    return Err(format!(
-                        "habitat {id} houses species {} that does not match the content",
-                        species.key
-                    ));
-                }
-                None if habitat.stocked() => {
-                    return Err(format!("habitat {id} has animals but no species"));
-                }
-                _ => {}
-            }
+            // Residents (species, compatibility, welfare) are checked with the animals (#108).
             percent(
                 "habitat",
                 id,
-                &[
-                    habitat.welfare,
-                    habitat.food,
-                    habitat.water,
-                    habitat.cleanliness,
-                ],
+                &[habitat.food, habitat.water, habitat.cleanliness],
             )?;
         }
         for stand in &self.concessions {

@@ -328,10 +328,12 @@ impl GameState {
         let mut habitats: Vec<i64> = self
             .habitats
             .iter()
-            .filter(|habitat| habitat.stocked() && habitat.welfare >= MIN_ENGAGING_HABITAT_WELFARE)
+            .filter(|habitat| {
+                habitat.stocked() && habitat.welfare() >= MIN_ENGAGING_HABITAT_WELFARE
+            })
             .filter(|habitat| self.best_viewpoint(habitat.id, field, occupancy).is_some())
             .map(|habitat| {
-                HABITAT_EXPERIENCE_CENTS + WELFARE_EXPERIENCE_CENTS * i64::from(habitat.welfare)
+                HABITAT_EXPERIENCE_CENTS + WELFARE_EXPERIENCE_CENTS * i64::from(habitat.welfare())
             })
             .collect();
         habitats.sort_unstable_by(|left, right| right.cmp(left));

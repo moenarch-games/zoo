@@ -396,15 +396,12 @@ impl GameState {
                 gate.x, gate.y, gate.side
             ));
         }
-        if let Some(species) = &habitat.species {
-            let needed = habitat
-                .animal_count()
-                .saturating_mul(species.welfare_profile().space_per_animal);
-            if area < needed && area < habitat.area() {
-                plan.warnings.push(format!(
-                    "Animals need {needed} tiles; welfare falls with {area}"
-                ));
-            }
+        // Every resident claims its own species' space (#108).
+        let needed = habitat.required_space();
+        if habitat.stocked() && area < needed && area < habitat.area() {
+            plan.warnings.push(format!(
+                "Animals need {needed} tiles; welfare falls with {area}"
+            ));
         }
         plan.message = format!(
             "Reshape habitat #{}: {} → {} tiles, fence {}",
