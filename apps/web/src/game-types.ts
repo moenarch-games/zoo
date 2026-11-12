@@ -161,7 +161,10 @@ export type Habitat = Point & {
   fence_length: number
   fence_segments: FenceSegment[]
   service_gate: ServiceGate
-  species: SpeciesKey | null
+  /** Resident species keys, in arrival order (#108). */
+  species: SpeciesKey[]
+  /** Each resident species with its own animals, welfare and requirements (#108). */
+  residents: Resident[]
   animals: number
   capacity: number
   viewing_capacity: number
@@ -179,7 +182,6 @@ export type Habitat = Point & {
   environment: HabitatEnvironment
   /** Every weighted part of the welfare target, explained by zoo-core. */
   welfare_parts: WelfarePart[]
-  requirements: HabitatRequirements | null
   /** The work zone containing the service gate; null means "No zone". */
   work_zone_id: number | null
   /** Keepers in that zone; only they take this habitat's jobs. */
@@ -190,6 +192,74 @@ export type Habitat = Point & {
   feeding_status: string
   care_status: string
   appeal: number
+}
+
+/** One resident species of a habitat, summarized by zoo-core from its own animals (#108). */
+export type Resident = {
+  species: SpeciesKey
+  label: string
+  animals: number
+  minimum_social_group: number
+  welfare: number
+  welfare_target: number
+  social_score: number
+  requirements: HabitatRequirements
+  welfare_parts: WelfarePart[]
+}
+
+/** A pairing verdict between two species, authored in the content (#108). */
+export type PairingVerdict = {
+  species: [SpeciesKey, SpeciesKey]
+  compatible: boolean
+  reason: string
+}
+
+/** A shared habitat place before and after an arrival or departure. */
+export type ResourceShare = {
+  provided: number
+  needed_before: number
+  needed_after: number
+}
+
+export type ResidentEffect = {
+  species: SpeciesKey
+  label: string
+  animals_before: number
+  animals_after: number
+  minimum_social_group: number
+  welfare: number | null
+  welfare_target_before: number | null
+  welfare_target_after: number | null
+}
+
+export type HabitatEffect = {
+  habitat_id: number
+  animals_before: number
+  animals_after: number
+  capacity: number
+  space: ResourceShare
+  shelter: ResourceShare
+  enrichment: ResourceShare
+  needs_per_hour_before: number
+  needs_per_hour_after: number
+  upkeep_cents_per_hour_before: number
+  upkeep_cents_per_hour_after: number
+  residents: ResidentEffect[]
+}
+
+/** zoo-core's adoption or transfer preview (#108); it changes nothing. */
+export type ArrivalPreview = {
+  ok: boolean
+  message: string
+  blockers: string[]
+  warnings: string[]
+  species: SpeciesKey
+  label: string
+  count: number
+  cost_cents: number
+  pairings: PairingVerdict[]
+  destination: HabitatEffect | null
+  source: HabitatEffect | null
 }
 
 export type AnimalActivity = "walking" | "resting"
@@ -207,6 +277,8 @@ export type Animal = Point & {
   /** Where a walking animal is heading. */
   target: Point | null
   energy: number
+  /** Its species' welfare in its habitat (#108). */
+  welfare: number
   /** Presentation-only variation: tile offset and animation phase. */
   cosmetic_seed: number
   animation_phase: number
@@ -863,7 +935,7 @@ export type DailySummary = {
   welfare: number | null
   welfare_habitats: {
     habitat_id: number
-    species: SpeciesKey | null
+    species: SpeciesKey[]
     animals: number
     welfare: number
   }[]

@@ -1,4 +1,14 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  Fragment,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 
 import { diagnostics, faultInjectionEnabled, installDiagnosticsHook } from "./diagnostics"
 import {
@@ -14,6 +24,7 @@ import type {
   AdmissionEvaluation,
   Alert,
   Animal,
+  ArrivalPreview,
   CareCategory,
   CareTask,
   ConstructionPreview,
@@ -60,6 +71,7 @@ import {
   OverlayLegend,
   type WorkspaceTab,
 } from "./ManagementWorkspace"
+import { AdoptionOffers, AnimalMoves, ResidentGroups } from "./MixedSpecies"
 import type { SceneOverlay } from "./park-scene"
 import {
   background,
@@ -139,6 +151,14 @@ function speciesGlyph(species: SpeciesKey) {
     case "capybara":
       return "C"
   }
+}
+
+/** A habitat's resident species, in arrival order (#108), or "Empty habitat". */
+function habitatSpeciesLabel(habitat: Habitat, catalog: SpeciesOffer[]) {
+  if (habitat.species.length === 0) {
+    return "Empty habitat"
+  }
+  return habitat.species.map((key) => speciesLabel(key, catalog)).join(" & ")
 }
 
 function speciesLabel(species: SpeciesKey | null, catalog: SpeciesOffer[]) {
@@ -301,6 +321,9 @@ export default function App() {
   const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null)
   const [selectedAnimalId, setSelectedAnimalId] = useState<number | null>(null)
   const [animalName, setAnimalName] = useState("")
+  // Adoption group size and the selected animal's transfer destination (#108).
+  const [adoptCount, setAdoptCount] = useState(1)
+  const [transferTarget, setTransferTarget] = useState<number | null>(null)
   const [selectedDepot, setSelectedDepot] = useState(false)
   const [selectedConcessionId, setSelectedConcessionId] = useState<number | null>(null)
   // #94: the management workspace (null when closed) and the active overlay.
@@ -630,6 +653,35 @@ export default function App() {
     () => snapshot?.animals.find((animal) => animal.id === selectedAnimalId) ?? null,
     [selectedAnimalId, snapshot],
   )
+
+  // Rust's verdict and effect for adopting the chosen group of each species here (#108).
+  const adoptionPreviews = useMemo(() => {
+    const previews = new Map<SpeciesKey, ArrivalPreview>()
+    if (!snapshot || !selectedHabitat) {
+      return previews
+    }
+    for (const offer of snapshot.species_catalog) {
+      const text = callGame((game) =>
+        game.evaluate_adoption(selectedHabitat.id, offer.key, adoptCount),
+      )
+      if (text !== undefined) {
+        previews.set(offer.key, JSON.parse(text) as ArrivalPreview)
+      }
+    }
+    return previews
+  }, [adoptCount, callGame, selectedHabitat, snapshot])
+
+  // Rust's preview of moving the selected animal to the chosen habitat (#108).
+  const transferPreview = useMemo(() => {
+    if (!snapshot || !selectedAnimal || transferTarget === null) {
+      return null
+    }
+    if (transferTarget === selectedAnimal.habitat_id) {
+      return null
+    }
+    const text = callGame((game) => game.evaluate_transfer(selectedAnimal.id, transferTarget))
+    return text === undefined ? null : (JSON.parse(text) as ArrivalPreview)
+  }, [callGame, selectedAnimal, snapshot, transferTarget])
 
   const selectedZone = useMemo(
     () => snapshot?.work_zones.find((zone) => zone.id === selectedZoneId) ?? null,
@@ -1372,6 +1424,7 @@ export default function App() {
     setSelectedDepot(false)
     setSelectedConcessionId(null)
     setSelectedAnimalId(animalId)
+    setTransferTarget(null)
     const picked = snapshot?.animals.find((animal) => animal.id === animalId)
     setAnimalName(picked?.name ?? "")
     if (picked) {
@@ -1756,7 +1809,31 @@ export default function App() {
     if (!game || selectedHabitatId === null) {
       return
     }
-    perform(() => game.adopt(selectedHabitatId, species))
+    perform(() =>
+      adoptCount === 1
+        ? game.adopt(selectedHabitatId, species)
+        : game.adopt_group(selectedHabitatId, species, adoptCount),
+    )
+  }
+
+  const transferAnimal = () => {
+    const game = gameRef.current
+    if (!game || selectedAnimalId === null || transferTarget === null) {
+      return
+    }
+    if (perform(() => game.transfer_animal(selectedAnimalId, transferTarget)).ok) {
+      setTransferTarget(null)
+    }
+  }
+
+  const rehomeAnimal = () => {
+    const game = gameRef.current
+    if (!game || selectedAnimalId === null) {
+      return
+    }
+    if (perform(() => game.rehome_animal(selectedAnimalId)).ok) {
+      setSelectedAnimalId(null)
+    }
   }
 
   const upgradeFence = (fence: string) => {
@@ -2825,7 +2902,18 @@ export default function App() {
               }}
               onShowHabitat={() => selectHabitat(selectedAnimal.habitat_id)}
               onClose={() => setSelectedAnimalId(null)}
-            />
+            >
+              <AnimalMoves
+                animal={selectedAnimal}
+                habitats={snapshot.habitats}
+                speciesLabels={(habitat) => habitatSpeciesLabel(habitat, snapshot.species_catalog)}
+                target={transferTarget}
+                preview={transferPreview}
+                onTarget={setTransferTarget}
+                onTransfer={transferAnimal}
+                onRehome={rehomeAnimal}
+              />
+            </AnimalInspector>
           )}
           {!selectedDepot && !selectedAnimal && selectedGuest && (
             <>
@@ -2871,7 +2959,7 @@ export default function App() {
               </div>
               <div className="habitat-card">
                 <div className="habitat-name">
-                  {speciesLabel(selectedHabitat.species, snapshot.species_catalog)}
+                  {habitatSpeciesLabel(selectedHabitat, snapshot.species_catalog)}
                 </div>
                 <div className="guest-thought">{selectedHabitat.welfare_status}</div>
                 <dl>
@@ -2917,6 +3005,7 @@ export default function App() {
                 {selectedHabitat.animals > 0 && (
                   <>
                     <h3>Residents</h3>
+                    <ResidentGroups habitat={selectedHabitat} />
                     <ul className="animal-roster" aria-label="Residents">
                       {snapshot.animals
                         .filter((animal) => animal.habitat_id === selectedHabitat.id)
@@ -2925,7 +3014,10 @@ export default function App() {
                             <button onClick={() => selectAnimal(animal.id)}>
                               <span>{animal.name}</span>
                               <small>
-                                #{animal.id} · {animal.activity}
+                                #{animal.id} ·{" "}
+                                {selectedHabitat.residents.length > 1 &&
+                                  `${speciesLabel(animal.species, snapshot.species_catalog)} · `}
+                                {animal.activity}
                               </small>
                             </button>
                           </li>
@@ -3227,32 +3319,14 @@ export default function App() {
                     Assign a keeper to this habitat's work zone before animals can move in.
                   </div>
                 )}
-                {snapshot.species_catalog.map((offer) => {
-                  const wrongSpecies =
-                    selectedHabitat.species !== null && selectedHabitat.species !== offer.key
-                  const full = selectedHabitat.animals >= selectedHabitat.capacity
-                  const unstaffed = selectedHabitat.zone_keeper_count === 0
-                  return (
-                    <button
-                      className="shop-row species-row"
-                      key={offer.key}
-                      disabled={wrongSpecies || full || unstaffed}
-                      onClick={() => adopt(offer.key)}
-                    >
-                      <span className="species-offer">
-                        <i>{speciesGlyph(offer.asset_ref)}</i>
-                        <span>
-                          <b>{offer.label}</b>
-                          <small>
-                            Group {offer.minimum_social_group}+ · {offer.space_per_animal} space
-                            each · fence {offer.minimum_fence_height_cm} cm+
-                          </small>
-                        </span>
-                      </span>
-                      <strong>{money(offer.purchase_cost_cents)}</strong>
-                    </button>
-                  )
-                })}
+                <AdoptionOffers
+                  offers={snapshot.species_catalog}
+                  previews={adoptionPreviews}
+                  count={adoptCount}
+                  onCount={setAdoptCount}
+                  onAdopt={adopt}
+                  glyph={speciesGlyph}
+                />
               </div>
             </>
           )}
@@ -3963,6 +4037,7 @@ function AnimalInspector({
   onLocate,
   onShowHabitat,
   onClose,
+  children,
 }: {
   animal: Animal
   habitat: Habitat | null
@@ -3973,11 +4048,15 @@ function AnimalInspector({
   onLocate: () => void
   onShowHabitat: () => void
   onClose: () => void
+  /** Moving or rehoming the animal (#108). */
+  children: ReactNode
 }) {
   let activity = "Resting"
   if (animal.activity === "walking") {
     activity = animal.target ? `Walking to (${animal.target.x}, ${animal.target.y})` : "Walking"
   }
+  // The animal's own species group in its habitat (#108).
+  const group = habitat?.residents.find((resident) => resident.species === animal.species)
   return (
     <>
       <div className="window-title">
@@ -4041,7 +4120,7 @@ function AnimalInspector({
             <NeedBar label="Food" value={habitat.food} />
             <NeedBar label="Water" value={habitat.water} />
             <NeedBar label="Cleanliness" value={habitat.cleanliness} />
-            <NeedBar label="Social fit" value={habitat.social_score} />
+            <NeedBar label="Social fit" value={group?.social_score ?? habitat.social_score} />
             <NeedBar label="Space fit" value={habitat.space_score} />
             <dl>
               <div>
@@ -4055,13 +4134,14 @@ function AnimalInspector({
               <div>
                 <dt>Group welfare</dt>
                 <dd>
-                  {habitat.welfare}% → {habitat.welfare_target}%
+                  {animal.welfare}% → {group?.welfare_target ?? habitat.welfare_target}%
                 </dd>
               </div>
             </dl>
             <div className="guest-thought">{habitat.welfare_status}</div>
           </>
         )}
+        {children}
         <div className="animal-actions">
           <button onClick={onLocate}>Locate</button>
           <button onClick={onShowHabitat}>Show habitat</button>

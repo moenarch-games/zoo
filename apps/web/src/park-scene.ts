@@ -437,7 +437,8 @@ function tileColor(tile: Tile, habitatSpecies: Map<number, SpeciesKey | null>): 
 }
 
 function terrainNodes(snapshot: Snapshot): RendererSceneNode[] {
-  const habitatSpecies = new Map(snapshot.habitats.map((h) => [h.id, h.species]))
+  // A mixed habitat (#108) takes the ground of its first resident species.
+  const habitatSpecies = new Map(snapshot.habitats.map((h) => [h.id, h.species[0] ?? null]))
   const nodes: RendererSceneNode[] = []
   const span = Math.max(snapshot.width, snapshot.height)
   const cx = snapshot.width / 2
@@ -738,11 +739,7 @@ function habitatPieces(habitat: Habitat): SceneryPlacement[] {
       scale: 0.8 + hash(habitat.id, index, 24) * 0.5,
     })
   }
-  if (
-    habitat.species === "giraffe" ||
-    habitat.species === "zebra" ||
-    habitat.species === "elephant"
-  ) {
+  if (habitat.species.some((key) => key === "giraffe" || key === "zebra" || key === "elephant")) {
     placements.push({
       piece: "tree-acacia",
       id: `${id}:acacia`,
@@ -2194,7 +2191,7 @@ function presentationSnapshot(snapshot: Snapshot): Snapshot {
     ...snapshot,
     habitats: snapshot.habitats.map((habitat) => ({
       ...habitat,
-      species: speciesAsset(habitat.species),
+      species: habitat.species.map((key) => speciesAsset(key) ?? key),
     })),
     animals: snapshot.animals.map((animal) => ({
       ...animal,

@@ -72,9 +72,12 @@ export function HabitatDesignPanel({
   return (
     <section className="habitat-design" aria-label="Habitat design">
       <h3>Habitat design</h3>
-      {habitat.requirements && (
-        <div className="guest-thought">Needs {requirementSummary(habitat.requirements)}</div>
-      )}
+      {habitat.residents.map((resident) => (
+        <div className="guest-thought" key={resident.species}>
+          {habitat.residents.length > 1 ? `${resident.label} needs` : "Needs"}{" "}
+          {requirementSummary(resident.requirements)}
+        </div>
+      ))}
       <dl>
         <div>
           <dt>Usable dry land</dt>
