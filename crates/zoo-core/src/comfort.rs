@@ -460,44 +460,18 @@ impl GameState {
         self.resume_walk(index, visit.resume);
     }
 
-    /// Sends a guest back to its habitat plan, another habitat, or the exit.
+    /// Sends a guest back to its group's habitat plan (#103), or on towards the exit.
     pub(crate) fn resume_walk(&mut self, index: usize, resume: Resume) {
-        let occupancy = self.viewing_occupancy();
-        let guest = &self.guests[index];
-        let start = guest_position(guest);
-        let habitat = match resume {
-            Resume::Exit => None,
-            Resume::Habitat => self
-                .habitats
-                .iter()
-                .find(|habitat| habitat.id == guest.target_habitat && habitat.stocked())
-                .filter(|_| !guest.visited_habitats.contains(&guest.target_habitat))
-                .and_then(|habitat| {
-                    self.viewing_route_with_occupancy(habitat, start, &occupancy)
-                        .map(|route| (habitat.id, route))
-                })
-                .or_else(|| {
-                    guest
-                        .wants_another_habitat()
-                        .then(|| self.next_engaging_habitat(guest, start, &occupancy))
-                        .flatten()
-                }),
-        };
-        let exit = self.entrance;
-        let (state, target, route) = match habitat {
-            Some((habitat_id, route)) => (GuestState::WalkingToHabitat, Some(habitat_id), route),
-            None => (
-                GuestState::WalkingToExit,
-                None,
-                self.path_between(Mover::Guest, start, exit)
-                    .unwrap_or_default(),
-            ),
-        };
-        let guest = &mut self.guests[index];
-        guest.state = state;
-        if let Some(target) = target {
-            guest.target_habitat = target;
+        if resume == Resume::Habitat {
+            self.resume_itinerary(index);
+            return;
         }
+        let start = guest_position(&self.guests[index]);
+        let route = self
+            .path_between(Mover::Guest, start, self.entrance)
+            .unwrap_or_default();
+        let guest = &mut self.guests[index];
+        guest.state = GuestState::WalkingToExit;
         guest.route = route;
         guest.route_index = 0;
     }

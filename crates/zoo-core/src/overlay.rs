@@ -245,7 +245,11 @@ impl GameState {
                 self.viewing_overlay(&mut out);
                 (
                     "Guest viewing",
-                    legend(["Room to watch", "Viewpoint full", "Viewpoint over capacity"]),
+                    legend([
+                        "Room to watch",
+                        "Viewpoint full",
+                        "Viewpoint over capacity or crowded path",
+                    ]),
                 )
             }
         };
@@ -548,6 +552,23 @@ impl GameState {
                 );
             }
         }
+        // Crowded path tiles (#103): more guests on one tile than it comfortably holds.
+        let mut crowded: Vec<((u32, u32), u32)> = self
+            .tile_guest_counts()
+            .into_iter()
+            .filter(|(_, guests)| *guests > super::visit::PATH_COMFORT_GUESTS)
+            .collect();
+        crowded.sort_by_key(|((x, y), _)| (*y, *x));
+        for ((x, y), guests) in crowded {
+            let position = Position { x, y };
+            out.cell(position, Level::Bad, Some(guests));
+            out.item(
+                Level::Bad,
+                Subject::Paths,
+                position,
+                format!("Crowded path {x},{y} · {guests} guests on one tile"),
+            );
+        }
     }
 }
 
@@ -597,6 +618,9 @@ pub(crate) struct DailySummary {
     maintenance: u32,
     /// Open janitor work at toilets and bins (#101).
     facility_service: u32,
+    /// People who walked out today, and why (#103).
+    exits: u32,
+    exit_reasons: super::visit::ExitCounts,
     headline: String,
 }
 
@@ -725,6 +749,8 @@ impl GameState {
             litter,
             maintenance,
             facility_service,
+            exits: self.visits.today.total(),
+            exit_reasons: self.visits.today,
             headline,
         }
     }

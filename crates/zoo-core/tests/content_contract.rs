@@ -289,7 +289,14 @@ fn localization_and_valid_presentation_changes_do_not_change_simulation_decision
         fn remove_messages(value: &mut Value) {
             match value {
                 Value::Object(fields) => {
-                    for key in ["label", "feeding_status", "maintenance_status", "status"] {
+                    for key in [
+                        "label",
+                        "feeding_status",
+                        "maintenance_status",
+                        "status",
+                        // A group's plan names the species it heads for (#103).
+                        "plan",
+                    ] {
                         fields.remove(key);
                     }
                     for child in fields.values_mut() {

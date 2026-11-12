@@ -1805,3 +1805,23 @@ button[data-plan-toggle].active {
   background: #7ec8f0;
   color: #24302b;
 }
+
+/* #103: the guest inspector's visit section — sentences, so the label sits above its value. */
+.guest-visit dl div {
+  display: block;
+}
+
+.guest-visit dt {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.guest-visit dd {
+  font-weight: 700;
+}
+
+/* #103: why guests left — a reason and its detail per line. */
+.visit-recent li {
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}

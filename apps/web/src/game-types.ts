@@ -382,6 +382,62 @@ export type Guest = Point & {
   }
   /** Spending money left for stands (#102). */
   cash_cents: number
+  /** The habitats this guest has watched, in order (#103). */
+  visited_habitats: number[]
+  /** The guest's group, its profile and current plan (#103). */
+  group: GuestGroup | null
+  /** Minutes spent in crowds so far, and whether the guest stands in one now (#103). */
+  crowd_minutes: number
+  crowded: boolean
+  /** Why the guest is walking out, once decided (#103). */
+  exit: ExitCause | null
+}
+
+export type VisitorProfile = "family" | "enthusiast" | "stroller"
+
+export type GuestGroup = {
+  id: number
+  profile: VisitorProfile
+  profile_label: string
+  favorite_species: SpeciesKey | null
+  members: number[]
+  /** People admitted with the group; 0 for a member who carried on alone. */
+  admitted: number
+  visit_goal: number
+  walking_tolerance: number
+  patience: number
+  plan: string
+  waiting_for_group: boolean
+  waiting_minutes: number
+}
+
+export type ExitReason =
+  | "satisfied"
+  | "needs_unmet"
+  | "too_crowded"
+  | "poor_value"
+  | "no_reachable_attraction"
+
+export type ExitCause = { reason: ExitReason; detail: string }
+
+export type ExitCounts = Record<ExitReason, number>
+
+/** Groups, arrivals, exit reasons and crowded tiles (#103). */
+export type VisitsState = {
+  guests_in_park: number
+  groups_in_park: number
+  groups_arrived: number
+  guests_arrived: number
+  today: ExitCounts
+  total: ExitCounts
+  recent: {
+    guest_id: number
+    group_id: number
+    minute: number
+    reason: ExitReason
+    detail: string
+  }[]
+  crowded_tiles: { x: number; y: number; guests: number }[]
 }
 
 export type FacilityOffer = {
@@ -574,6 +630,8 @@ export type Snapshot = {
   summary: DailySummary
   /** Purchasable parcels, ownership and restrictions (#99). */
   land: LandState
+  /** Groups, arrivals, exit reasons and crowded tiles (#103). */
+  visits: VisitsState
 }
 
 export type ParcelStatus = "owned" | "available" | "unaffordable" | "locked"
@@ -767,6 +825,9 @@ export type DailySummary = {
   maintenance: number
   /** Open janitor work at toilets and bins (#101). */
   facility_service: number
+  /** People who walked out today, and why (#103). */
+  exits: number
+  exit_reasons: ExitCounts
   headline: string
 }
 

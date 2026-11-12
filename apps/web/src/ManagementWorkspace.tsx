@@ -14,6 +14,7 @@ import type {
   Point,
   Snapshot,
 } from "./game-types"
+import { EXIT_REASON_LABELS, EXIT_REASONS } from "./GuestVisit"
 import { OVERLAY_COLORS } from "./overlay-colors"
 
 export type WorkspaceTab =
@@ -226,8 +227,35 @@ export function DailySummaryView({
       <Drill label="Admissions" value={String(summary.admissions)}>
         <p>
           {summary.admissions} guests × {money(summary.admission_price_cents)} ={" "}
-          {money(summary.admissions_income_cents)} today; {snapshot.guest_count} in the park now.
+          {money(summary.admissions_income_cents)} today; {snapshot.guest_count} in the park now in{" "}
+          {snapshot.visits.groups_in_park} groups.
         </p>
+      </Drill>
+      <Drill label="Visits ended" value={String(summary.exits)}>
+        <ul className="drill-list visit-outcomes" aria-label="Why guests left today">
+          {EXIT_REASONS.map((reason) => (
+            <li
+              key={reason}
+              data-exit-reason={reason}
+              data-exit-count={summary.exit_reasons[reason]}
+            >
+              <span>{EXIT_REASON_LABELS[reason]}</span>
+              <strong>{summary.exit_reasons[reason]}</strong>
+            </li>
+          ))}
+        </ul>
+        {snapshot.visits.recent.length > 0 && (
+          <ul className="drill-list visit-recent" aria-label="Latest exits">
+            {[...snapshot.visits.recent].reverse().map((note) => (
+              <li key={`${note.guest_id}-${note.minute}`} data-exit-reason={note.reason}>
+                <span>
+                  Guest #{note.guest_id} · {EXIT_REASON_LABELS[note.reason]}
+                </span>
+                <span>{note.detail}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </Drill>
       <Drill
         label="Animal welfare"
@@ -688,6 +716,18 @@ export function ManagementWorkspace({
             columns={[
               { key: "id", label: "#", value: (guest) => guest.id, numeric: true },
               { key: "thought", label: "Thinking", value: (guest) => guest.thought },
+              {
+                key: "group",
+                label: "Group",
+                value: (guest) =>
+                  guest.group ? `#${guest.group.id} ${guest.group.profile_label}` : "",
+              },
+              {
+                key: "seen",
+                label: "Seen",
+                value: (guest) => guest.visited_habitats.length,
+                numeric: true,
+              },
               { key: "happy", label: "Happy", value: (guest) => guest.happiness, numeric: true },
               { key: "hunger", label: "Hunger", value: (guest) => guest.hunger, numeric: true },
               { key: "thirst", label: "Thirst", value: (guest) => guest.thirst, numeric: true },

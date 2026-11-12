@@ -71,6 +71,17 @@ fn advance(game: &mut ZooGame, minutes: u32) {
         assert_walkable_guests(&snapshot(game));
     }
 }
+/// Runs until the first group arrives (#103: a group of `n` people takes `n` arrival
+/// intervals), so the timings below count from guest 1's arrival.
+fn arrive(game: &mut ZooGame) {
+    for _ in 0..200 {
+        if guest(&snapshot(game), 1).is_some() {
+            return;
+        }
+        advance(game, 1);
+    }
+    panic!("no guest arrived");
+}
 fn await_guest_state(game: &mut ZooGame, id: u32, state: &str) {
     for _ in 0..240 {
         if guest(&snapshot(game), id).is_some_and(|guest| guest["state"] == state) {
@@ -101,10 +112,12 @@ fn disconnected_habitat_does_not_starve_admissions_and_rejoins_after_connection(
     populate(&mut game, (11, 5, 14, 7));
     advance(&mut game, 240);
     let view = snapshot(&game);
-    assert_eq!(view["entrance"]["arrivals_total"], 10);
+    let arrivals = view["entrance"]["arrivals_total"].as_u64().unwrap();
+    assert!(arrivals >= 8, "{arrivals}");
+    // Every admitted person paid once; nobody else was counted.
     assert_eq!(
         view["finance"]["current_day"]["breakdown"]["admissions_income_cents"],
-        12_000
+        arrivals * 1_200
     );
     assert!(
         view["guests"]
@@ -116,10 +129,19 @@ fn disconnected_habitat_does_not_starve_admissions_and_rejoins_after_connection(
     for x in 4..=10 {
         accepted(game.place_path(x, 8));
     }
-    advance(&mut game, 24);
-    let view = snapshot(&game);
-    assert_eq!(view["entrance"]["arrivals_total"], 11);
-    assert_eq!(guest(&view, 11).unwrap()["target_habitat"], 2);
+    // Once connected, groups go on from the first habitat to the second.
+    for _ in 0..240 {
+        advance(&mut game, 1);
+        if snapshot(&game)["guests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|guest| guest["target_habitat"] == 2)
+        {
+            return;
+        }
+    }
+    panic!("no guest went on to the reconnected habitat");
 }
 #[test]
 fn all_unreachable_habitats_charge_nothing_and_preserve_the_first_guest_id() {
@@ -133,18 +155,22 @@ fn all_unreachable_habitats_charge_nothing_and_preserve_the_first_guest_id() {
         0
     );
     accepted(game.place_path(3, 7));
-    advance(&mut game, 24);
+    arrive(&mut game);
     let view = snapshot(&game);
-    assert_eq!(view["entrance"]["arrivals_total"], 1);
-    assert!(guest(&view, 1).is_some());
+    let arrivals = view["entrance"]["arrivals_total"].as_u64().unwrap();
+    assert!(arrivals > 0);
+    assert_eq!(
+        view["finance"]["current_day"]["breakdown"]["admissions_income_cents"],
+        arrivals * 1_200
+    );
 }
 #[test]
 fn isolated_first_border_path_does_not_hide_a_reachable_viewing_tile() {
     let mut game = populated_park();
     accepted(game.place_path(4, 5));
-    advance(&mut game, 48);
+    arrive(&mut game);
+    advance(&mut game, 24);
     let view = snapshot(&game);
-    assert_eq!(view["entrance"]["arrivals_total"], 2);
     let first = guest(&view, 1).unwrap();
     assert_position(first, 4, 7);
     assert_eq!(first["state"], "viewing");
@@ -156,7 +182,8 @@ fn equally_short_viewing_routes_follow_deterministic_bfs_neighbor_order() {
     for game in [&mut first, &mut second] {
         accepted(game.place_path(2, 8));
         populate(game, (3, 8, 6, 10));
-        advance(game, 45);
+        arrive(game);
+        advance(game, 21);
         let view = snapshot(game);
         // (3,7) and (2,8) are equally close. The existing BFS visits (3,7) first.
         assert_position(guest(&view, 1).unwrap(), 3, 7);
@@ -166,7 +193,7 @@ fn equally_short_viewing_routes_follow_deterministic_bfs_neighbor_order() {
 #[test]
 fn arriving_guest_waits_instead_of_crossing_a_replacement_concession() {
     let mut game = populated_park();
-    advance(&mut game, 24);
+    arrive(&mut game);
     accepted(game.bulldoze(2, 7));
     accepted(game.place_concession(2, 7, "food".to_owned()));
     assert!(
@@ -191,7 +218,8 @@ fn outbound_guest_reroutes_around_a_demolished_path_without_teleporting() {
     for x in 1..=3 {
         accepted(game.place_path(x, 8));
     }
-    advance(&mut game, 33);
+    arrive(&mut game);
+    advance(&mut game, 9);
     assert_position(guest(&snapshot(&game), 1).unwrap(), 1, 7);
     accepted(game.bulldoze(2, 7));
     assert_position(guest(&snapshot(&game), 1).unwrap(), 1, 7);
@@ -208,7 +236,8 @@ fn outbound_guest_reroutes_around_a_demolished_path_without_teleporting() {
 #[test]
 fn outbound_guest_waits_in_place_and_resumes_after_a_path_edit() {
     let mut game = populated_park();
-    advance(&mut game, 36);
+    arrive(&mut game);
+    advance(&mut game, 12);
     assert_position(guest(&snapshot(&game), 1).unwrap(), 2, 7);
     accepted(game.bulldoze(3, 7));
     advance(&mut game, 18);
@@ -248,7 +277,8 @@ fn exiting_guest_is_not_removed_or_moved_through_a_broken_route() {
 #[test]
 fn viewing_guest_reports_a_blocked_exit_and_recovers_after_reconnection() {
     let mut game = populated_park();
-    advance(&mut game, 48);
+    arrive(&mut game);
+    advance(&mut game, 24);
     assert_eq!(guest(&snapshot(&game), 1).unwrap()["state"], "viewing");
     accepted(game.bulldoze(2, 7));
     await_guest_thought(&mut game, 1, "exit is blocked");
@@ -261,7 +291,8 @@ fn viewing_guest_reports_a_blocked_exit_and_recovers_after_reconnection() {
 #[test]
 fn demolishing_a_guest_occupied_path_is_rejected_atomically() {
     let mut game = populated_park();
-    advance(&mut game, 36);
+    arrive(&mut game);
+    advance(&mut game, 12);
     assert_position(guest(&snapshot(&game), 1).unwrap(), 2, 7);
     let before = game.save_json();
     let result: Value = serde_json::from_str(&game.bulldoze(2, 7)).unwrap();

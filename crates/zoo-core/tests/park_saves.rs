@@ -16,6 +16,7 @@ const FIXTURE_V10: &str = "tests/fixtures/save-v10.json";
 const FIXTURE_V11: &str = "tests/fixtures/save-v11.json";
 const FIXTURE_V12: &str = "tests/fixtures/save-v12.json";
 const FIXTURE_V13: &str = "tests/fixtures/save-v13.json";
+const FIXTURE_V14: &str = "tests/fixtures/save-v14.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -46,6 +47,40 @@ fn content_without_environment(content: &mut Value) {
 /// park its (empty) facility service queue.
 const COMFORT_FACILITIES: [&str; 3] = ["toilet", "bench", "bin"];
 
+/// Undoes the schema 13 → 14 migration (#103) on a document saved straight after loading:
+/// every guest was its own group of one (IDs in guest order, admitted alone, no plan), started
+/// uncrowded with no exit decided, and the visit record counted those arrivals and no exits.
+fn groups_removed(value: &mut Value) {
+    let park = value["park"].as_object_mut().unwrap();
+    let groups = park.remove("groups").unwrap();
+    let groups = groups.as_array().unwrap();
+    let arrived = park["next_guest_id"].as_u64().unwrap() - 1;
+    let guests = park["guests"].as_array_mut().unwrap();
+    assert_eq!(groups.len(), guests.len());
+    for (index, (guest, group)) in guests.iter_mut().zip(groups).enumerate() {
+        let guest = guest.as_object_mut().unwrap();
+        let group_id = index as u64 + 1;
+        assert_eq!(guest.remove("group_id"), Some(group_id.into()));
+        assert_eq!(guest.remove("crowd_minutes"), Some(0.into()));
+        assert_eq!(guest.remove("exit"), Some(Value::Null));
+        assert_eq!(group["id"], group_id);
+        assert_eq!(group["members"], serde_json::json!([guest["id"]]));
+        assert_eq!(group["admitted"], 1);
+        assert_eq!(group["favorite_species"], Value::Null);
+        assert_eq!(group["waiting_minutes"], 0);
+        assert_eq!(group["plan"], "");
+    }
+    assert_eq!(
+        park.remove("next_group_id"),
+        Some((groups.len() as u64 + 1).into())
+    );
+    let visits = park.remove("visits").unwrap();
+    assert_eq!(visits["groups_arrived"], arrived);
+    assert_eq!(visits["total"], visits["today"]);
+    assert_eq!(visits["recent"], serde_json::json!([]));
+    value["schema_version"] = 13.into();
+}
+
 /// Undoes the schema 13 catalog change (#102) on a catalog document: stands lose their service
 /// model and staff costs the vendor wage.
 fn content_without_stands(content: &mut Value) {
@@ -66,6 +101,7 @@ fn content_without_stands(content: &mut Value) {
 /// state (one vendor, full stock, no queue, a ledger carried over from their sales), guests
 /// their spending money and ledgers the vendor-wage and stock lines.
 fn staffed_stands_removed(value: &mut Value) {
+    groups_removed(value);
     content_without_stands(&mut value["content"]);
     let park = value["park"].as_object_mut().unwrap();
     for stand in park["concessions"].as_array_mut().unwrap() {
@@ -791,7 +827,17 @@ fn staffed() -> ZooGame {
                 .as_array()
                 .is_some_and(|queue| !queue.is_empty())
         });
-        if serving && queueing {
+        // A group of several people is in the park (#103).
+        let grouped = save["park"]["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|group| group["members"].as_array().unwrap().len() > 1);
+        let serviced = !save["park"]["facility_service"]
+            .as_array()
+            .unwrap()
+            .is_empty();
+        if serving && queueing && grouped && serviced {
             ok(game.restock_stand(1));
             return game;
         }
@@ -799,17 +845,43 @@ fn staffed() -> ZooGame {
     panic!("no stand served one guest while another queued");
 }
 
+/// Schema 13 parks keep every guest, errand, reservation and queue; each guest becomes its own
+/// group (#103), and the park runs on and admits new groups.
+#[test]
+fn the_schema_v13_fixture_migrates_to_visitor_groups() {
+    let fixture = std::fs::read_to_string(FIXTURE_V13).unwrap();
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    groups_removed(&mut saved);
+    assert_eq!(saved, json(&fixture), "migration changes nothing else");
+    let before = json(&game.snapshot_json())["visits"]["groups_arrived"]
+        .as_u64()
+        .unwrap();
+    game.tick(180);
+    assert_eq!(game.session_status(), "running");
+    let view = json(&game.snapshot_json());
+    assert!(view["visits"]["groups_arrived"].as_u64().unwrap() > before);
+    assert!(
+        view["visits"]["total"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|n| n.as_u64() > Some(0))
+    );
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
         let value = json(&staffed().save_json());
         std::fs::write(
-            FIXTURE_V13,
+            FIXTURE_V14,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V13).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V14).unwrap();
     let mut game = ZooGame::new();
     ok(game.load_save(&fixture));
     assert_eq!(json(&game.save_json()), json(&fixture));

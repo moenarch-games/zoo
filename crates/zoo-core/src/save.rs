@@ -57,6 +57,7 @@ const MIGRATIONS: &[Migration] = &[
     v10_add_land,
     v11_add_guest_comfort,
     v12_add_staffed_stands,
+    v13_add_visitor_groups,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -167,6 +168,61 @@ fn migrate(mut value: Value, from: u32) -> Result<Value, SaveError> {
         value = migration(value)?;
     }
     value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
+}
+
+/// Schema 14 (#103) brings visitors in groups. Every guest of an older park arrived alone, so
+/// each becomes a group of one (IDs in guest order, admitted alone) with the profile its group
+/// ID draws, no favourite species and no plan yet; guests start uncrowded with no exit decided,
+/// and the visit record counts those groups as arrived with no exits yet.
+fn v13_add_visitor_groups(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let mut groups = Vec::new();
+    for guest in park
+        .get_mut("guests")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid("park/guests: missing or not an array"))?
+    {
+        let guest = guest
+            .as_object_mut()
+            .ok_or_else(|| invalid("park/guests: entry is not an object"))?;
+        let id = guest
+            .get("id")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| invalid("park/guests: entry has no id"))?;
+        let group_id = groups.len() as u32 + 1;
+        guest.insert("group_id".to_owned(), json!(group_id));
+        guest.insert("crowd_minutes".to_owned(), json!(0));
+        guest.insert("exit".to_owned(), Value::Null);
+        groups.push(json!({
+            "id": group_id,
+            "profile": super::visit::group_plan(group_id).0,
+            "favorite_species": null,
+            "admitted": 1,
+            "members": [id],
+            "waiting_minutes": 0,
+            "plan": "",
+        }));
+    }
+    let arrived = park
+        .get("next_guest_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| invalid("park/next_guest_id: missing"))?
+        .saturating_sub(1);
+    park.insert("next_group_id".to_owned(), json!(groups.len() + 1));
+    park.insert("groups".to_owned(), Value::Array(groups));
+    park.insert(
+        "visits".to_owned(),
+        serde_json::to_value(super::visit::VisitRecord {
+            groups_arrived: u32::try_from(arrived).unwrap_or(u32::MAX),
+            ..Default::default()
+        })
+        .expect("visit record serialization"),
+    );
     Ok(value)
 }
 

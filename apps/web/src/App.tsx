@@ -40,6 +40,7 @@ import type {
   Tutorial,
   WorkZoneEvaluation,
 } from "./game-types"
+import { GuestVisit } from "./GuestVisit"
 import { HabitatDesignPanel, type HabitatBrush } from "./HabitatDesignPanel"
 import {
   LandPanel,
@@ -2836,6 +2837,7 @@ export default function App() {
                 <NeedBar label="Thirst" value={selectedGuest.thirst} badWhenHigh />
                 <NeedBar label="Toilet" value={selectedGuest.comfort.bladder} badWhenHigh />
                 <NeedBar label="Value" value={selectedGuest.value_perception} />
+                <GuestVisit guest={selectedGuest} />
               </div>
             </>
           )}
