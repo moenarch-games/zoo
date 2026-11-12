@@ -87,8 +87,41 @@ export async function runAnimalIdentityAcceptance(context) {
         return point?.visible && Math.hypot(point.x - rect.left - rect.width / 2, point.y - rect.top - rect.height / 2) < 24
       })()`,
     )
+  /**
+   * Zooms in on and orbits around animal `id` until it stands clear of every other animal on screen and of the HUD, so a
+   * click on it cannot land on a neighbour (where animals stand depends on how long the park ran).
+   */
+  const isolate = async (id) => {
+    for (let turn = 0; turn < 24; turn += 1) {
+      const clear = await evaluate(`(() => {
+        const own = window.__zooParkView.animalPoint(${id})
+        if (!own?.visible || !document.elementFromPoint(own.x, own.y)?.classList.contains('park-canvas')) return false
+        return JSON.parse(window.__zooSimulation.snapshotJson()).animals.every((other) => {
+          const point = other.id === ${id} ? null : window.__zooParkView.animalPoint(other.id)
+          return !point?.visible || Math.hypot(point.x - own.x, point.y - own.y) > 32
+        })
+      })()`)
+      if (clear) {
+        // …and has stopped moving on screen (presented positions ease after a pause).
+        const a = await evaluate(`window.__zooParkView.animalPoint(${id})`)
+        await sleep(200)
+        const b = await evaluate(`window.__zooParkView.animalPoint(${id})`)
+        if (Math.hypot(a.x - b.x, a.y - b.y) < 2) return
+        continue
+      }
+      const own = await evaluate(`window.__zooParkView.animalPoint(${id})`)
+      if (turn < 10 && own?.visible) {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: own.x, y: own.y, deltaX: 0, deltaY: -300 })
+        await sleep(150)
+      } else {
+        await key("e")
+      }
+    }
+    throw new Error(`#96: animal #${id} never stands clear of the others: ${await evaluate(`JSON.stringify(JSON.parse(window.__zooSimulation.snapshotJson()).animals.map((a) => [a.id, window.__zooParkView.animalPoint(a.id)]))`)}`)
+  }
   /** Picks animal `id` on the canvas: it is watched, not inspected. */
   const watchAnimal = async (id) => {
+    await isolate(id)
     const point = await animalPoint(id)
     await mouse("mouseMoved", point)
     await mouse("mousePressed", point, { button: "left", buttons: 1, clickCount: 1 })
@@ -212,6 +245,8 @@ export async function runAnimalIdentityAcceptance(context) {
   assert(resumed.name === "Biscuit", "#96: the name did not survive a reload", resumed)
   assert((await details(2)).title === "Biscuit · #2", "#96: the inspector lost the name after a reload")
   await evaluate(`document.querySelector('.window-title button')?.click()`)
+  await key("Escape")
+  await key("Home")
 
   // Running: the camera tracks a walking animal across simulated minutes; a pan ends follow.
   assert(await clickButton("1×"), "#141: play control missing")
@@ -223,22 +258,19 @@ export async function runAnimalIdentityAcceptance(context) {
   const walker = await evaluate(
     `JSON.parse(window.__zooSimulation.snapshotJson()).animals.find((a) => a.activity === 'walking' && window.__zooParkView.animalPoint(a.id)?.visible).id`,
   )
+  // Picked while paused so the click cannot miss a moving animal, then followed while it walks.
+  assert(await clickButton("Ⅱ"), "#141: pause control missing")
   await watchAnimal(walker)
+  assert(await clickButton("1×"), "#141: play control missing")
   await settled(walker)
-  const start = await coreAnimal(walker)
   const startTarget = (await evaluate(`window.__zooParkView.camera()`)).target
+  // With no camera input at all, the target travels only because it follows the walking animal.
   await waitFor(
-    `animal #${walker} to move a tile`,
-    `(() => { const a = JSON.parse(window.__zooSimulation.snapshotJson()).animals.find((a) => a.id === ${walker}); return a && (a.x !== ${start.x} || a.y !== ${start.y}) })()`,
-    300,
+    `the camera to travel with animal #${walker}`,
+    `(() => { const t = window.__zooParkView.camera().target; return Math.hypot(t[0] - ${startTarget[0]}, t[2] - ${startTarget[2]}) > 0.5 })()`,
+    400,
   )
   await settled(walker)
-  const endTarget = (await evaluate(`window.__zooParkView.camera()`)).target
-  assert(
-    Math.hypot(endTarget[0] - startTarget[0], endTarget[2] - startTarget[2]) > 0.3,
-    "#141: the camera did not move with the walking animal",
-    { startTarget, endTarget },
-  )
   assert((await following()) === walker, "#141: follow switched animals while running")
   const canvas = await evaluate(`(() => { const r = document.querySelector('.park-canvas').getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.6 } })()`)
   await mouse("mouseMoved", canvas)
@@ -269,6 +301,7 @@ export async function runAnimalIdentityAcceptance(context) {
     return point?.visible && document.elementFromPoint(point.x, point.y)?.classList.contains('park-canvas')
   }) ?? null`)
   assert(tapped !== null, "#96: no animal is uncovered on the phone")
+  await isolate(tapped)
   const tap = await animalPoint(tapped)
   const tapState = await parkState()
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: tap.x, y: tap.y, id: 0 }] })
