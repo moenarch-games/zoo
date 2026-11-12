@@ -8,6 +8,7 @@ mod enclosure;
 mod environment;
 mod gate;
 mod land;
+mod mixed;
 mod overlay;
 mod pricing;
 mod save;
@@ -545,10 +546,12 @@ struct Habitat {
     tiles: Vec<Position>,
     /// The fence type it is enclosed with, owned like its species definition.
     fence: content::FenceType,
-    species: Option<Species>,
+    /// One entry per species living here, in the order the species arrived (#108); each owns
+    /// its species definition and welfare. Every resident has at least one animal.
+    residents: Vec<mixed::Resident>,
     /// The individual animals living here, in arrival order (#96); their count is the habitat's.
     animals: Vec<animal::Animal>,
-    welfare: u32,
+    /// Feed, drinking water and cleanliness are one pool every resident shares (#108).
     food: u32,
     water: u32,
     cleanliness: u32,
@@ -583,21 +586,29 @@ impl Habitat {
     }
 
     fn appeal(&self) -> u32 {
-        self.species.as_ref().map_or(0, |species| {
-            species.appeal().saturating_mul(self.animal_count().max(1))
+        self.residents.iter().fold(0, |total, resident| {
+            total.saturating_add(
+                resident
+                    .species
+                    .appeal()
+                    .saturating_mul(self.species_count(&resident.species.key)),
+            )
         })
     }
 
+    /// The lowest social fit of any resident species (#108).
     fn social_score(&self) -> u32 {
-        let Some(species) = &self.species else {
-            return 100;
-        };
-        if !self.stocked() {
-            return 100;
-        }
+        self.residents
+            .iter()
+            .map(|resident| self.social_score_of(&resident.species))
+            .min()
+            .unwrap_or(100)
+    }
 
+    /// Only animals of the same species count towards its social group (#108).
+    fn social_score_of(&self, species: &Species) -> u32 {
         let minimum_group = species.welfare_profile().minimum_social_group.max(1);
-        self.animal_count()
+        self.species_count(&species.key)
             .saturating_mul(100)
             .checked_div(minimum_group)
             .unwrap_or(100)
@@ -608,19 +619,25 @@ impl Habitat {
         self.space_score_with(&self.assessment())
     }
 
-    /// Space counts only usable dry land reachable from the gate (#97).
+    /// The usable land every resident claims together: each animal its species' space (#108).
+    fn required_space(&self) -> u32 {
+        self.residents.iter().fold(0, |total, resident| {
+            total.saturating_add(
+                self.species_count(&resident.species.key)
+                    .saturating_mul(resident.species.welfare_profile().space_per_animal),
+            )
+        })
+    }
+
+    /// Space counts only usable dry land reachable from the gate (#97), shared by every
+    /// resident (#108).
     fn space_score_with(&self, assessment: &environment::Assessment) -> u32 {
-        let Some(species) = &self.species else {
-            return 100;
-        };
         if !self.stocked() {
             return 100;
         }
 
         let available_space = assessment.usable_land;
-        let required_space = self
-            .animal_count()
-            .saturating_mul(species.welfare_profile().space_per_animal);
+        let required_space = self.required_space();
         if required_space <= available_space {
             100
         } else {
@@ -651,23 +668,44 @@ impl Habitat {
     /// The weighted parts of [`Habitat::welfare_parts`]: social group and space count double;
     /// food, drinking water, cleanliness, shelter, enrichment, ground cover, shallow and deep
     /// water count once each.
+    /// The resident-weighted welfare target of every species living here (#108).
     fn welfare_target(&self) -> u32 {
-        Self::target_of(&self.welfare_parts())
+        let assessment = self.assessment();
+        self.weighted(|resident| {
+            Self::target_of(&self.species_parts(&resident.species, &assessment))
+        })
     }
 
     fn welfare_status(&self, staffing: Option<&str>, gate_reachable: bool) -> String {
-        let Some(species) = &self.species else {
+        if self.residents.is_empty() {
             return "Ready for animals".to_owned();
-        };
-        let social = self.social_score();
+        }
+        let mixed = self.residents.len() > 1;
+        let short = self
+            .residents
+            .iter()
+            .find(|resident| self.social_score_of(&resident.species) < 100);
         let space = self.space_score();
-        let minimum_group = species.welfare_profile().minimum_social_group;
+        let group = |resident: &mixed::Resident| {
+            if mixed {
+                format!("{} group", resident.species.label())
+            } else {
+                "Social group".to_owned()
+            }
+        };
 
-        match (social < 100, space < 100) {
-            (true, true) => "Social group is too small and habitat space is crowded".to_owned(),
-            (true, false) => format!("Social group needs at least {minimum_group} animals"),
-            (false, true) => "Habitat space is crowded for this group".to_owned(),
-            (false, false) => self.care_status(staffing, gate_reachable),
+        match (short, space < 100) {
+            (Some(resident), true) => format!(
+                "{} is too small and habitat space is crowded",
+                group(resident)
+            ),
+            (Some(resident), false) => format!(
+                "{} needs at least {} animals",
+                group(resident),
+                resident.species.welfare_profile().minimum_social_group
+            ),
+            (None, true) => "Habitat space is crowded for this group".to_owned(),
+            (None, false) => self.care_status(staffing, gate_reachable),
         }
     }
 
@@ -1006,71 +1044,7 @@ impl GameState {
     }
 
     fn adopt(&mut self, habitat_id: u32, species_name: &str) -> ActionResult {
-        let Some(species) = self
-            .catalog
-            .species
-            .iter()
-            .find(|species| species.key == species_name)
-            .cloned()
-        else {
-            return ActionResult::error("Unknown species");
-        };
-        if !self.unlocks.species_unlocked(&species.key) {
-            return ActionResult::error(format!(
-                "{} is not available in this scenario",
-                species.label()
-            ));
-        }
-        let Some(index) = self
-            .habitats
-            .iter()
-            .position(|habitat| habitat.id == habitat_id)
-        else {
-            return ActionResult::error("Select a habitat first");
-        };
-
-        let habitat = &self.habitats[index];
-        if habitat.animal_count() >= habitat.capacity() {
-            return ActionResult::error("That habitat is at capacity");
-        }
-        if habitat
-            .species
-            .as_ref()
-            .is_some_and(|current| current.key != species.key)
-        {
-            return ActionResult::error("Each habitat currently keeps one species");
-        }
-        if habitat.fence.height_cm < species.minimum_fence_height_cm {
-            return ActionResult::error(format!(
-                "{} needs a fence at least {} cm high; habitat #{habitat_id}'s {} is {} cm. Upgrade its fence first",
-                species.label(),
-                species.minimum_fence_height_cm,
-                habitat.fence.label.to_lowercase(),
-                habitat.fence.height_cm
-            ));
-        }
-        if let Some(problem) = self.zone_staffing_problem(habitat) {
-            return ActionResult::error(format!("Staff this habitat before adopting: {problem}"));
-        }
-
-        if let Err(message) = self.spend(species.purchase_cost(), ExpenseCategory::AnimalPurchase) {
-            return ActionResult::error(message);
-        }
-        let now = self.absolute_minute();
-        let habitat = &mut self.habitats[index];
-        if habitat.care_schedule.is_none() {
-            habitat.care_schedule = Some(care::CareSchedule::instantiate(&species.care, now));
-        }
-        habitat.species = Some(species.clone());
-        let id = self.add_animal(index, &species.key);
-        let name = self.habitats[index]
-            .animals
-            .last()
-            .map_or("", |animal| animal.name.as_str());
-        ActionResult::ok(format!(
-            "{} adopted into habitat #{habitat_id}: {name} (#{id})",
-            species.label()
-        ))
+        self.adopt_group(habitat_id, species_name, 1)
     }
 
     fn absolute_minute(&self) -> u64 {
@@ -1451,11 +1425,21 @@ impl GameState {
             if !habitat.stocked() {
                 continue;
             }
-            let target = habitat.welfare_target();
-            if habitat.welfare < target {
-                habitat.welfare = habitat.welfare.saturating_add(1).min(target);
-            } else if habitat.welfare > target {
-                habitat.welfare = habitat.welfare.saturating_sub(1).max(target);
+            // Each resident species' welfare moves towards its own target (#108).
+            let assessment = habitat.assessment();
+            let targets: Vec<u32> = habitat
+                .residents
+                .iter()
+                .map(|resident| {
+                    Habitat::target_of(&habitat.species_parts(&resident.species, &assessment))
+                })
+                .collect();
+            for (resident, target) in habitat.residents.iter_mut().zip(targets) {
+                if resident.welfare < target {
+                    resident.welfare = resident.welfare.saturating_add(1).min(target);
+                } else if resident.welfare > target {
+                    resident.welfare = resident.welfare.saturating_sub(1).max(target);
+                }
             }
         }
     }
@@ -1506,7 +1490,7 @@ impl GameState {
             .iter()
             .find(|habitat| habitat.id == habitat_id)
             .map_or(0, |habitat| {
-                4 + habitat.welfare / 20 + habitat.appeal().min(300) / 30
+                4 + habitat.welfare() / 20 + habitat.appeal().min(300) / 30
             })
     }
 
@@ -2225,9 +2209,7 @@ impl GameState {
         let balance = &self.catalog.balance;
         let times = |count: usize, cents: i64| (count as i64).saturating_mul(cents);
         let habitat_upkeep = self.habitats.iter().fold(0_i64, |total, habitat| {
-            let animals = habitat.species.as_ref().map_or(0, |species| {
-                times(habitat.animal_count() as usize, species.hourly_upkeep_cents)
-            });
+            let animals = habitat.animal_upkeep_cents();
             total
                 .saturating_add(balance.upkeep.habitat_hourly_cents)
                 .saturating_add(animals)
@@ -2294,7 +2276,7 @@ impl GameState {
                 .habitats
                 .iter()
                 .filter(|habitat| habitat.stocked())
-                .map(|habitat| habitat.welfare)
+                .map(|habitat| habitat.welfare())
                 .sum();
             let count = self
                 .habitats
@@ -2863,6 +2845,11 @@ impl GameState {
                         animal::Activity::Resting { .. } => None,
                     },
                     energy: animal.energy,
+                    welfare: habitat
+                        .residents
+                        .iter()
+                        .find(|resident| resident.species.key == animal.species)
+                        .map_or(100, |resident| resident.welfare),
                     cosmetic_seed: animal.cosmetic_seed,
                     animation_phase: animal.cosmetic_seed % 100,
                 })
@@ -3211,10 +3198,8 @@ impl GameState {
                         access: self.gate_access_tile(habitat.service_gate),
                         reachable: gate_reachable,
                     },
-                    species: habitat
-                        .species
-                        .as_ref()
-                        .map(|species| species.key().to_owned()),
+                    species: habitat.species_keys(),
+                    residents: habitat.resident_views(),
                     animals: habitat.animal_count(),
                     capacity: habitat.capacity(),
                     viewing_capacity,
@@ -3231,7 +3216,7 @@ impl GameState {
                             crowded: spot.crowded(),
                         })
                         .collect(),
-                    welfare: habitat.welfare,
+                    welfare: habitat.welfare(),
                     welfare_target: habitat.welfare_target(),
                     social_score: habitat.social_score(),
                     space_score: habitat.space_score(),
@@ -3241,10 +3226,6 @@ impl GameState {
                     cleanliness: habitat.cleanliness,
                     environment: habitat.environment_view(),
                     welfare_parts: habitat.welfare_parts(),
-                    requirements: habitat
-                        .species
-                        .as_ref()
-                        .map(|species| species.habitat.clone()),
                     work_zone_id,
                     zone_keeper_count: work_zone_id
                         .map_or(0, |zone_id| self.zone_keeper_count(zone_id) as u32),
@@ -3622,7 +3603,10 @@ struct HabitatView {
     fence_length: u32,
     fence_segments: Vec<FenceSegment>,
     service_gate: ServiceGateView,
-    species: Option<String>,
+    /// Resident species keys, in arrival order (#108).
+    species: Vec<String>,
+    /// Each resident species with its own animals, welfare and requirements (#108).
+    residents: Vec<mixed::ResidentView>,
     animals: u32,
     capacity: u32,
     viewing_capacity: u32,
@@ -3640,8 +3624,6 @@ struct HabitatView {
     environment: environment::EnvironmentView,
     /// Every weighted part of the welfare target, explained.
     welfare_parts: Vec<environment::Contribution>,
-    /// The housed species' layout requirements.
-    requirements: Option<content::HabitatRequirements>,
     /// The work zone containing the service gate; `None` means no keeper can serve it.
     work_zone_id: Option<u32>,
     /// Keepers working in that zone; habitat jobs go only to them.
@@ -3681,6 +3663,8 @@ struct AnimalView {
     /// Where a walking animal is heading.
     target: Option<Position>,
     energy: u32,
+    /// Its species' welfare in its habitat (#108).
+    welfare: u32,
     /// Presentation-only variation: tile offset and animation phase.
     cosmetic_seed: u32,
     animation_phase: u32,
@@ -4056,6 +4040,11 @@ impl ZooGame {
             }
             "bulldoze" => self.bulldoze(number("x")?, number("y")?),
             "adopt" => self.adopt(number("habitat_id")?, text("species")?),
+            "adopt_group" => {
+                self.adopt_group(number("habitat_id")?, text("species")?, number("count")?)
+            }
+            "transfer_animal" => self.transfer_animal(number("animal_id")?, number("habitat_id")?),
+            "rehome_animal" => self.rehome_animal(number("animal_id")?),
             "rename_animal" => self.rename_animal(number("animal_id")?, text("name")?),
             "buy_animal_feed" => self.buy_animal_feed(),
             "hire_keeper" => self.hire_keeper(),
@@ -4544,6 +4533,46 @@ impl ZooGame {
         self.command("adopt", args, |state| state.adopt(habitat_id, &species))
     }
 
+    /// Previews adopting `count` animals of one species into a habitat (#108): compatibility
+    /// with every resident species, room, fence, staffing and cost, and the effect on space,
+    /// shared shelter and enrichment, feed use, upkeep and each species' welfare. Changes
+    /// nothing.
+    pub fn evaluate_adoption(&self, habitat_id: u32, species: String, count: u32) -> String {
+        serde_json::to_string(&self.state.evaluate_adoption(habitat_id, &species, count))
+            .expect("arrival preview serialization is infallible")
+    }
+
+    /// Adopts `count` (1–12) animals of one species into a habitat as one transaction (#108).
+    pub fn adopt_group(&mut self, habitat_id: u32, species: String, count: u32) -> String {
+        let args =
+            serde_json::json!({ "habitat_id": habitat_id, "species": species, "count": count });
+        self.command("adopt_group", args, |state| {
+            state.adopt_group(habitat_id, &species, count)
+        })
+    }
+
+    /// Previews moving one animal into another habitat, for both habitats (#108).
+    pub fn evaluate_transfer(&self, animal_id: u32, habitat_id: u32) -> String {
+        serde_json::to_string(&self.state.evaluate_transfer(animal_id, habitat_id))
+            .expect("arrival preview serialization is infallible")
+    }
+
+    /// Moves one animal, keeping its identity, into another habitat (#108).
+    pub fn transfer_animal(&mut self, animal_id: u32, habitat_id: u32) -> String {
+        let args = serde_json::json!({ "animal_id": animal_id, "habitat_id": habitat_id });
+        self.command("transfer_animal", args, |state| {
+            state.transfer_animal(animal_id, habitat_id)
+        })
+    }
+
+    /// Sends one animal to a partner zoo; it leaves the park for good (#108).
+    pub fn rehome_animal(&mut self, animal_id: u32) -> String {
+        let args = serde_json::json!({ "animal_id": animal_id });
+        self.command("rehome_animal", args, |state| {
+            state.rehome_animal(animal_id)
+        })
+    }
+
     /// Renames one animal by its stable ID; the name is trimmed and at most 24 characters.
     pub fn rename_animal(&mut self, animal_id: u32, name: String) -> String {
         let args = serde_json::json!({ "animal_id": animal_id, "name": name });
@@ -4840,7 +4869,10 @@ mod tests {
                 .expect("valid built-in catalog")
                 .fences[0]
                 .clone(),
-            species: Some(Species::parse("capybara").expect("default catalog capybara")),
+            residents: vec![mixed::Resident {
+                species: Species::parse("capybara").expect("default catalog capybara"),
+                welfare: 100,
+            }],
             animals: vec![animal::Animal {
                 id: 1,
                 species: "capybara".to_owned(),
@@ -4857,7 +4889,6 @@ mod tests {
                 energy: 100,
                 decisions: 0,
             }],
-            welfare: 100,
             food: 100,
             water: 100,
             cleanliness: 100,

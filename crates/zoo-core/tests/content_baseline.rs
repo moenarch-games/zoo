@@ -39,6 +39,23 @@ pub fn command_fixture(game: &mut ZooGame, species: &str) -> Value {
         .unwrap()
         .remove("comfort")
         .unwrap();
+    // #108 lists a habitat's resident species, each with its own requirements; with one
+    // species per habitat that is exactly the species and requirements it had.
+    for habitat in snapshot["habitats"].as_array_mut().unwrap() {
+        let habitat = habitat.as_object_mut().unwrap();
+        let species = habitat["species"].as_array().unwrap().clone();
+        assert!(species.len() <= 1);
+        let residents = habitat.remove("residents").unwrap();
+        assert_eq!(residents.as_array().unwrap().len(), species.len());
+        habitat.insert(
+            "species".to_owned(),
+            species.first().cloned().unwrap_or(Value::Null),
+        );
+        habitat.insert(
+            "requirements".to_owned(),
+            residents[0]["requirements"].clone(),
+        );
+    }
     // #99 adds a land-purchase ledger line, always zero here.
     for day in ["current_day", "previous_day"] {
         if let Some(breakdown) = snapshot["finance"]

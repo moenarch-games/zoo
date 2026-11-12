@@ -777,7 +777,11 @@ impl GameState {
                 target.food = food.unwrap_or(target.food);
                 target.water = water.unwrap_or(target.water);
                 target.cleanliness = cleanliness.unwrap_or(target.cleanliness);
-                target.welfare = welfare.unwrap_or(target.welfare);
+                if let Some(welfare) = welfare {
+                    for resident in &mut target.residents {
+                        resident.welfare = welfare;
+                    }
+                }
                 ActionResult::ok("Habitat condition set")
             }
             SetupStep::ConcessionCondition {
@@ -826,7 +830,7 @@ impl GameState {
             Goal::CashCents { at_least } => self.cash_cents >= *at_least,
             Goal::FeedCrates { at_least } => self.feed_crates >= *at_least,
             Goal::Welfare { at_least } => {
-                stocked().next().is_some() && stocked().all(|h| h.welfare >= *at_least)
+                stocked().next().is_some() && stocked().all(|h| h.welfare() >= *at_least)
             }
             Goal::GatesReachable => {
                 !self.habitats.is_empty()

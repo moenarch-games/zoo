@@ -72,7 +72,10 @@ fn definition_only_species_uses_existing_adoption_and_finance() {
     accepted(game.adopt(1, "acceptance_species".to_owned()));
     let after = view(&game);
     assert_eq!(after["cash_cents"].as_i64().unwrap(), before - 12345);
-    assert_eq!(after["habitats"][0]["species"], "acceptance_species");
+    assert_eq!(
+        after["habitats"][0]["species"],
+        json!(["acceptance_species"])
+    );
     assert_eq!(after["habitats"][0]["animals"], 1);
     assert!(
         after["species_catalog"]

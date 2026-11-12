@@ -383,6 +383,18 @@
       }
     }
   ],
+  "species_compatibility": [
+    {
+      "species": ["giraffe", "zebra"],
+      "compatible": true,
+      "reason": "Giraffes browse treetops and zebras graze below, so a savanna yard with a tall fence suits both"
+    },
+    {
+      "species": ["elephant", "zebra"],
+      "compatible": false,
+      "reason": "Elephants can trample zebras when they share a yard"
+    }
+  ],
   "facilities": [
     {
       "key": "food",

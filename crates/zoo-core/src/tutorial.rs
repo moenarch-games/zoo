@@ -236,10 +236,10 @@ impl GameState {
         let habitat = self
             .habitats
             .iter()
-            .filter(|habitat| habitat.stocked() && habitat.welfare < at_least)
-            .min_by_key(|habitat| habitat.welfare)?;
+            .filter(|habitat| habitat.stocked() && habitat.welfare() < at_least)
+            .min_by_key(|habitat| habitat.welfare())?;
         let (name, score) = Self::lowest_welfare_part(habitat);
-        let trend = if habitat.welfare_target() > habitat.welfare {
+        let trend = if habitat.welfare_target() > habitat.welfare() {
             "rising"
         } else {
             "not rising"
@@ -248,7 +248,8 @@ impl GameState {
             "Habitat #{} welfare is {} and {trend}; its lowest part is {name} at {score}. Welfare \
              blends social group and space with food, water, cleanliness and the habitat layout: \
              shelter, enrichment, ground cover and pools.",
-            habitat.id, habitat.welfare
+            habitat.id,
+            habitat.welfare()
         ))
     }
 

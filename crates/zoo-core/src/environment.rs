@@ -17,7 +17,7 @@
 //! fence-side tile or create a slope steeper than [`MAX_SLOPE_STEP`].
 use super::{
     ActionResult, ExpenseCategory, GameState, Habitat, Position,
-    content::{CareCategory, HabitatObjectType, ObjectRole, Surface},
+    content::{CareCategory, HabitatObjectType, HabitatRequirements, ObjectRole, Species, Surface},
     shape,
 };
 use serde::{Deserialize, Serialize};
@@ -289,6 +289,21 @@ pub(crate) struct Assessment {
     pub enrichment_capacity: u32,
     /// Objects on tiles the animals cannot reach: they provide nothing.
     pub unreachable_objects: Vec<u32>,
+    /// Usable land that is sand (the rest is grass): each resident species' own ground cover.
+    #[serde(skip)]
+    pub sand_land: u32,
+}
+
+impl Assessment {
+    /// The share of usable land, in percent, that is `surface` (#108: per resident species).
+    pub(crate) fn cover_percent_of(&self, surface: Surface) -> u32 {
+        let tiles = match surface {
+            Surface::Sand => self.sand_land,
+            Surface::Grass => self.usable_land.saturating_sub(self.sand_land),
+            Surface::ShallowWater | Surface::DeepWater => 0,
+        };
+        (tiles * 100).checked_div(self.usable_land).unwrap_or(0)
+    }
 }
 
 impl Habitat {
@@ -307,10 +322,9 @@ impl Habitat {
     pub(crate) fn assessment(&self) -> Assessment {
         let area = self.roam_area();
         let environment = &self.environment;
-        let cover = self
-            .species
-            .as_ref()
-            .map_or(Surface::Grass, |species| species.habitat.ground_cover);
+        let cover = self.residents.first().map_or(Surface::Grass, |resident| {
+            resident.species.habitat.ground_cover
+        });
         let mut assessment = Assessment::default();
         for tile in &self.tiles {
             let (surface, _) = environment.cell(*tile);
@@ -333,6 +347,9 @@ impl Habitat {
                     assessment.reachable_tiles += 1;
                     if environment.object_at(*tile).is_none() {
                         assessment.usable_land += 1;
+                        if surface == Surface::Sand {
+                            assessment.sand_land += 1;
+                        }
                         if surface == cover {
                             assessment.cover_tiles += 1;
                         }
@@ -425,51 +442,132 @@ fn plural(count: u32, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
+fn part(
+    key: &'static str,
+    label: &'static str,
+    weight: u32,
+    score: u32,
+    detail: String,
+) -> Contribution {
+    Contribution {
+        key,
+        label,
+        weight,
+        score,
+        met: score >= 100,
+        detail,
+    }
+}
+
 impl Habitat {
-    /// Every part of the welfare target with its weight, score and explanation.
+    /// Every part of the welfare target with its weight, score and explanation. With one
+    /// species these are its parts; a mixed habitat (#108) shows, for each part, the resident
+    /// species that fares worst, named in the detail.
     pub(crate) fn welfare_parts(&self) -> Vec<Contribution> {
         let assessment = self.assessment();
-        let stocked = self.stocked();
-        let animals = self.animal_count();
-        let part = |key, label, weight, score: u32, detail: String| Contribution {
-            key,
-            label,
-            weight,
-            score,
-            met: score >= 100,
-            detail,
-        };
+        match self.residents.as_slice() {
+            [] => self.unstocked_parts(&assessment),
+            [only] => self.species_parts(&only.species, &assessment),
+            residents => {
+                let mut worst: Vec<Contribution> = Vec::new();
+                for resident in residents {
+                    let parts = self.species_parts(&resident.species, &assessment);
+                    for (index, mut part) in parts.into_iter().enumerate() {
+                        part.detail = format!("{}: {}", resident.species.label, part.detail);
+                        match worst.get_mut(index) {
+                            Some(current) if part.score < current.score => *current = part,
+                            Some(_) => {}
+                            None => worst.push(part),
+                        }
+                    }
+                }
+                worst
+            }
+        }
+    }
+
+    fn unstocked_parts(&self, assessment: &Assessment) -> Vec<Contribution> {
         let mut parts = vec![
             part(
                 "social",
                 "Social group",
                 2,
-                self.social_score(),
-                self.species.as_ref().map_or_else(
-                    || "No animals yet".to_owned(),
-                    |species| {
-                        format!(
-                            "{animals} of at least {} together",
-                            species.welfare_profile().minimum_social_group
-                        )
-                    },
+                100,
+                "No animals yet".to_owned(),
+            ),
+            part(
+                "space",
+                "Usable space",
+                2,
+                100,
+                format!("{} usable dry tiles", assessment.usable_land),
+            ),
+            part("food", "Food", 1, 100, format!("Feed level {}", self.food)),
+            part(
+                "water",
+                "Drinking water",
+                1,
+                100,
+                format!("Trough level {}", self.water),
+            ),
+            part(
+                "cleanliness",
+                "Cleanliness",
+                1,
+                100,
+                format!("Cleanliness {}", self.cleanliness),
+            ),
+        ];
+        for (key, label) in [
+            ("shelter", "Shelter"),
+            ("enrichment", "Enrichment"),
+            ("ground_cover", "Ground cover"),
+            ("shallow_water", "Shallow water"),
+            ("deep_water", "Deep water"),
+        ] {
+            parts.push(part(
+                key,
+                label,
+                1,
+                100,
+                "Needs depend on the animals".to_owned(),
+            ));
+        }
+        parts
+    }
+
+    /// The welfare parts of one resident species (#108). Its social group counts only its own
+    /// animals; usable land, shelter and enrichment are shared with every resident that needs
+    /// them; feed, water and cleanliness are the habitat's one pool; ground cover and water are
+    /// judged against this species' own requirements.
+    pub(crate) fn species_parts(
+        &self,
+        species: &Species,
+        assessment: &Assessment,
+    ) -> Vec<Contribution> {
+        let animals = self.animal_count();
+        let mut parts = vec![
+            part(
+                "social",
+                "Social group",
+                2,
+                self.social_score_of(species),
+                format!(
+                    "{} of at least {} together",
+                    self.species_count(&species.key),
+                    species.minimum_social_group
                 ),
             ),
             part(
                 "space",
                 "Usable space",
                 2,
-                self.space_score_with(&assessment),
-                self.species.as_ref().map_or_else(
-                    || format!("{} usable dry tiles", assessment.usable_land),
-                    |species| {
-                        format!(
-                            "{} usable dry tiles reachable from the gate; {} animals need {}",
-                            assessment.usable_land,
-                            animals,
-                            animals.saturating_mul(species.welfare_profile().space_per_animal)
-                        )
-                    },
+                self.space_score_with(assessment),
+                format!(
+                    "{} usable dry tiles reachable from the gate; {} animals need {}",
+                    assessment.usable_land,
+                    animals,
+                    self.required_space()
                 ),
             ),
             part(
@@ -494,24 +592,6 @@ impl Habitat {
                 format!("Cleanliness {}", self.cleanliness),
             ),
         ];
-        let Some(species) = self.species.as_ref().filter(|_| stocked) else {
-            for (key, label) in [
-                ("shelter", "Shelter"),
-                ("enrichment", "Enrichment"),
-                ("ground_cover", "Ground cover"),
-                ("shallow_water", "Shallow water"),
-                ("deep_water", "Deep water"),
-            ] {
-                parts.push(part(
-                    key,
-                    label,
-                    1,
-                    100,
-                    "Needs depend on the animals".to_owned(),
-                ));
-            }
-            return parts;
-        };
         let needs = &species.habitat;
         let unreachable = |role: ObjectRole| {
             let count = self
@@ -529,12 +609,21 @@ impl Habitat {
                 format!(" · {count} unreachable, no benefit")
             }
         };
+        // Every resident that needs a shelter place (or enrichment) competes for the same ones.
+        let sharing = |needed: fn(&HabitatRequirements) -> bool| {
+            self.residents
+                .iter()
+                .filter(|resident| needed(&resident.species.habitat))
+                .map(|resident| self.species_count(&resident.species.key))
+                .fold(0_u32, u32::saturating_add)
+        };
         let (score, detail) = if needs.shelter {
+            let sharing = sharing(|needs| needs.shelter);
             (
-                40 + 60 * ratio(assessment.shelter_capacity, animals) / 100,
+                40 + 60 * ratio(assessment.shelter_capacity, sharing) / 100,
                 format!(
-                    "Reachable shelter for {} of {animals} animals{}",
-                    assessment.shelter_capacity.min(animals),
+                    "Reachable shelter for {} of {sharing} animals{}",
+                    assessment.shelter_capacity.min(sharing),
                     unreachable(ObjectRole::Shelter)
                 ),
             )
@@ -543,11 +632,12 @@ impl Habitat {
         };
         parts.push(part("shelter", "Shelter", 1, score, detail));
         let (score, detail) = if needs.enrichment {
+            let sharing = sharing(|needs| needs.enrichment);
             (
-                50 + 50 * ratio(assessment.enrichment_capacity, animals) / 100,
+                50 + 50 * ratio(assessment.enrichment_capacity, sharing) / 100,
                 format!(
-                    "Reachable enrichment for {} of {animals} animals{}",
-                    assessment.enrichment_capacity.min(animals),
+                    "Reachable enrichment for {} of {sharing} animals{}",
+                    assessment.enrichment_capacity.min(sharing),
                     unreachable(ObjectRole::Enrichment)
                 ),
             )
@@ -555,14 +645,15 @@ impl Habitat {
             (100, "Not needed by this species".to_owned())
         };
         parts.push(part("enrichment", "Enrichment", 1, score, detail));
+        let cover_percent = assessment.cover_percent_of(needs.ground_cover);
         parts.push(part(
             "ground_cover",
             "Ground cover",
             1,
-            ratio(assessment.cover_percent, needs.ground_cover_percent),
+            ratio(cover_percent, needs.ground_cover_percent),
             format!(
                 "{}% of usable land is {}; needs {}%",
-                assessment.cover_percent,
+                cover_percent,
                 needs.ground_cover.label(),
                 needs.ground_cover_percent
             ),

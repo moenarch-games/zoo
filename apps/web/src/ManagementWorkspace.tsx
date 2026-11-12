@@ -295,7 +295,8 @@ export function DailySummaryView({
                   onJump({ kind: "habitat", id: entry.habitat_id }, center(entry.habitat_id))
                 }
               >
-                Habitat #{entry.habitat_id} · {entry.animals} {entry.species ?? "animals"}
+                Habitat #{entry.habitat_id} · {entry.animals}{" "}
+                {entry.species.length === 0 ? "animals" : entry.species.join(" & ")}
               </button>
               <strong>{entry.welfare}</strong>
             </li>
@@ -708,7 +709,9 @@ export function ManagementWorkspace({
                 key: "species",
                 label: "Animals",
                 value: (habitat) =>
-                  habitat.animals === 0 ? "Empty" : `${habitat.animals} ${label(habitat.species)}`,
+                  habitat.animals === 0
+                    ? "Empty"
+                    : `${habitat.animals} ${habitat.species.map(label).join(" & ")}`,
               },
               {
                 key: "welfare",

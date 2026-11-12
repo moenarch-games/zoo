@@ -152,8 +152,8 @@ impl GameState {
             }
             OverlayKind::Welfare => {
                 for habitat in self.habitats.iter().filter(|habitat| habitat.stocked()) {
-                    let level = grade(habitat.welfare, 70, super::alerts::LOW_WELFARE);
-                    out.footprint(habitat, level, Some(habitat.welfare));
+                    let level = grade(habitat.welfare(), 70, super::alerts::LOW_WELFARE);
+                    out.footprint(habitat, level, Some(habitat.welfare()));
                     let (part, score) = Self::lowest_welfare_part(habitat);
                     out.item(
                         level,
@@ -161,7 +161,8 @@ impl GameState {
                         Self::habitat_center(habitat),
                         format!(
                             "Habitat #{} welfare {} · lowest {part} {score}",
-                            habitat.id, habitat.welfare
+                            habitat.id,
+                            habitat.welfare()
                         ),
                     );
                 }
@@ -578,7 +579,8 @@ type GuestTest = fn(&super::Guest) -> bool;
 #[derive(Serialize)]
 struct HabitatWelfare {
     habitat_id: u32,
-    species: Option<String>,
+    /// Resident species keys (#108).
+    species: Vec<String>,
     animals: u32,
     welfare: u32,
 }
@@ -641,7 +643,7 @@ impl GameState {
         let welfare = (animals > 0).then(|| {
             (stocked
                 .iter()
-                .map(|habitat| u64::from(habitat.welfare) * u64::from(habitat.animal_count()))
+                .map(|habitat| u64::from(habitat.welfare()) * u64::from(habitat.animal_count()))
                 .sum::<u64>()
                 / animals) as u32
         });
@@ -730,12 +732,9 @@ impl GameState {
                 .iter()
                 .map(|habitat| HabitatWelfare {
                     habitat_id: habitat.id,
-                    species: habitat
-                        .species
-                        .as_ref()
-                        .map(|species| species.key().to_owned()),
+                    species: habitat.species_keys(),
                     animals: habitat.animal_count(),
-                    welfare: habitat.welfare,
+                    welfare: habitat.welfare(),
                 })
                 .collect(),
             complaints,

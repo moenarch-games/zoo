@@ -22,7 +22,7 @@
 //! crowded minute. Patience is the number of crowded minutes a profile tolerates.
 use super::{
     GUEST_CONTINUE_MAX_HUNGER, GUEST_CONTINUE_MAX_THIRST, GUEST_CONTINUE_MIN_ENERGY,
-    GUEST_CONTINUE_MIN_HAPPINESS, GUEST_CONTINUE_MIN_VALUE, GameState, Guest, GuestState,
+    GUEST_CONTINUE_MIN_HAPPINESS, GUEST_CONTINUE_MIN_VALUE, GameState, Guest, GuestState, Habitat,
     MIN_ENGAGING_HABITAT_WELFARE, Mover, Position, ViewingOccupancy, ViewingSpot, animal, comfort,
     pricing::{self, GateOutcome},
 };
@@ -382,7 +382,7 @@ impl GameState {
         let mut best: Option<(i64, u32, ViewingSpot, u32, bool)> = None;
         for habitat in &self.habitats {
             if !habitat.stocked()
-                || habitat.welfare < MIN_ENGAGING_HABITAT_WELFARE
+                || habitat.welfare() < MIN_ENGAGING_HABITAT_WELFARE
                 || seen.contains(&habitat.id)
             {
                 continue;
@@ -396,15 +396,16 @@ impl GameState {
             if tiles > rules.walking_tolerance {
                 continue;
             }
+            // A mixed habitat (#108) shows every resident species.
             let favored = favorite.is_some_and(|favorite| {
                 habitat
-                    .species
-                    .as_ref()
-                    .is_some_and(|species| species.key() == favorite)
+                    .residents
+                    .iter()
+                    .any(|resident| resident.species.key == favorite)
             });
             let full = spot.available_capacity() == 0;
             let score = i64::from(habitat.appeal().min(300) / 10)
-                + i64::from(habitat.welfare / 5)
+                + i64::from(habitat.welfare() / 5)
                 + if favored { rules.favorite_weight } else { 0 }
                 - rules.walk_weight * i64::from(tiles)
                 - if full { rules.crowd_weight } else { 0 };
@@ -421,8 +422,7 @@ impl GameState {
             .habitats
             .iter()
             .find(|habitat| habitat.id == habitat_id)
-            .and_then(|habitat| habitat.species.as_ref())
-            .map_or("animals", |species| species.label());
+            .map_or_else(|| "animals".to_owned(), Habitat::species_labels);
         let mut reasons = Vec::new();
         if favored {
             reasons.push("our favourite species".to_owned());
@@ -454,8 +454,7 @@ impl GameState {
             .habitats
             .iter()
             .filter(|habitat| habitat.stocked())
-            .filter_map(|habitat| habitat.species.as_ref())
-            .map(|species| species.key().to_owned())
+            .flat_map(Habitat::species_keys)
             .collect();
         keys.sort();
         keys.dedup();

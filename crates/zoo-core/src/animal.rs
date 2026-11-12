@@ -56,7 +56,7 @@ pub(crate) enum Activity {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Animal {
     pub id: u32,
-    /// The species content key; always the habitat's species.
+    /// The species content key; always one of its habitat's resident species (#108).
     pub species: String,
     pub name: String,
     pub sex: Sex,
@@ -326,13 +326,6 @@ impl GameState {
                         animal.id, self.next_animal_id
                     ));
                 }
-                if habitat.species.as_ref().map(|s| s.key.as_str()) != Some(animal.species.as_str())
-                {
-                    return Some(format!(
-                        "animal {} is a {} but habitat {} keeps another species",
-                        animal.id, animal.species, habitat.id
-                    ));
-                }
                 if !habitat.contains(animal.position) {
                     return Some(format!(
                         "animal {} stands outside habitat {}",
@@ -355,7 +348,7 @@ impl GameState {
                 }
             }
         }
-        None
+        self.resident_violation()
     }
 }
 

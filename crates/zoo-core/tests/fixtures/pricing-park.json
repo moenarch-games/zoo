@@ -510,6 +510,24 @@
         "unlock_ref": "available"
       }
     ],
+    "species_compatibility": [
+      {
+        "compatible": true,
+        "reason": "Giraffes browse treetops and zebras graze below, so a savanna yard with a tall fence suits both",
+        "species": [
+          "giraffe",
+          "zebra"
+        ]
+      },
+      {
+        "compatible": false,
+        "reason": "Elephants can trample zebras when they share a yard",
+        "species": [
+          "elephant",
+          "zebra"
+        ]
+      }
+    ],
     "unlocks": [
       {
         "available": true,
@@ -1262,56 +1280,61 @@
         },
         "food": 92,
         "id": 1,
+        "residents": [
+          {
+            "species": {
+              "appeal": 95,
+              "asset_ref": "capybara",
+              "care": {
+                "required_keepers": 1,
+                "schedule": [
+                  {
+                    "category": "feeding",
+                    "first_minute_of_day": 420,
+                    "interval_minutes": 120,
+                    "priority": 4,
+                    "work_minutes": 15
+                  },
+                  {
+                    "category": "cleaning",
+                    "first_minute_of_day": 360,
+                    "interval_minutes": 360,
+                    "priority": 3,
+                    "work_minutes": 30
+                  },
+                  {
+                    "category": "inspection",
+                    "first_minute_of_day": 600,
+                    "interval_minutes": 1440,
+                    "priority": 2,
+                    "work_minutes": 10
+                  }
+                ]
+              },
+              "habitat": {
+                "deep_water_tiles": 1,
+                "enrichment": true,
+                "ground_cover": "grass",
+                "ground_cover_percent": 50,
+                "shallow_water_tiles": 2,
+                "shelter": true
+              },
+              "hourly_upkeep_cents": 125,
+              "key": "capybara",
+              "label": "Capybara",
+              "minimum_fence_height_cm": 90,
+              "minimum_social_group": 2,
+              "purchase_cost_cents": 25000,
+              "space_per_animal": 4,
+              "unlock_ref": "available"
+            },
+            "welfare": 63
+          }
+        ],
         "service_gate": {
           "side": "north",
           "x": 3,
           "y": 8
-        },
-        "species": {
-          "appeal": 95,
-          "asset_ref": "capybara",
-          "care": {
-            "required_keepers": 1,
-            "schedule": [
-              {
-                "category": "feeding",
-                "first_minute_of_day": 420,
-                "interval_minutes": 120,
-                "priority": 4,
-                "work_minutes": 15
-              },
-              {
-                "category": "cleaning",
-                "first_minute_of_day": 360,
-                "interval_minutes": 360,
-                "priority": 3,
-                "work_minutes": 30
-              },
-              {
-                "category": "inspection",
-                "first_minute_of_day": 600,
-                "interval_minutes": 1440,
-                "priority": 2,
-                "work_minutes": 10
-              }
-            ]
-          },
-          "habitat": {
-            "deep_water_tiles": 1,
-            "enrichment": true,
-            "ground_cover": "grass",
-            "ground_cover_percent": 50,
-            "shallow_water_tiles": 2,
-            "shelter": true
-          },
-          "hourly_upkeep_cents": 125,
-          "key": "capybara",
-          "label": "Capybara",
-          "minimum_fence_height_cm": 90,
-          "minimum_social_group": 2,
-          "purchase_cost_cents": 25000,
-          "space_per_animal": 4,
-          "unlock_ref": "available"
         },
         "tiles": [
           {
@@ -1351,8 +1374,7 @@
             "y": 10
           }
         ],
-        "water": 92,
-        "welfare": 63
+        "water": 92
       },
       {
         "animals": [
@@ -1423,56 +1445,61 @@
         },
         "food": 92,
         "id": 2,
+        "residents": [
+          {
+            "species": {
+              "appeal": 125,
+              "asset_ref": "zebra",
+              "care": {
+                "required_keepers": 1,
+                "schedule": [
+                  {
+                    "category": "feeding",
+                    "first_minute_of_day": 420,
+                    "interval_minutes": 120,
+                    "priority": 4,
+                    "work_minutes": 15
+                  },
+                  {
+                    "category": "cleaning",
+                    "first_minute_of_day": 360,
+                    "interval_minutes": 360,
+                    "priority": 3,
+                    "work_minutes": 30
+                  },
+                  {
+                    "category": "inspection",
+                    "first_minute_of_day": 600,
+                    "interval_minutes": 1440,
+                    "priority": 2,
+                    "work_minutes": 10
+                  }
+                ]
+              },
+              "habitat": {
+                "deep_water_tiles": 0,
+                "enrichment": true,
+                "ground_cover": "grass",
+                "ground_cover_percent": 70,
+                "shallow_water_tiles": 0,
+                "shelter": true
+              },
+              "hourly_upkeep_cents": 125,
+              "key": "zebra",
+              "label": "Zebra",
+              "minimum_fence_height_cm": 120,
+              "minimum_social_group": 3,
+              "purchase_cost_cents": 40000,
+              "space_per_animal": 5,
+              "unlock_ref": "available"
+            },
+            "welfare": 77
+          }
+        ],
         "service_gate": {
           "side": "north",
           "x": 9,
           "y": 8
-        },
-        "species": {
-          "appeal": 125,
-          "asset_ref": "zebra",
-          "care": {
-            "required_keepers": 1,
-            "schedule": [
-              {
-                "category": "feeding",
-                "first_minute_of_day": 420,
-                "interval_minutes": 120,
-                "priority": 4,
-                "work_minutes": 15
-              },
-              {
-                "category": "cleaning",
-                "first_minute_of_day": 360,
-                "interval_minutes": 360,
-                "priority": 3,
-                "work_minutes": 30
-              },
-              {
-                "category": "inspection",
-                "first_minute_of_day": 600,
-                "interval_minutes": 1440,
-                "priority": 2,
-                "work_minutes": 10
-              }
-            ]
-          },
-          "habitat": {
-            "deep_water_tiles": 0,
-            "enrichment": true,
-            "ground_cover": "grass",
-            "ground_cover_percent": 70,
-            "shallow_water_tiles": 0,
-            "shelter": true
-          },
-          "hourly_upkeep_cents": 125,
-          "key": "zebra",
-          "label": "Zebra",
-          "minimum_fence_height_cm": 120,
-          "minimum_social_group": 3,
-          "purchase_cost_cents": 40000,
-          "space_per_animal": 5,
-          "unlock_ref": "available"
         },
         "tiles": [
           {
@@ -1512,8 +1539,7 @@
             "y": 10
           }
         ],
-        "water": 92,
-        "welfare": 77
+        "water": 92
       }
     ],
     "height": 14,
@@ -2246,5 +2272,5 @@
       }
     ]
   },
-  "schema_version": 16
+  "schema_version": 17
 }
