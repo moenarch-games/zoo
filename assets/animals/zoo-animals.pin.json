@@ -1,0 +1,15 @@
+{
+  "release": "zoo-animals",
+  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-animals/zoo-animals.tar",
+  "tarSha256": "10478f08b43b05a7a36ff481584d09ef30cef829f56c6b4fbe9bb7465c767f18",
+  "assetToolingCommit": "179a67981fdd3d314c33a28850a2cb4fd897603c",
+  "profile": "gltf-resources-v1",
+  "pieces": {
+    "capybara": { "key": "zoo.animal.capybara", "variant": "expressive" },
+    "flamingo": { "key": "zoo.animal.flamingo", "variant": "expressive" },
+    "zebra": { "key": "zoo.animal.zebra", "variant": "expressive" },
+    "giraffe": { "key": "zoo.animal.giraffe", "variant": "expressive" },
+    "elephant": { "key": "zoo.animal.elephant", "variant": "expressive" },
+    "penguin": { "key": "zoo.animal.penguin", "variant": "expressive" }
+  }
+}

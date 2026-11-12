@@ -5,14 +5,12 @@
   ],
   "packageRules": [
     {
-      "description": "3d-lab Cargo crates share types across crates and must move to one revision together; split pins compile two incompatible copies of three-d-core.",
-      "matchManagers": [
-        "cargo"
-      ],
+      "description": "3d-lab is one accepted revision: the Cargo crates share types (split pins compile two incompatible copies of three-d-core) and the npm renderer must match the crates zoo-scene computes camera frames with, so all of them move together in one update.",
       "matchPackageNames": [
-        "three-d-*"
+        "three-d-*",
+        "@moritzbrantner/three-d-renderer"
       ],
-      "groupName": "3d-lab cargo crates"
+      "groupName": "3d-lab revision"
     },
     {
       "description": "Crates from one git repository must move together; single-crate digest bumps split the graph across revisions.",

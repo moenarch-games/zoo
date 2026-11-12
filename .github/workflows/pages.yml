@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: moritzbrantner/asset-tooling
-          ref: 570ce3109bcd86e63ab68189b8d9b319e01623f2 # = assetToolingCommit in assets/scenery and assets/effects pins
+          ref: 179a67981fdd3d314c33a28850a2cb4fd897603c # = assetToolingCommit in the assets/scenery, assets/effects and assets/animals pins
           path: .consumer-tools/asset-tooling
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

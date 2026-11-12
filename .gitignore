@@ -7,6 +7,7 @@
 /apps/web/public/generated-assets/.asset-tooling/
 /apps/web/public/zoo-scenery/
 /apps/web/public/zoo-effects/
+/apps/web/public/zoo-animals/
 .DS_Store
 
 # Disposable dependencies, builds, and browser evidence.

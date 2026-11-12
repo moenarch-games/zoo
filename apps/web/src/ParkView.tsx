@@ -8,14 +8,18 @@ import {
   type RendererWorkObservations,
   type ThreeSceneRenderer,
 } from "@moritzbrantner/three-d-renderer"
+import { renderImportedCharacterInstances } from "@moritzbrantner/three-d-renderer/imported-character"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
+import { loadAnimalKit } from "./animal-kit"
 import type { DisplaySettings } from "./ConditionsPanel"
 import { loadEffectsKit } from "./effects-kit"
 import type { Point, Snapshot } from "./game-types"
+import { ParkAnimals, type AnimalVisibility, type ParkAnimalsState } from "./park-animals"
 import { ParkEffects, type ParkEffectsState } from "./park-effects"
 import { DAY_BACKGROUND, parkEnvironment } from "./park-lighting"
 import {
+  ANIMAL_SCALE,
   buildActorFrame,
   buildSceneryNodes,
   buildStaticNodes,
@@ -133,6 +137,13 @@ type ViewDebugHook = {
   effects: () => (ParkEffectsState & { reducedMotion: boolean; liveAtlases: number }) | null
   /** The frame environment last submitted (#118); `null` for the renderer's default daylight. */
   environment: () => RendererEnvironment | null
+  /**
+   * The `zoo-animals` characters (#112): whether they loaded (else the fallback figures and the
+   * load error), and the live instances with their clips and pose LOD.
+   */
+  animals: () =>
+    | (ParkAnimalsState & { loaded: true; species: string[] })
+    | { loaded: false; error: string | null }
 }
 
 type RendererResources = {
@@ -218,6 +229,9 @@ export default function ParkView(props: Props) {
     let bridge: ParkCameraBridge | null = null
     let kit: SceneryKit | null = null
     let effects: ParkEffects | null = null
+    let animals: ParkAnimals | null = null
+    let animalHeights: ReadonlyMap<string, number> | null = null
+    let animalError: string | null = null
     let sources: EffectSources = { foliage: [], ponds: [] }
     let environment: RendererEnvironment | undefined
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -329,6 +343,10 @@ export default function ParkView(props: Props) {
       if (!renderer) {
         return
       }
+      // Character instances and their decoded assets go first, while the renderer can still
+      // release the GPU copies it made of them.
+      animals?.dispose()
+      animals = null
       renderer.dispose()
       renderer = null
       work = null
@@ -402,6 +420,7 @@ export default function ParkView(props: Props) {
             timeSeconds: now / 1000,
             animate,
             resolveActor: (key, x, z) => resolveActor(key, x, z, dt),
+            animalHeights,
           })
           for (const [key, actor] of actors) {
             if (!actor.seen) {
@@ -424,6 +443,33 @@ export default function ParkView(props: Props) {
           )
           // Daylight and weather from zoo-core's calendar (#118); omitted means default daylight.
           environment = parkEnvironment(current.snapshot.conditions, current.display)
+          if (animals && animalHeights) {
+            const heights = animalHeights
+            const project = createWorldProjector(camera, viewport)
+            const visibility: AnimalVisibility = (pose) => {
+              const height = (heights.get(pose.species) ?? 1) * ANIMAL_SCALE
+              const base = project([pose.x, pose.lift, pose.z])
+              const top = project([pose.x, pose.lift + height, pose.z])
+              const inside = (point: typeof base) =>
+                point.visible &&
+                point.x > -64 &&
+                point.y > -64 &&
+                point.x < viewport.width + 64 &&
+                point.y < viewport.height + 64
+              return {
+                visible: inside(base) || inside(top),
+                pixelHeight: Math.hypot(top.x - base.x, top.y - base.y),
+              }
+            }
+            const changed = animals.update(frame.animals, animate ? dt : 0, {
+              still: reducedMotion.matches,
+              visibility,
+            })
+            if (changed) {
+              // Hands the renderer the new set of character roots; `render` below draws them.
+              renderImportedCharacterInstances(renderer, { camera, instances: animals.instances() })
+            }
+          }
           work = renderer.render({
             camera,
             nodes: frame.nodes,
@@ -912,6 +958,10 @@ export default function ParkView(props: Props) {
             liveAtlases: work?.liveEffectAtlasCount ?? 0,
           },
         environment: () => environment ?? null,
+        animals: () =>
+          animals && animalHeights
+            ? { loaded: true, species: [...animalHeights.keys()], ...animals.state }
+            : { loaded: false, error: animalError },
       }
     }
 
@@ -922,7 +972,8 @@ export default function ParkView(props: Props) {
 
     // The scenery pieces are required content: a missing or mismatched asset fails the view closed.
     // The particle effects are cosmetic: without them the park still plays, so a load failure only
-    // warns and the view runs effect-free.
+    // warns and the view runs effect-free. The animated animals (#112) fall back to the readable
+    // low-poly figures when their characters fail to load, with the error in the debug hook.
     void Promise.all([
       initScene(),
       loadSceneryKit().catch((error: unknown) => {
@@ -934,13 +985,25 @@ export default function ParkView(props: Props) {
         console.warn("Zoo particle effects failed to load; running without them", error)
         return null
       }),
+      loadAnimalKit().catch((error: unknown) => {
+        animalError = error instanceof Error ? error.message : String(error)
+        console.warn("Zoo animal characters failed to load; showing the fallback figures", error)
+        return null
+      }),
     ])
-      .then(([, loaded, effectsKit]) => {
+      .then(([, loaded, effectsKit, animalKit]) => {
         if (disposed) {
+          animalKit?.dispose()
           return
         }
         kit = loaded
         effects = effectsKit && new ParkEffects(effectsKit)
+        if (animalKit) {
+          animals = new ParkAnimals(animalKit)
+          animalHeights = new Map(
+            [...animalKit.characters].map(([species, character]) => [species, character.height]),
+          )
+        }
         bridge = new ParkCameraBridge(parkWidth, parkHeight)
         bridgeRef.current = bridge
         // A fresh rig (new park or new map size) applies the latest request, such as a new
