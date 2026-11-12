@@ -345,6 +345,8 @@ export default function App() {
   const [selectedHabitatId, setSelectedHabitatId] = useState<number | null>(null)
   const [selectedGuestId, setSelectedGuestId] = useState<number | null>(null)
   const [selectedAnimalId, setSelectedAnimalId] = useState<number | null>(null)
+  // The animal the camera watches and follows (#141); presentation only, never game state.
+  const [watchedAnimalId, setWatchedAnimalId] = useState<number | null>(null)
   const [animalName, setAnimalName] = useState("")
   // Adoption group size and the selected animal's transfer destination (#108).
   const [adoptCount, setAdoptCount] = useState(1)
@@ -571,6 +573,12 @@ export default function App() {
         gameRef.current = ZooGame.from_content_json(documentText)
         diagnostics.connect(() => gameRef.current?.diagnostics_json() ?? "null")
         diagnostics.retain()
+        // Read-only: the complete authoritative park, so browser proofs can show that camera
+        // and watch presentation never change simulation state (#141).
+        window.__zooSimulation = {
+          stateJson: () => gameRef.current?.save_json() ?? null,
+          snapshotJson: () => gameRef.current?.snapshot_json() ?? null,
+        }
         if (faultInjectionEnabled()) {
           window.__zooFaults = {
             simulation: (kind: string) => {
@@ -685,6 +693,11 @@ export default function App() {
     [selectedAnimalId, snapshot],
   )
 
+  const watchedAnimal = useMemo(
+    () => snapshot?.animals.find((animal) => animal.id === watchedAnimalId) ?? null,
+    [watchedAnimalId, snapshot],
+  )
+
   // Rust's verdict and effect for adopting the chosen group of each species here (#108).
   const adoptionPreviews = useMemo(() => {
     const previews = new Map<SpeciesKey, ArrivalPreview>()
@@ -751,6 +764,9 @@ export default function App() {
     if (selectedAnimalId !== null && !snapshot.animals.some((a) => a.id === selectedAnimalId)) {
       setSelectedAnimalId(null)
     }
+    if (watchedAnimalId !== null && !snapshot.animals.some((a) => a.id === watchedAnimalId)) {
+      setWatchedAnimalId(null)
+    }
     if (selectedZoneId !== null && !snapshot.work_zones.some((z) => z.id === selectedZoneId)) {
       setSelectedZoneId(null)
     }
@@ -767,6 +783,7 @@ export default function App() {
     selectedHabitatId,
     selectedZoneId,
     snapshot,
+    watchedAnimalId,
   ])
 
   // The active overlay is re-read from zoo-core with each snapshot, never per rendered frame.
@@ -1101,7 +1118,7 @@ export default function App() {
       construction: scenePreview,
       selectedHabitatId,
       selectedGuestId,
-      selectedAnimalId,
+      selectedAnimalId: selectedAnimalId ?? watchedAnimalId,
       selectedDepot,
       gatePreview,
       zonesVisible,
@@ -1129,6 +1146,7 @@ export default function App() {
       outline,
       placement,
       selectedAnimalId,
+      watchedAnimalId,
       selectedDepot,
       selectedGuestId,
       selectedHabitatId,
@@ -1476,6 +1494,24 @@ export default function App() {
     }
   }
 
+  /**
+   * Picking an animal watches it first (#141): the camera follows the individual and a compact
+   * label shows zoo-core's name and activity, with the detailed inspector one deliberate step away.
+   */
+  const watchAnimal = (animalId: number) => {
+    setSelectedGuestId(null)
+    setSelectedHabitatId(null)
+    setSelectedZoneId(null)
+    setSelectedDepot(false)
+    setSelectedConcessionId(null)
+    setSelectedAnimalId(null)
+    setWatchedAnimalId(animalId)
+    const picked = snapshot?.animals.find((animal) => animal.id === animalId)
+    if (picked) {
+      inform(`Watching ${picked.name}`)
+    }
+  }
+
   const renameAnimal = () => {
     const game = gameRef.current
     if (!game || selectedAnimalId === null) {
@@ -1800,12 +1836,15 @@ export default function App() {
     const isDepotTile = (tile: Point | null) => tile?.x === depot.x && tile?.y === depot.y
 
     if (tool === "select") {
+      if (pick.kind === "animal") {
+        watchAnimal(pick.id)
+        return
+      }
+      // Choosing anything else stops watching and returns to ordinary park navigation.
+      setWatchedAnimalId(null)
       switch (pick.kind) {
         case "guest":
           selectGuest(pick.id)
-          return
-        case "animal":
-          selectAnimal(pick.id)
           return
         case "depot":
           selectDepot()
@@ -2623,6 +2662,8 @@ export default function App() {
             }
             cornerTool={outlineMode}
             camera={camera}
+            follow={watchedAnimal?.id ?? null}
+            onFollowEnd={() => setWatchedAnimalId(null)}
             tooltip={tooltip}
             onTileDown={onTileDown}
             onTileDrag={onTileDrag}
@@ -2632,6 +2673,19 @@ export default function App() {
             onRendererFailure={onRendererFailure}
           />
         </Suspense>
+
+        {watchedAnimal && (
+          <AnimalWatch
+            animal={watchedAnimal}
+            speciesLabel={speciesLabel(watchedAnimal.species, snapshot.species_catalog)}
+            detailsOpen={selectedAnimalId === watchedAnimal.id}
+            onDetails={() => selectAnimal(watchedAnimal.id)}
+            onStop={() => {
+              setWatchedAnimalId(null)
+              inform(`Stopped watching ${watchedAnimal.name}`)
+            }}
+          />
+        )}
 
         {(menuOpen || prompt !== null) && libraryPanel("menu")}
 
@@ -3141,7 +3195,8 @@ export default function App() {
               onNameChange={setAnimalName}
               onRename={renameAnimal}
               onLocate={() => {
-                requestCamera({ x: selectedAnimal.x, y: selectedAnimal.y })
+                // Locating an individual watches it (#141): the camera eases onto it and follows.
+                setWatchedAnimalId(selectedAnimal.id)
                 inform(`Camera moved to ${selectedAnimal.name}`)
               }}
               onShowHabitat={() => selectHabitat(selectedAnimal.habitat_id)}
@@ -4345,6 +4400,49 @@ function ObjectiveChecklist({
         {guided && <button onClick={onSkip}>Skip guide</button>}
       </div>
     </details>
+  )
+}
+
+/**
+ * The compact watch label of a followed animal (#141): zoo-core's name and current activity, a
+ * deliberate route to the inspector and an explicit way to stop following (also Escape or a pan).
+ */
+function AnimalWatch({
+  animal,
+  speciesLabel,
+  detailsOpen,
+  onDetails,
+  onStop,
+}: {
+  animal: Animal
+  speciesLabel: string
+  detailsOpen: boolean
+  onDetails: () => void
+  onStop: () => void
+}) {
+  const activity = animal.activity === "walking" ? "Walking" : "Resting"
+  return (
+    <div
+      className="animal-watch bevel"
+      role="group"
+      aria-label={`Watching ${animal.name}`}
+      data-animal-watch={animal.id}
+    >
+      <span className="animal-watch-text">
+        <b>{animal.name}</b>
+        <small>
+          <span data-testid="watch-activity">{activity}</span> · {speciesLabel}
+        </small>
+      </span>
+      {!detailsOpen && (
+        <button onClick={onDetails} data-action="animal-details">
+          Details
+        </button>
+      )}
+      <button onClick={onStop} data-action="release-follow" aria-label="Stop following">
+        ×
+      </button>
+    </div>
   )
 }
 

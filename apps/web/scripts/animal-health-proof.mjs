@@ -102,6 +102,9 @@ export async function runAnimalHealthAcceptance(context) {
   await mouse("mousePressed", point, { button: "left", buttons: 1, clickCount: 1 })
   await mouse("mouseReleased", point, { button: "left", buttons: 0, clickCount: 1 })
   await frame()
+  // Picking watches first (#141); the inspector is the watch label's deliberate Details step.
+  await waitFor("capybara #1's watch label", `Boolean(document.querySelector('[data-animal-watch="1"] [data-action="animal-details"]'))`)
+  await evaluate(`document.querySelector('[data-action="animal-details"]').click()`)
   await waitFor("capybara #1's inspector", `document.querySelector('.animal-card')?.dataset.animalId === '1'`)
   const warning = await health()
   assert(

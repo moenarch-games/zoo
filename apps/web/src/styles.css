@@ -893,6 +893,65 @@ dd {
   color: #9b3a2f;
 }
 
+/* Watching one animal (#141): a small label over the park, never a window over the animal. */
+.animal-watch {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 12;
+  max-width: min(340px, calc(100% - 24px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 11px;
+  border-radius: 6px;
+  color: #1d3028;
+  background: #f4eed6;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+}
+
+.animal-watch-text {
+  min-width: 0;
+  display: grid;
+}
+
+.animal-watch-text b,
+.animal-watch-text small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.animal-watch-text b {
+  font-size: 15px;
+}
+
+.animal-watch-text small {
+  color: #47584f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.animal-watch button {
+  flex: 0 0 auto;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+@media (max-width: 900px) {
+  .animal-watch {
+    left: 8px;
+    top: 8px;
+  }
+
+  .animal-watch button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 .park-view-loading {
   display: grid;
   place-items: center;

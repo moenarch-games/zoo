@@ -33,7 +33,9 @@ id = "rust-tests"
 name = "Rust workspace tests"
 command = "cargo test --workspace"
 cwd = "."
-timeout_ms = 900000
+# Baseline and candidate build and run the whole workspace suite concurrently on one runner;
+# 15 minutes no longer covers both (the baseline itself timed out on PR #240).
+timeout_ms = 1800000
 ignore_stdout = true
 ignore_stderr = true
 
