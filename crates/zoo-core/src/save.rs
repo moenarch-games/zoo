@@ -63,6 +63,7 @@ const MIGRATIONS: &[Migration] = &[
     v16_add_residents,
     v17_add_animal_health,
     v18_add_utilities,
+    v19_add_finances,
 ];
 /// Derived, never hand-written: two PRs that each add a migration both append after the same
 /// last entry of [`MIGRATIONS`], so git refuses to merge them silently.
@@ -267,6 +268,110 @@ fn v17_add_animal_health(mut value: Value) -> Result<Value, SaveError> {
             ledger.insert(field.to_owned(), json!(0));
         }
     }
+    Ok(value)
+}
+
+/// Schema 20 (#115) adds loans, the bounded day history and deficit days. Every ledger gains
+/// zero interest, proceeds and repayments. The previous day's ledger becomes the history's one
+/// day, with its cash reconstructed exactly from the ledgers (no older park could borrow, so
+/// each day's cash changed by its profit): today opened at `cash − today's profit` and the
+/// previous day opened at that less its own profit. A park from a built-in scenario gains that
+/// scenario's credit line with nothing owed; any other park gets none. No day was in deficit.
+fn v19_add_finances(mut value: Value) -> Result<Value, SaveError> {
+    let invalid = |message: &str| SaveError::new("invalid_save", message.to_owned());
+    let park = value
+        .get_mut("park")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("park: missing or not an object"))?;
+    let profit = |ledger: &serde_json::Map<String, Value>| -> Result<i64, SaveError> {
+        let mut profit = 0_i64;
+        for (field, cents) in ledger {
+            let cents = cents
+                .as_i64()
+                .ok_or_else(|| invalid("park ledger: entry is not whole cents"))?;
+            let signed = if field.ends_with("_income_cents") {
+                cents
+            } else {
+                cents.checked_neg().unwrap_or(i64::MAX)
+            };
+            profit = profit
+                .checked_add(signed)
+                .ok_or_else(|| invalid("park ledger: out of range"))?;
+        }
+        Ok(profit)
+    };
+    let add_lines = |key: &str, park: &mut serde_json::Map<String, Value>| {
+        if let Some(ledger) = park.get_mut(key).and_then(Value::as_object_mut) {
+            for field in [
+                "loan_interest_expense_cents",
+                "loan_proceeds_cents",
+                "loan_repayment_cents",
+            ] {
+                ledger.insert(field.to_owned(), json!(0));
+            }
+        }
+    };
+    let cash = park
+        .get("cash_cents")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid("park/cash_cents: missing"))?;
+    let day = park
+        .get("day")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| invalid("park/day: missing"))?;
+    let today = park
+        .get("finance_today")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid("park/finance_today: missing or not an object"))?;
+    let opening = cash
+        .checked_sub(profit(today)?)
+        .ok_or_else(|| invalid("park/finance_today: out of range"))?;
+    let mut history = Vec::new();
+    match park.remove("finance_previous") {
+        None => return Err(invalid("park/finance_previous: missing")),
+        Some(Value::Null) => {}
+        Some(Value::Object(previous)) => {
+            let previous_opening = opening
+                .checked_sub(profit(&previous)?)
+                .ok_or_else(|| invalid("park/finance_previous: out of range"))?;
+            let mut ledger = Value::Object(previous);
+            if let Some(ledger) = ledger.as_object_mut() {
+                for field in [
+                    "loan_interest_expense_cents",
+                    "loan_proceeds_cents",
+                    "loan_repayment_cents",
+                ] {
+                    ledger.insert(field.to_owned(), json!(0));
+                }
+            }
+            history.push(json!({
+                "day": day.saturating_sub(1),
+                "opening_cash_cents": previous_opening,
+                "closing_cash_cents": opening,
+                "loan_balance_cents": 0,
+                "ledger": ledger,
+            }));
+        }
+        Some(_) => return Err(invalid("park/finance_previous: not an object")),
+    }
+    add_lines("finance_today", park);
+    let terms = park
+        .get("scenario")
+        .and_then(|scenario| scenario.get("id"))
+        .and_then(Value::as_str)
+        .and_then(scenario::Scenario::built_in)
+        .and_then(|scenario| scenario.loan_terms());
+    let loan = super::finance::Loan::new(terms, 0);
+    park.insert(
+        "finance".to_owned(),
+        json!({
+            "opening_cash_cents": opening,
+            "history": history,
+            "loan": serde_json::to_value(loan).expect("loan serialization"),
+            "deficit_days": 0,
+            "deficit_streak_days": 0,
+        }),
+    );
     Ok(value)
 }
 
@@ -1627,7 +1732,8 @@ impl GameState {
         }
 
         // Ledgers.
-        let ledgers = std::iter::once(&self.finance_today).chain(self.finance_previous.as_ref());
+        let ledgers = std::iter::once(&self.finance_today)
+            .chain(self.finance.history.iter().map(|day| &day.ledger));
         for ledger in ledgers {
             let fields = serde_json::to_value(ledger).expect("ledger serialization is infallible");
             let out_of_range = fields.as_object().into_iter().flatten().any(|(_, cents)| {

@@ -22,6 +22,7 @@ const FIXTURE_V16: &str = "tests/fixtures/save-v16.json";
 const FIXTURE_V17: &str = "tests/fixtures/save-v17.json";
 const FIXTURE_V18: &str = "tests/fixtures/save-v18.json";
 const FIXTURE_V19: &str = "tests/fixtures/save-v19.json";
+const FIXTURE_V20: &str = "tests/fixtures/save-v20.json";
 
 /// Undoes the schema 9 catalog change (#97) on a catalog document: the basic shelter's price
 /// becomes the flat shelter price again and environment content disappears.
@@ -83,11 +84,76 @@ fn content_without_utilities(content: &mut Value) {
     }
 }
 
+/// Undoes the schema 19 → 20 migration (#115) on a document saved straight after loading: the
+/// ledgers lose their zero loan lines, the history's one day (if any) becomes the previous
+/// day's ledger again with exactly the cash the ledgers explain, and nothing is owed or was in
+/// deficit.
+fn finances_removed(value: &mut Value) {
+    let park = value["park"].as_object_mut().unwrap();
+    let profit = |ledger: &Value| -> i64 {
+        ledger
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(field, cents)| {
+                let cents = cents.as_i64().unwrap();
+                if field.ends_with("_income_cents") {
+                    cents
+                } else {
+                    -cents
+                }
+            })
+            .sum()
+    };
+    let strip = |ledger: &mut Value| {
+        let ledger = ledger.as_object_mut().unwrap();
+        for field in [
+            "loan_interest_expense_cents",
+            "loan_proceeds_cents",
+            "loan_repayment_cents",
+        ] {
+            assert_eq!(ledger.remove(field).unwrap(), 0);
+        }
+    };
+    let mut finance = park.remove("finance").unwrap();
+    strip(&mut park["finance_today"]);
+    let opening = park["cash_cents"].as_i64().unwrap() - profit(&park["finance_today"]);
+    assert_eq!(finance["opening_cash_cents"], opening);
+    let loan = &finance["loan"];
+    for field in [
+        "balance_cents",
+        "peak_cents",
+        "borrowed_total_cents",
+        "repaid_total_cents",
+        "interest_total_cents",
+    ] {
+        assert_eq!(loan[field], 0);
+    }
+    assert_eq!(finance["deficit_days"], 0);
+    assert_eq!(finance["deficit_streak_days"], 0);
+    let history = finance["history"].as_array_mut().unwrap();
+    assert!(history.len() <= 1);
+    let previous = match history.pop() {
+        None => Value::Null,
+        Some(mut day) => {
+            assert_eq!(day["day"], park["day"].as_u64().unwrap() - 1);
+            assert_eq!(day["closing_cash_cents"], opening);
+            assert_eq!(day["loan_balance_cents"], 0);
+            strip(&mut day["ledger"]);
+            assert_eq!(day["opening_cash_cents"], opening - profit(&day["ledger"]));
+            day["ledger"].take()
+        }
+    };
+    park.insert("finance_previous".to_owned(), previous);
+    value["schema_version"] = 19.into();
+}
+
 /// Undoes the schema 18 → 19 migration (#113) on a document saved straight after loading: the
 /// catalog loses the appended water pump and climate plant, every habitat its utilities (normal
 /// priority, nothing needed, since older species draw none), and the ledgers their utility
 /// lines.
 fn utilities_removed(value: &mut Value) {
+    finances_removed(value);
     // The migration appends the plants. Parks from before schema 6 took the then-current
     // built-in catalog when migrated, which already lists them in place.
     let facilities = value["content"]["facilities"].as_array_mut().unwrap();
@@ -1371,17 +1437,78 @@ fn utilized() -> ZooGame {
     game
 }
 
+/// The utilities park with a loan partly repaid (#115): $5,000 borrowed and $1,000 repaid.
+fn indebted() -> ZooGame {
+    let mut game = utilized();
+    ok(game.borrow_loan(500_000.0));
+    ok(game.repay_loan(100_000.0));
+    game
+}
+
+/// Schema 19 parks could not borrow (#115): they gain their built-in scenario's credit line
+/// with nothing owed and no deficit days, and their previous day becomes the history's one day
+/// with exactly the cash the ledgers explain.
+#[test]
+fn the_schema_v19_fixture_migrates_to_parks_with_a_credit_line_and_history() {
+    let fixture = std::fs::read_to_string(FIXTURE_V19).unwrap();
+    let original = json(&fixture);
+    let mut game = ZooGame::new();
+    ok(game.load_save(&fixture));
+    let mut saved = json(&game.save_json());
+    finances_removed(&mut saved);
+    assert_eq!(saved, original, "migration changes nothing else");
+    let view = json(&game.snapshot_json());
+    assert_eq!(view["finance"]["loan"]["available"], true);
+    assert_eq!(view["finance"]["loan"]["balance_cents"], 0);
+    assert!(view["finance"]["history"].as_array().unwrap().is_empty());
+    ok(game.borrow_loan(10_000.0));
+
+    // A park on day 2 with a previous day: the day is reconstructed and reconciles.
+    let mut second = original.clone();
+    second["park"]["day"] = 2.into();
+    let mut previous = second["park"]["finance_today"].clone();
+    previous["admissions_income_cents"] = 30_000.into();
+    previous["keeper_wages_expense_cents"] = 12_000.into();
+    second["park"]["finance_previous"] = previous;
+    let mut game = ZooGame::new();
+    ok(game.load_save(&second.to_string()));
+    let view = json(&game.snapshot_json());
+    let today = &view["finance"]["current_day"];
+    let day = &view["finance"]["history"][0];
+    assert_eq!(day["day"], 1);
+    assert_eq!(day["closing_cash_cents"], today["opening_cash_cents"]);
+    assert_eq!(
+        day["opening_cash_cents"].as_i64().unwrap() + day["net_cash_flow_cents"].as_i64().unwrap(),
+        day["closing_cash_cents"].as_i64().unwrap()
+    );
+    assert_eq!(
+        today["opening_cash_cents"].as_i64().unwrap()
+            + today["net_cash_flow_cents"].as_i64().unwrap(),
+        view["cash_cents"].as_i64().unwrap()
+    );
+    let mut saved = json(&game.save_json());
+    finances_removed(&mut saved);
+    // Loading re-reads the alerts at the edited clock; everything else is as saved.
+    second["park"]["alerts"] = saved["park"]["alerts"].clone();
+    assert_eq!(saved, second, "migration changes nothing else");
+}
+
 #[test]
 fn the_current_schema_fixture_still_loads_unchanged() {
     if std::env::var_os("ZOO_WRITE_SAVE_FIXTURE").is_some() {
-        let value = json(&utilized().save_json());
+        let value = json(&indebted().save_json());
         std::fs::write(
-            FIXTURE_V19,
+            FIXTURE_V20,
             serde_json::to_string_pretty(&value).unwrap() + "\n",
         )
         .unwrap();
     }
-    let fixture = std::fs::read_to_string(FIXTURE_V19).unwrap();
+    let fixture = std::fs::read_to_string(FIXTURE_V20).unwrap();
+    let saved = json(&fixture);
+    assert_eq!(
+        saved["park"]["finance"]["loan"]["balance_cents"], 400_000,
+        "the fixture owes a loan"
+    );
     let saved = json(&fixture);
     assert!(
         saved["park"]["keepers"]

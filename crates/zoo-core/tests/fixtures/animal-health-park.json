@@ -900,30 +900,57 @@
     },
     "facility_service": [],
     "feed_crates": 18,
-    "finance_previous": {
-      "admissions_income_cents": 43200,
-      "animal_feed_expense_cents": 18000,
-      "animal_purchase_expense_cents": 50000,
-      "concession_income_cents": 0,
-      "construction_expense_cents": 144000,
-      "habitat_care_expense_cents": 0,
-      "janitor_hiring_expense_cents": 0,
-      "janitor_wages_expense_cents": 0,
-      "keeper_hiring_expense_cents": 25000,
-      "keeper_wages_expense_cents": 16800,
-      "land_expense_cents": 0,
-      "maintenance_repair_expense_cents": 0,
-      "marketing_expense_cents": 0,
-      "mechanic_hiring_expense_cents": 0,
-      "mechanic_wages_expense_cents": 0,
-      "medicine_expense_cents": 0,
-      "park_upkeep_expense_cents": 13636,
-      "stand_stock_expense_cents": 0,
-      "utility_operation_expense_cents": 0,
-      "utility_replacement_expense_cents": 0,
-      "vendor_wages_expense_cents": 0,
-      "vet_hiring_expense_cents": 0,
-      "vet_wages_expense_cents": 0
+    "finance": {
+      "deficit_days": 0,
+      "deficit_streak_days": 0,
+      "history": [
+        {
+          "closing_cash_cents": 4775764,
+          "day": 1,
+          "ledger": {
+            "admissions_income_cents": 43200,
+            "animal_feed_expense_cents": 18000,
+            "animal_purchase_expense_cents": 50000,
+            "concession_income_cents": 0,
+            "construction_expense_cents": 144000,
+            "habitat_care_expense_cents": 0,
+            "janitor_hiring_expense_cents": 0,
+            "janitor_wages_expense_cents": 0,
+            "keeper_hiring_expense_cents": 25000,
+            "keeper_wages_expense_cents": 16800,
+            "land_expense_cents": 0,
+            "loan_interest_expense_cents": 0,
+            "loan_proceeds_cents": 0,
+            "loan_repayment_cents": 0,
+            "maintenance_repair_expense_cents": 0,
+            "marketing_expense_cents": 0,
+            "mechanic_hiring_expense_cents": 0,
+            "mechanic_wages_expense_cents": 0,
+            "medicine_expense_cents": 0,
+            "park_upkeep_expense_cents": 13636,
+            "stand_stock_expense_cents": 0,
+            "utility_operation_expense_cents": 0,
+            "utility_replacement_expense_cents": 0,
+            "vendor_wages_expense_cents": 0,
+            "vet_hiring_expense_cents": 0,
+            "vet_wages_expense_cents": 0
+          },
+          "loan_balance_cents": 0,
+          "opening_cash_cents": 5000000
+        }
+      ],
+      "loan": {
+        "balance_cents": 0,
+        "borrowed_total_cents": 0,
+        "interest_total_cents": 0,
+        "peak_cents": 0,
+        "repaid_total_cents": 0,
+        "terms": {
+          "daily_interest_basis_points": 10,
+          "limit_cents": 2500000
+        }
+      },
+      "opening_cash_cents": 4775764
     },
     "finance_today": {
       "admissions_income_cents": 28800,
@@ -937,6 +964,9 @@
       "keeper_hiring_expense_cents": 0,
       "keeper_wages_expense_cents": 12000,
       "land_expense_cents": 0,
+      "loan_interest_expense_cents": 0,
+      "loan_proceeds_cents": 0,
+      "loan_repayment_cents": 0,
       "maintenance_repair_expense_cents": 0,
       "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 0,
@@ -1922,7 +1952,7 @@
       }
     },
     "scenario": {
-      "digest": "fnv1a64:bbdb6064fbf624d6",
+      "digest": "fnv1a64:e9e97c9902aadd9f",
       "id": "first-zoo",
       "opening_focus": {
         "x": 4,
@@ -2384,5 +2414,5 @@
       }
     ]
   },
-  "schema_version": 19
+  "schema_version": 20
 }

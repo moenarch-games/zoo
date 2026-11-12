@@ -1023,7 +1023,23 @@
     },
     "facility_service": [],
     "feed_crates": 10,
-    "finance_previous": null,
+    "finance": {
+      "deficit_days": 0,
+      "deficit_streak_days": 0,
+      "history": [],
+      "loan": {
+        "balance_cents": 0,
+        "borrowed_total_cents": 0,
+        "interest_total_cents": 0,
+        "peak_cents": 0,
+        "repaid_total_cents": 0,
+        "terms": {
+          "daily_interest_basis_points": 10,
+          "limit_cents": 2500000
+        }
+      },
+      "opening_cash_cents": 5000000
+    },
     "finance_today": {
       "admissions_income_cents": 4800,
       "animal_feed_expense_cents": 6000,
@@ -1036,6 +1052,9 @@
       "keeper_hiring_expense_cents": 75000,
       "keeper_wages_expense_cents": 7200,
       "land_expense_cents": 0,
+      "loan_interest_expense_cents": 0,
+      "loan_proceeds_cents": 0,
+      "loan_repayment_cents": 0,
       "maintenance_repair_expense_cents": 0,
       "marketing_expense_cents": 0,
       "mechanic_hiring_expense_cents": 22000,
@@ -2333,7 +2352,7 @@
       }
     },
     "scenario": {
-      "digest": "fnv1a64:bbdb6064fbf624d6",
+      "digest": "fnv1a64:e9e97c9902aadd9f",
       "id": "first-zoo",
       "opening_focus": {
         "x": 4,
@@ -2760,5 +2779,5 @@
       }
     ]
   },
-  "schema_version": 19
+  "schema_version": 20
 }

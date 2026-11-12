@@ -25,7 +25,7 @@ use super::{
     ActionResult, GameState, Position, TileKind,
     care::CareJobState,
     content::{self, Catalog},
-    land,
+    finance, land,
     session::{DomainEvent, fnv1a64},
     tutorial::Tutorial,
 };
@@ -80,6 +80,9 @@ pub(crate) struct Scenario {
     /// Land the park may buy inside its map (#99); every other tile starts owned.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     land: Vec<land::ParcelDefinition>,
+    /// The park's credit line and any debt it starts with (#115); none means no borrowing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    loan: Option<finance::LoanDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -439,6 +442,8 @@ pub(crate) struct ScenarioSummary<'a> {
     width: u32,
     height: u32,
     starting_cash_cents: i64,
+    /// The credit line and starting debt, if the scenario offers one (#115).
+    loan: Option<&'a finance::LoanDefinition>,
     /// The objectives are a guided introduction with hints.
     guided: bool,
     objectives: Vec<&'a str>,
@@ -543,6 +548,9 @@ impl Scenario {
                 content::MAX_CENTS
             ));
         }
+        if let Some(loan) = &self.loan {
+            loan.validate()?;
+        }
         if self.map.terrain.len() > MAX_TERRAIN_PATCHES {
             return Err(format!(
                 "map/terrain: at most {MAX_TERRAIN_PATCHES} patches"
@@ -596,6 +604,11 @@ impl Scenario {
         Ok(())
     }
 
+    /// The credit line this scenario offers parks, without any starting debt (#115).
+    pub(crate) fn loan_terms(&self) -> Option<finance::LoanTerms> {
+        self.loan.as_ref().map(finance::LoanDefinition::terms)
+    }
+
     pub(crate) fn built_in(id: &str) -> Option<Self> {
         Self::built_ins()
             .into_iter()
@@ -617,6 +630,7 @@ impl Scenario {
             width: self.map.width,
             height: self.map.height,
             starting_cash_cents: self.starting_cash_cents,
+            loan: self.loan.as_ref(),
             guided: self.tutorial == TutorialMode::Guided,
             objectives: self
                 .objectives
@@ -697,6 +711,16 @@ impl Scenario {
         }
         state.cash_cents = self.starting_cash_cents;
         state.finance_today = super::FinanceLedger::default();
+        state.finance = finance::Finances {
+            opening_cash_cents: self.starting_cash_cents,
+            loan: self
+                .loan
+                .as_ref()
+                .map_or_else(finance::Loan::default, |loan| {
+                    finance::Loan::new(Some(loan.terms()), loan.starting_balance_cents)
+                }),
+            ..finance::Finances::default()
+        };
         // Authored objects are the starting park, not player construction: nothing to undo.
         state.construction.clear();
         state.unlocks = self.unlocks.clone();
@@ -850,7 +874,12 @@ impl GameState {
                 *at_least,
             ),
             Goal::Guests { at_least } => count(self.guests.len(), *at_least),
-            Goal::CashCents { at_least } => self.cash_cents >= *at_least,
+            // Cash net of the loan (#115), so borrowing never meets a cash goal.
+            Goal::CashCents { at_least } => {
+                self.cash_cents
+                    .saturating_sub(self.finance.loan.balance_cents)
+                    >= *at_least
+            }
             Goal::FeedCrates { at_least } => self.feed_crates >= *at_least,
             Goal::Welfare { at_least } => {
                 stocked().next().is_some() && stocked().all(|h| h.welfare() >= *at_least)
