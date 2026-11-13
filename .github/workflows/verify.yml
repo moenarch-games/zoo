@@ -99,6 +99,7 @@ jobs:
           path: |
             apps/web/test-results/park-view-desktop.png
             apps/web/test-results/park-view-phone.png
+            apps/web/test-results/park-view-phone-build-tools.png
             apps/web/test-results/park-view-rejected-placement.png
             apps/web/test-results/park-view-work-zone.png
             apps/web/test-results/session-recovery-*.png

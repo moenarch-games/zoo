@@ -180,8 +180,9 @@
   }
 
   .bottom-dock {
-    gap: 4px;
-    padding: 5px 6px max(6px, env(safe-area-inset-bottom));
+    position: relative;
+    gap: 3px;
+    padding: 4px 6px max(6px, env(safe-area-inset-bottom));
   }
 
   .message-stack .message {
@@ -212,21 +213,102 @@
     padding: 0 6px;
   }
 
-  .toolbar {
+  /* The picker overlays the park only while open; the canvas never resizes when toggled. */
+  .mobile-build-bar {
+    display: flex;
+    align-items: center;
     gap: 4px;
-    overflow-x: auto;
-    padding: 4px;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
-    touch-action: pan-x;
+    min-width: 0;
+  }
+
+  .mobile-build-bar button {
+    height: 44px;
+    min-width: 44px;
+    padding: 0 7px;
+    border: 1px solid #17493e;
+    border-radius: 5px;
+    background: #2f7462;
+    color: #f2f6ed;
+    font-size: 13px;
+    font-weight: 850;
+    cursor: pointer;
+  }
+
+  .mobile-build-bar button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .mobile-build-bar .build-menu-toggle {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    background: #f2d274;
+    color: #1f352d;
+  }
+
+  .mobile-build-bar .active-build-tool {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .active-build-tool span:first-child {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-build-bar .active-build-tool.selected {
+    color: #1f352d;
+    background: #f2d274;
+  }
+
+  .mobile-build-bar .active-build-tool:disabled {
+    opacity: 1;
+  }
+
+  .mobile-build-bar .build-history-button {
+    flex: none;
+    padding: 0;
+    font-size: 24px;
+  }
+
+  .toolbar {
+    position: absolute;
+    right: 6px;
+    bottom: calc(100% - 1px);
+    left: 6px;
+    z-index: 2;
+    display: none;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 4px;
+    max-height: min(48dvh, 370px);
+    padding: 6px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+    box-shadow: 0 -8px 24px rgb(0 0 0 / 30%);
+  }
+
+  .toolbar.expanded {
+    display: grid;
+  }
+
+  .toolbar .tool.history {
+    display: none;
   }
 
   .tool {
-    min-width: 72px;
+    min-width: 0;
     height: 56px;
-    flex: 0 0 auto;
-    scroll-snap-align: center;
   }
 
   .tool span {
@@ -281,12 +363,9 @@
     height: 40px;
   }
 
-  /* Every build tool stays visible in a compact grid instead of a clipped sideways strip. */
+  /* Four tappable columns, revealed only when the player opens Build tools. */
   .toolbar {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-    overflow: visible;
-    touch-action: manipulation;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .tool {
@@ -324,6 +403,24 @@
   /* With nothing selected the sheet shows only the training card, collapsed to one line. */
   .side-panel:has(.manager-card > h2):has(.tutorial-card) {
     display: block;
+  }
+
+  /* Collapsed objectives are one finger-sized strip, not a padded floating window. */
+  .side-panel:has(.manager-card > h2):has(.tutorial-card:not([open])) {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .side-panel:has(.manager-card > h2) > .tutorial-card:not([open]) {
+    margin: 0;
+    padding: 0 8px;
+  }
+
+  .tutorial-card:not([open]) summary {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .side-panel:has(.manager-card > h2) > :not(.tutorial-card) {
