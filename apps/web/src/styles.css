@@ -340,6 +340,10 @@ dd {
   background: #2f7462;
 }
 
+.mobile-build-bar {
+  display: none;
+}
+
 .tool {
   min-width: 90px;
   height: 68px;

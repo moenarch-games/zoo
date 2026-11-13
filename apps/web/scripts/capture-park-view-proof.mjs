@@ -293,6 +293,8 @@ try {
     window.__zooParkView.nodeCount() > 500 &&
     document.querySelector('.park-view[data-renderer="ready"] canvas.park-canvas')
   )`)
+  assert(await evaluate(`getComputedStyle(document.querySelector('.toolbar')).display === 'flex'`),
+    "Desktop build toolbar should remain visible")
   assert(await evaluate(`document.querySelectorAll('.park-view button, .park-view .tile').length === 0`),
     "Park view must not contain DOM game objects")
   const initial = await camera()
@@ -440,6 +442,55 @@ try {
   await cdp.send("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 2, mobile: true})
   await cdp.send("Emulation.setTouchEmulationEnabled", {enabled: true, maxTouchPoints: 5})
   await closeInspector()
+  // The construction palette should not permanently occupy half the phone screen.
+  const phoneBuildState = () => evaluate(`(() => {
+    const dock = document.querySelector('.bottom-dock')
+    const palette = document.querySelector('#build-tools')
+    const toggle = document.querySelector('.build-menu-toggle')
+    const canvas = document.querySelector('.park-view')
+    return {
+      dockHeight: dock.getBoundingClientRect().height,
+      canvasHeight: canvas.getBoundingClientRect().height,
+      expanded: toggle.getAttribute('aria-expanded'),
+      paletteVisible: getComputedStyle(palette).display !== 'none',
+      paletteBottom: palette.getBoundingClientRect().bottom,
+      dockTop: dock.getBoundingClientRect().top,
+    }
+  })()`)
+  const tapControl = async (selector) => {
+    const point = await evaluate(`(() => {
+      const target = document.querySelector(${JSON.stringify(selector)})
+      if (!target) return null
+      const rect = target.getBoundingClientRect()
+      return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2}
+    })()`)
+    assert(point !== null, `Phone control not found: ${selector}`)
+    await touch("touchStart", [[point.x, point.y]])
+    await touch("touchEnd", [])
+    await frame()
+  }
+  const closedBuild = await phoneBuildState()
+  assert(closedBuild.expanded === "false" && !closedBuild.paletteVisible,
+    "Phone build palette should start closed", closedBuild)
+  assert(closedBuild.dockHeight < 110 && closedBuild.canvasHeight > 450,
+    "Phone dock still consumes too much of the playable park", closedBuild)
+  await tapControl('.build-menu-toggle')
+  const openBuild = await phoneBuildState()
+  assert(openBuild.expanded === "true" && openBuild.paletteVisible &&
+    Math.abs(openBuild.canvasHeight - closedBuild.canvasHeight) < 1 &&
+    openBuild.paletteBottom <= openBuild.dockTop + 2,
+    "Opening build tools should overlay the park without resizing it", {closedBuild, openBuild})
+  await screenshot("test-results/park-view-phone-build-tools.png")
+  await tapControl('.build-menu-toggle')
+  assert(!(await phoneBuildState()).paletteVisible, "Phone build palette did not collapse")
+  await tapControl('.build-menu-toggle')
+  await tapControl('#build-tools .tool:nth-child(2)')
+  assert((await phoneBuildState()).expanded === "false" &&
+    await evaluate(`document.querySelector('.active-build-tool')?.textContent.includes('Path')`),
+    "Choosing Path should close the palette but retain the active mode")
+  await tapControl('.active-build-tool')
+  assert(await evaluate(`document.querySelector('.active-build-tool')?.textContent.includes('Inspect')`),
+    "The compact bar must let a player exit the active build mode")
   await assertFullOrbitAtTiltBounds("phone")
   await clickButton("Ⅱ")
   const phoneCenter = await evaluate(`(() => {
