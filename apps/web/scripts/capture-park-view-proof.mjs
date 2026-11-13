@@ -236,7 +236,7 @@ try {
   const clickButton = (label) =>
     evaluate(`(() => {
       const button = [...document.querySelectorAll('button')].find((candidate) =>
-        !candidate.disabled &&
+        !candidate.disabled && !candidate.classList.contains('active-build-tool') &&
         (candidate.getAttribute('aria-label') ?? candidate.textContent ?? '').includes(${JSON.stringify(label)}))
       if (!button) return false
       button.click()
