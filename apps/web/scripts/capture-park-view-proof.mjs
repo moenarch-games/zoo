@@ -236,8 +236,9 @@ try {
   const clickButton = (label) =>
     evaluate(`(() => {
       const button = [...document.querySelectorAll('button')].find((candidate) =>
+        !candidate.disabled &&
         (candidate.getAttribute('aria-label') ?? candidate.textContent ?? '').includes(${JSON.stringify(label)}))
-      if (!button || button.disabled) return false
+      if (!button) return false
       button.click()
       return true
     })()`)
