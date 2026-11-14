@@ -1,14 +1,16 @@
 // Stages the pinned asset-tooling releases for the web build (#59 S2, #86, #112): `zoo-scenery`
 // meshes, `zoo-effects` particle flipbooks and the animated `zoo-animals` characters.
 //
-// Per release Zoo pins three things in assets/<dir>/: the release tag and tar SHA-256
-// (<release>.pin.json), its own copy of the bundle's export.ref.json, and the release lineage.
-// `zoo-effects` also pins its own copy of the release descriptor (atlas layouts and burst
-// presets). `zoo-animals` is a `gltf-resources-v1` bundle: its lineage is the release's own
-// lineage.json, and the staged directory keeps the verified bundle layout (manifest.json, each
-// pinned scene and its resources) so 3d-lab's bundle adapter reads it unchanged. This script downloads each tar (cached under .artifacts/), checks the pinned SHA-256,
-// verifies it with asset-tooling's own `pack-asset-bundle.ts --verify --ref` at the pinned
-// asset-tooling commit, and writes the files plus a provenance manifest to
+// Per release Zoo pins one immutable `<release>-v<N>` build in assets/<dir>/<release>.pin.json: its
+// tar URL and SHA-256, which Renovate moves to newer builds (asset-tooling's
+// renovate/asset-releases.json preset, README "Following a release with Renovate"). The release's
+// export.ref.json, lineage.json and, for `zoo-effects`, its descriptor (atlas layouts and burst
+// presets) are read from that same versioned release and checked against the pinned tar.
+// `zoo-animals` is a `gltf-resources-v1` bundle, and the staged directory keeps the verified bundle
+// layout (manifest.json, each pinned scene and its resources) so 3d-lab's bundle adapter reads it
+// unchanged. This script downloads each tar and release file (cached under .artifacts/), checks
+// the pinned SHA-256, verifies the tar with asset-tooling's own `pack-asset-bundle.ts --verify
+// --ref` at the pinned asset-tooling commit, and writes the files plus a provenance manifest to
 // apps/web/public/<release>/. Any mismatch fails the build.
 //
 //   bun scripts/stage-asset-releases.ts
@@ -93,6 +95,24 @@ function run(command: string, args: string[], cwd?: string) {
 
 const readJson = async <T>(file: string) => JSON.parse(await readFile(file, "utf8")) as T
 
+/**
+ * One file of the pinned versioned release, beside its tar, cached per release tag. The caller
+ * checks it against the hash-pinned tar before using it.
+ */
+async function releaseFile(pin: Pin, file: string): Promise<string> {
+  const base = pin.tarUrl.slice(0, pin.tarUrl.lastIndexOf("/"))
+  const cached = path.join(root, `.artifacts/${pin.release}/${path.basename(base)}/${file}`)
+  if (!existsSync(cached)) {
+    const response = await fetch(`${base}/${file}`)
+    if (!response.ok) {
+      throw new Error(`${pin.release}: GET ${base}/${file} returned HTTP ${response.status}`)
+    }
+    await mkdir(path.dirname(cached), { recursive: true })
+    await writeFile(cached, new Uint8Array(await response.arrayBuffer()))
+  }
+  return cached
+}
+
 const releases = [
   { dir: path.join(root, "assets/scenery"), pinFile: "zoo-scenery.pin.json", extension: "glb" },
   { dir: path.join(root, "assets/effects"), pinFile: "zoo-effects.pin.json", extension: "png" },
@@ -139,11 +159,14 @@ const { readAssetBundleTar } = (await import(path.join(tooling, "src/asset-bundl
   readAssetBundleTar: (tar: Uint8Array) => { path: string; bytes: Uint8Array }[]
 }
 
-for (const [index, { dir, extension }] of releases.entries()) {
+for (const [index, { extension }] of releases.entries()) {
   const pin = pins[index]!
   const name = pin.release
-  const lineage = await readJson<Lineage | AnimalLineage>(path.join(dir, "lineage.json"))
-  const refPath = path.join(dir, "export.ref.json")
+  if (!/\/releases\/download\/[a-z0-9-]+-v\d+\/[^/]+\.tar$/.test(pin.tarUrl)) {
+    throw new Error(`${name}: tarUrl must name an immutable ${name}-v<N> release, not ${pin.tarUrl}`)
+  }
+  const lineage = await readJson<Lineage | AnimalLineage>(await releaseFile(pin, "lineage.json"))
+  const refPath = await releaseFile(pin, "export.ref.json")
   if (lineage.release !== name) {
     throw new Error(`${name}: lineage.json is for release ${lineage.release}`)
   }
@@ -194,7 +217,7 @@ for (const [index, { dir, extension }] of releases.entries()) {
   const plain = lineage as Lineage
   const descriptor =
     extension === "png"
-      ? await readJson<EffectDescriptor>(path.join(dir, `${name}.descriptor.json`))
+      ? await readJson<EffectDescriptor>(await releaseFile(pin, `${name}.descriptor.json`))
       : null
   if (descriptor && descriptor.schema !== "zoo-effects-descriptor-v1") {
     throw new Error(`${name}: unsupported descriptor ${descriptor.schema}`)
