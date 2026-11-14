@@ -333,6 +333,8 @@ export default function App() {
 
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [tool, setTool] = useState<Tool>("select")
+  // On touch screens the build palette opens over the park only when requested.
+  const [buildMenuOpen, setBuildMenuOpen] = useState(false)
   // What the terrain tool applies inside the selected habitat (#97).
   const [brush, setBrush] = useState<HabitatBrush>({ kind: "surface", surface: "sand" })
   const [speed, setSpeed] = useState<Speed>(1)
@@ -2501,6 +2503,26 @@ export default function App() {
     ) : undefined)
 
   const focus = tutorialFocus()
+  const activeToolLabel = tool.startsWith("facility:")
+    ? (snapshot.facility_catalog.find((offer) => tool === `facility:${offer.key}`)?.label ??
+      "Facility")
+    : (
+        {
+          select: "Inspect",
+          path: "Path",
+          habitat: "Draw habitat",
+          zone: "Zones",
+          bulldoze: "Demolish",
+          land: "Land",
+          gate: "Move gate",
+          reshape: "Reshape",
+          terrain: "Habitat design",
+        } as Record<string, string>
+      )[tool]
+  const chooseBuildTool = (nextTool: Tool) => {
+    setTool(nextTool)
+    setBuildMenuOpen(false)
+  }
   const uncoveredHabitats = snapshot.habitats.filter((habitat) => habitat.work_zone_id === null)
   // Keepers take zones and routine care; vets work the whole park (#109).
   const keepers = snapshot.animal_care_depot.keepers.filter((worker) => worker.role === "keeper")
@@ -4002,30 +4024,73 @@ export default function App() {
             )}
           </div>
         </div>
-        <nav className="toolbar bevel" aria-label="Build tools">
+        <div className="mobile-build-bar" role="group" aria-label="Construction controls">
+          <button
+            className="build-menu-toggle"
+            aria-controls="build-tools"
+            aria-expanded={buildMenuOpen}
+            onClick={() => setBuildMenuOpen((open) => !open)}
+          >
+            <span aria-hidden="true">▦</span> {buildMenuOpen ? "Close tools" : "Build tools"}
+            <span aria-hidden="true">{buildMenuOpen ? "▾" : "▴"}</span>
+          </button>
+          <button
+            className={`active-build-tool${tool !== "select" ? " selected" : ""}`}
+            aria-label={`Current tool: ${activeToolLabel}${tool === "select" ? "" : ". Return to Inspect"}`}
+            title={tool === "select" ? "Inspect is active" : "Return to Inspect"}
+            disabled={tool === "select"}
+            onClick={() => chooseBuildTool("select")}
+          >
+            <span>{activeToolLabel}</span>
+            {tool !== "select" && <span aria-hidden="true">×</span>}
+          </button>
+          <button
+            className="build-history-button"
+            aria-label="Undo construction"
+            title="Undo construction (Ctrl+Z)"
+            disabled={!snapshot.construction.undo}
+            onClick={undoConstruction}
+          >
+            ↶
+          </button>
+          <button
+            className="build-history-button"
+            aria-label="Redo construction"
+            title="Redo construction (Ctrl+Shift+Z)"
+            disabled={!snapshot.construction.redo}
+            onClick={redoConstruction}
+          >
+            ↷
+          </button>
+        </div>
+        <nav
+          id="build-tools"
+          className={`toolbar bevel${buildMenuOpen ? " expanded" : ""}`}
+          aria-label="Build tools"
+        >
           <ToolButton
             active={tool === "select"}
             icon="↖"
             label="Inspect"
-            onClick={() => setTool("select")}
+            onClick={() => chooseBuildTool("select")}
           />
           <ToolButton
             active={tool === "path"}
             icon="▦"
             label="Path"
-            onClick={() => setTool("path")}
+            onClick={() => chooseBuildTool("path")}
           />
           <ToolButton
             active={tool === "habitat"}
             icon="⌗"
             label="Draw habitat"
-            onClick={() => setTool("habitat")}
+            onClick={() => chooseBuildTool("habitat")}
           />
           <ToolButton
             active={tool === "zone"}
             icon="▢"
             label="Zones"
-            onClick={() => setTool("zone")}
+            onClick={() => chooseBuildTool("zone")}
           />
           {snapshot?.facility_catalog
             .filter((offer) => offer.service in FACILITY_ICONS)
@@ -4035,7 +4100,7 @@ export default function App() {
                 active={tool === `facility:${offer.key}`}
                 icon={FACILITY_ICONS[offer.service] ?? "▥"}
                 label={`${offer.label} · ${money(offer.build_cost_cents)}`}
-                onClick={() => setTool(`facility:${offer.key}`)}
+                onClick={() => chooseBuildTool(`facility:${offer.key}`)}
               />
             ))}
           {snapshot.land.parcels.length > 0 && (
@@ -4043,14 +4108,14 @@ export default function App() {
               active={tool === "land"}
               icon="⛳"
               label="Land"
-              onClick={() => setTool("land")}
+              onClick={() => chooseBuildTool("land")}
             />
           )}
           <ToolButton
             active={tool === "bulldoze"}
             icon="⌫"
             label="Demolish"
-            onClick={() => setTool("bulldoze")}
+            onClick={() => chooseBuildTool("bulldoze")}
           />
           <HistoryButton
             icon="↶"
@@ -4225,7 +4290,12 @@ function ToolButton({
   onClick: () => void
 }) {
   return (
-    <button className={`tool ${active ? "active" : ""}`} onClick={onClick}>
+    <button
+      className={`tool ${active ? "active" : ""}`}
+      title={label}
+      aria-pressed={active}
+      onClick={onClick}
+    >
       <span>{icon}</span>
       <small>{label}</small>
     </button>
