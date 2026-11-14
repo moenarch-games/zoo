@@ -1,7 +1,7 @@
 {
   "release": "zoo-scenery",
   "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-scenery/zoo-scenery.tar",
-  "tarSha256": "378593ca603a315ae5fa77d03d9a2840b59ef28cac74e75955bb4cbf26953189",
+  "tarSha256": "93a8c5d37e0e4b39f5fe3ff72e9fe661be9ad4c9039ba0674365a3de5e9d1268",
   "assetToolingCommit": "179a67981fdd3d314c33a28850a2cb4fd897603c",
   "profile": "static-glb-png-v1",
   "pieces": {
