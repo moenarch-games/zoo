@@ -1,6 +1,6 @@
 {
   "release": "zoo-effects",
-  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-effects/zoo-effects.tar",
+  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-effects-v1/zoo-effects.tar",
   "tarSha256": "c80955de8bde3ccdf4f83e04664310cfa8f9095e87f4f440e08d1d8ec5f86bcf",
   "assetToolingCommit": "179a67981fdd3d314c33a28850a2cb4fd897603c",
   "profile": "static-glb-png-v1",
