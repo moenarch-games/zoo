@@ -1,7 +1,7 @@
 {
   "release": "zoo-animals",
-  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-animals-v1/zoo-animals.tar",
-  "tarSha256": "10478f08b43b05a7a36ff481584d09ef30cef829f56c6b4fbe9bb7465c767f18",
+  "tarUrl": "https://github.com/moritzbrantner/asset-tooling/releases/download/zoo-animals-v2/zoo-animals.tar",
+  "tarSha256": "e282e8fadcc1ff69efeed011b24f98867531807f474253787b5440a0ca3d75f5",
   "assetToolingCommit": "179a67981fdd3d314c33a28850a2cb4fd897603c",
   "profile": "gltf-resources-v1",
   "pieces": {
